@@ -7,7 +7,7 @@
     - 顺带暴露 `unknown`(settings.json 里拼错的名字,运行时只会静默跳过)
     - 同时返回当前正在运行的页面(`runningPages`),便于确认调用目标
   - `call_global_util`:在**运行中**的项目里调用 `global_utils` 注册的 Lua 全局函数(如 `dp2px`、`parseColor`)
-    - 与项目自身调用**同一条路径**(运行实例主线程执行),UI 相关函数也能生效
+    - 与项目自身调用**同一条路径**(运行实例主线程执行),`dp2px`、`statusBarHeight()` 这类需要真实 `Context` 的 UI 函数也生效(首个 `Context` / `Activity` 形参由框架自动注入)
     - 参数支持 JSON 数组或分隔字符串(自动推断 number / boolean / null),并按形参类型做个数与类型校验
     - 需要控件 / Java 对象 / Lua 回调的函数(如 `GlideUtil.loadImage` 需 `ImageView`、网络请求、Recycler 适配器)会明确拒绝并说明原因
 - 修复 `global_utils` 注册函数的小数入参调用失败
