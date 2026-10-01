@@ -761,10 +761,14 @@ public class LuaService extends Service implements LuaContext, LuaBroadcastRecei
         message.what = 0;
         handler.sendMessage(message);
         Log.i("lua", msg);
+        // 同步落盘到 luaforge.log,便于排查后台脚本错误
+        com.luaforge.studio.utils.RuntimeLog.logLua(msg);
     }
 
     @Override
     public void sendError(String title, Exception msg) {
+        com.luaforge.studio.utils.RuntimeLog.error("service." + title,
+                title + ": " + msg.getMessage(), msg);
         runFunc("onError", title, msg);
     }
 

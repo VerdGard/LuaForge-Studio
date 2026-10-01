@@ -1,5 +1,39 @@
 # 更新日志
 
+## 1.6.3
+- 新增「网络请求拦截」(设置 → 网络请求拦截,默认关闭)
+  - 所有网络请求在真正发出前弹出 MD3 对话框展示方法、主机、完整地址、请求头、请求体与来源,用户允许后才放行
+  - 覆盖范围:编辑器自身请求 + 用户项目请求
+    - `http.*`(HttpURLConnection)、`okhttp.*`(OkHttp 拦截器);图片加载与 WebView 请求不拦截
+  - 按主机记忆允许/拒绝,列表可在设置中查看与清空;也可随时关闭整个开关
+  - 用户项目打包成 APK 后**不含**拦截逻辑(`:app` 的决策器不进入 `:core-apk`),因此打包后不拦截
+  - 详见 [docs/NETWORK.md](docs/NETWORK.md)
+- `http.*` 请求体预览截断到 16KB,避免大请求体额外占用内存
+
+## 1.6.2
+- MCP:新增 17 个工具,工具总数 25 → 42
+  - 文件:`read_files`、`rename_file`、`make_directory`、`file_info`、`search_in_files`、`replace_in_file`、`replace_in_files`、`clean_compiled`
+  - 编辑器:`refresh_editor`、`get_selection`、`goto_line`、`editor_history`(撤销/重做)、`check_syntax`
+  - 项目:`list_templates`、`create_project`、`restore_backup`
+  - 界面:`wait_for_text`(轮询等待界面就绪)
+- 修复 MCP 写入代码后编辑器界面不刷新
+  - `write_file` / `create_file` 写入后会同步刷新编辑器中已打开的同名标签
+  - `delete_file` 会关闭对应标签,`rename_file` 会同步标签路径
+  - 新增 `refresh_editor` 用于外部改动后强制刷新
+- 编译验证不再残留产物
+  - `compile_file` 默认在验证成功后删除 `.luac` / `.alyc`,需要产物时传 `keepOutput=true`
+  - 新增 `clean_compiled` 清理历史残留(支持 `dryRun` 预览)
+- 详见 [docs/MCP.md](docs/MCP.md)
+
+## 1.6.1
+- 修复 `loadlayout` 因属性别名导致整棵布局加载失败的问题
+  - 支持 `width` / `height` / `weight` / `margin*` 等常见别名,自动归一化为 `layout_*`
+  - 未知或无法设置的属性改为记录告警后跳过,不再中断整棵布局
+- Lua 运行时错误现在会写入 `luaforge.log`(此前仅输出到 logcat,无法事后排查)
+- MCP 新增运行时界面检查能力:`dump_screen` / `check_screen` / `get_runtime_errors` / `clear_logs`
+  - 调试运行后可断言屏幕内容是否符合预期,并自动识别错误弹窗
+  - 详见 [docs/MCP.md](docs/MCP.md)
+
 ## 1.6.0
 - 新增 `libdecrypt.so`，支持 Lua 加密脚本自动解密加载
   - 提供 `decrypt.loadfile()` / `decrypt.dofile()` / `decrypt.load()` 接口

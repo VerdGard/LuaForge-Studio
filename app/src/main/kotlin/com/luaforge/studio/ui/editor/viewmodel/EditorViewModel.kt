@@ -898,6 +898,38 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
         }
     }
 
+    /**
+     * 把磁盘上的最新内容同步到编辑器缓冲区与控件。
+     *
+     * 供 MCP 的 write_file / create_file 等"外部写入"调用:否则编辑器仍持有旧内容,
+     * 用户随后触发保存会把外部写入的代码覆盖回去。
+     *
+     * @return 该文件未在编辑器中打开时返回 false
+     */
+    suspend fun refreshEditorFromDisk(filePath: String): Boolean {
+        val state = openFiles.firstOrNull { it.file.absolutePath == filePath }
+            ?: return false
+        return withContext(KotlinDispatchers.IO) {
+            try {
+                if (!state.file.exists() || !state.file.canRead()) return@withContext false
+                if (state.file.length() > 1024 * 1024) return@withContext false
+                val content = state.file.readText(Charsets.UTF_8)
+                // 以磁盘为准:重载后不再标记为已修改
+                state.onContentLoaded(content)
+                withContext(KotlinDispatchers.Main) {
+                    editorInstances[filePath]?.let { editor ->
+                        if (editor.text.toString() != content) editor.setText(content)
+                        editor.postInvalidate()
+                    }
+                }
+                true
+            } catch (e: Exception) {
+                LogCatcher.e("EditorViewModel", "刷新编辑器失败: $filePath", e)
+                false
+            }
+        }
+    }
+
     // 文件操作
     @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
     private suspend fun openFileInternal(file: File): Boolean {

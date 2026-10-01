@@ -33,7 +33,9 @@ import com.androlua.LuaApplication
 import com.androlua.LuaUtil
 import com.luaforge.studio.ui.crash.CrashManager
 import com.luaforge.studio.ui.editor.persistence.EditorStateUtil
+import com.luaforge.studio.mcp.ActivityTracker
 import com.luaforge.studio.mcp.McpManager
+import com.luaforge.studio.network.NetworkApprovalManager
 import com.luaforge.studio.ui.editor.viewmodel.CompletionDataManager
 import com.luaforge.studio.ui.settings.SettingsManager
 import com.luaforge.studio.ui.theme.AppThemeWithObserver
@@ -81,6 +83,8 @@ class SplashWelcome : ComponentActivity() {
             }
         }.start()
         LogCatcher.init(this)
+        // 追踪前台 Activity,供 MCP 运行时界面检查(dump_screen / check_screen)使用
+        ActivityTracker.install(application)
 
         app = application as LuaApplication
         luaMdDir = app.mdDir
@@ -107,6 +111,19 @@ class SplashWelcome : ComponentActivity() {
             McpManager.applySettings(SettingsManager.currentSettings)
         } catch (e: Exception) {
             LogCatcher.e("SplashWelcome", "启动 MCP 服务失败", e)
+        }
+
+        // 网络请求拦截:装配决策器并按已保存的设置同步策略(默认关闭时不拦截)
+        try {
+            val networkSettings = SettingsManager.currentSettings
+            NetworkApprovalManager.install()
+            NetworkApprovalManager.applyPolicy(
+                networkSettings.networkInterceptEnabled,
+                networkSettings.networkAllowedHosts,
+                networkSettings.networkBlockedHosts
+            )
+        } catch (e: Exception) {
+            LogCatcher.e("SplashWelcome", "初始化网络拦截失败", e)
         }
 
         // 语言处理：仅在已持久化用户设置语言时应用；不匹配时不阻塞启动流程

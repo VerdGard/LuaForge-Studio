@@ -1,0 +1,97 @@
+package com.luaforge.studio.utils
+
+import androidx.annotation.Keep
+import java.io.File
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/**
+ * Lua 运行时日志落盘工具(core 模块)。
+ *
+ * core 模块的 LuaActivity / LuaService / LuaApplication 无法引用 app 模块的
+ * LogCatcher,而它们的 sendMsg / sendError 之前只写 logcat,导致 Lua 运行时
+ * 错误从不出现在 luaforge.log 中 —— 排查现场和 MCP 运行时检查都拿不到错误。
+ *
+ * 这里统一把这些消息追加到与 LogCatcher 相同的日志文件,保持单一来源。
+ * 写入失败绝不影响 Lua 运行。
+ */
+@Keep
+object RuntimeLog {
+
+    /** 与 LogCatcher 使用同一个日志文件。 */
+    const val LOG_FILE_PATH = "/storage/emulated/0/LuaForge-Studio/luaforge.log"
+
+    /** 超过该大小则截断,避免长时间运行导致日志无限增长。 */
+    private const val MAX_BYTES = 4L * 1024 * 1024
+    private const val TRUNCATE_KEEP = 1024 * 1024
+
+    private val lock = Any()
+
+    private val timeFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
+
+    @JvmStatic
+    fun log(tag: String, message: String) {
+        write("INFO", tag, message)
+    }
+
+    /**
+     * Lua 层输出统一入口(LuaActivity / LuaService 的 sendMsg 都会走到这里)。
+     *
+     * 按内容判定级别,使运行时错误在日志里可直接按 ERROR 检索,
+     * 而普通的 print 输出仍为 INFO。
+     */
+    @JvmStatic
+    fun logLua(message: String) {
+        write(if (looksLikeError(message)) "ERROR" else "INFO", "lua", message)
+    }
+
+    private val errorKeywords = arrayOf(
+        "error", "exception", "traceback", "failed", "failure",
+        "错误", "失败", "异常"
+    )
+
+    private fun looksLikeError(message: String): Boolean {
+        val lower = message.lowercase(Locale.getDefault())
+        return errorKeywords.any { lower.contains(it) }
+    }
+
+    @JvmStatic
+    fun error(tag: String, message: String) {
+        error(tag, message, null)
+    }
+
+    @JvmStatic
+    fun error(tag: String, message: String, throwable: Throwable?) {
+        val detail = if (throwable == null) message else "$message\n${throwable.stackTraceToString()}"
+        write("ERROR", tag, detail)
+    }
+
+    private fun write(level: String, tag: String, message: String) {
+        synchronized(lock) {
+            try {
+                val file = File(LOG_FILE_PATH)
+                val parent = file.parentFile
+                if (parent != null && !parent.exists()) {
+                    parent.mkdirs()
+                }
+                truncateIfNeeded(file)
+                val line = "[${timeFormat.format(Date())}] [$level] [$tag] $message\n"
+                FileOutputStream(file, true).use { it.write(line.toByteArray(Charsets.UTF_8)) }
+            } catch (_: Throwable) {
+                // 日志写入失败不能影响 Lua 运行
+            }
+        }
+    }
+
+    private fun truncateIfNeeded(file: File) {
+        if (!file.exists() || file.length() <= MAX_BYTES) return
+        try {
+            val keep = file.readText(Charsets.UTF_8).takeLast(TRUNCATE_KEEP)
+            file.writeText("... (较早日志已截断)\n$keep", Charsets.UTF_8)
+        } catch (_: Throwable) {
+            // 截断失败则继续追加
+        }
+    }
+}

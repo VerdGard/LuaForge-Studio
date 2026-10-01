@@ -390,6 +390,9 @@ public class Http {
 
         private byte[] mData;
 
+        /** 请求体预览上限(16KB),只用于展示,不影响真实发送内容。 */
+        private static final int MAX_BODY_PREVIEW = 16 * 1024;
+
         private String mCharset;
 
         private String mOutCharset;
@@ -454,6 +457,24 @@ public class Http {
 
                     conn.setDoOutput(true);
                     conn.setRequestProperty("Content-length", "" + mData.length);
+                }
+
+                // 仅截取前 MAX_BODY_PREVIEW 字节做预览,避免大请求体白拷贝一份
+                String bodyPreview = null;
+                if (mData != null && mData.length > 0) {
+                    try {
+                        int previewLen = Math.min(mData.length, MAX_BODY_PREVIEW);
+                        bodyPreview = new String(mData, 0, previewLen,
+                                mCharset == null ? "UTF-8" : mCharset);
+                        if (mData.length > previewLen)
+                            bodyPreview = bodyPreview + "\n... (已截断,共 " + mData.length + " 字节)";
+                    } catch (Exception ignored) {
+                    }
+                }
+                if (!com.luaforge.studio.utils.NetworkGate.allow(
+                        mUrl, mMethod, mHeader, bodyPreview,
+                        conn.getRequestProperty("Content-Type"), "http")) {
+                    return new Object[]{-1, "网络请求已被用户拒绝: " + mUrl};
                 }
 
                 conn.connect();

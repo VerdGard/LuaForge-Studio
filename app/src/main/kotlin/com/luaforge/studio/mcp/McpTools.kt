@@ -10,10 +10,14 @@ import com.androlua.LuaLexer
 import com.androlua.LuaTokenTypes
 import com.luaforge.studio.langs.lua.tools.CompleteHashmapUtils
 import com.luaforge.studio.ui.editor.backupProject
+import com.luaforge.studio.ui.editor.viewmodel.EditorViewModel
 import com.luaforge.studio.ui.editor.buildProject
 import com.luaforge.studio.ui.editor.getAppNameFromSettings
+import com.luaforge.studio.ui.project.TemplateItem
 import com.luaforge.studio.ui.settings.SettingsManager
 import com.luaforge.studio.utils.ConsoleUtil
+import com.luaforge.studio.utils.JsonUtil
+import com.luaforge.studio.utils.LuaParserUtil
 import com.luaforge.studio.utils.FileUtil
 import com.luaforge.studio.utils.LogCatcher
 import com.luaforge.studio.utils.ProjectUtil
@@ -21,6 +25,7 @@ import com.luajava.LuaState
 import com.luajava.LuaStateFactory
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
@@ -40,6 +45,10 @@ object McpTools {
     private const val TAG = "McpTools"
     private const val LOG_FILE_PATH = "/storage/emulated/0/LuaForge-Studio/luaforge.log"
     private const val MAX_READ_BYTES = 2 * 1024 * 1024
+
+    /** 等待编辑器控件就绪的重试次数与间隔(open_file / goto_line 共用)。 */
+    private const val CURSOR_MOVE_ATTEMPTS = 10
+    private const val CURSOR_MOVE_INTERVAL_MS = 50L
 
     // ------------------------------------------------------------------
     // 工具清单
@@ -120,7 +129,8 @@ object McpTools {
                 "在编辑器中打开文件",
                 obj(
                     "path" to strProp("文件路径(可相对项目根目录)"),
-                    "line" to intProp("打开后跳转的行号(可选,从 1 开始)")
+                    "line" to intProp("打开后跳转的行号(可选,从 1 开始)"),
+                    "column" to intProp("与 line 配合的列号(可选,从 0 开始)")
                 ),
                 required = arrayOf("path")
             )
@@ -150,8 +160,11 @@ object McpTools {
         tools.put(
             tool(
                 "compile_file",
-                "编译单个 .lua/.aly 文件(等价于编辑器“编译文件”)",
-                obj("path" to strProp("文件路径,缺省为当前活动文件"))
+                "编译单个 .lua/.aly 文件(等价于编辑器“编译文件”)。默认在验证成功后删除 .luac/.alyc 产物,避免污染项目",
+                obj(
+                    "path" to strProp("文件路径,缺省为当前活动文件"),
+                    "keepOutput" to boolProp("true=保留编译产物(.luac/.alyc),默认 false 即验证后删除")
+                )
             )
         )
 
@@ -206,6 +219,225 @@ object McpTools {
 
         tools.put(tool("get_settings", "读取当前应用设置(编辑器/主题等)", obj()))
 
+        tools.put(
+            tool(
+                "dump_screen",
+                "导出当前前台界面的控件树(调试运行后确认屏幕内容)",
+                obj(
+                    "includeInvisible" to boolProp("是否包含不可见控件,默认 false"),
+                    "maxDepth" to intProp("最大递归深度,默认 40")
+                )
+            )
+        )
+
+        tools.put(
+            tool(
+                "check_screen",
+                "按预期校验当前界面(文本/控件数量/错误弹窗),返回是否通过及差异",
+                obj(
+                    "expectTexts" to strProp("必须出现的文本,JSON 数组或换行/逗号分隔"),
+                    "expectAnyOf" to strProp("至少出现一个的文本,JSON 数组或换行/逗号分隔"),
+                    "absentTexts" to strProp("必须不出现的文本,JSON 数组或换行/逗号分隔"),
+                    "minViews" to intProp("可见控件数量下限"),
+                    "includeInvisible" to boolProp("是否包含不可见控件,默认 false")
+                )
+            )
+        )
+
+        tools.put(
+            tool(
+                "get_runtime_errors",
+                "读取日志中的运行时错误(Lua 报错、布局加载失败等)",
+                obj("lines" to intProp("返回末尾错误行数,默认 50"))
+            )
+        )
+
+        tools.put(tool("clear_logs", "清空 luaforge.log,便于每次运行前取得干净的错误现场", obj()))
+
+        tools.put(
+            tool(
+                "refresh_editor",
+                "把磁盘上的最新内容重新载入编辑器(外部修改文件后强制刷新界面);缺省刷新全部已打开文件",
+                obj("path" to strProp("文件路径,缺省刷新全部已打开文件"))
+            )
+        )
+
+        tools.put(
+            tool(
+                "clean_compiled",
+                "清理项目内的编译产物(.luac/.alyc)。compile_file 已默认自动清理,此工具用于清理历史残留",
+                obj(
+                    "path" to strProp("项目路径,缺省为当前项目"),
+                    "dryRun" to boolProp("true=只列出不删除,默认 false")
+                )
+            )
+        )
+
+        tools.put(tool("get_selection", "读取编辑器当前选中的文本与光标位置", obj()))
+
+        tools.put(
+            tool(
+                "editor_history",
+                "撤销/重做当前活动文件的编辑",
+                obj("action" to strProp("undo 或 redo,默认 undo")),
+                required = arrayOf("action")
+            )
+        )
+
+        tools.put(
+            tool(
+                "goto_line",
+                "把光标移动到指定行(1 起算)",
+                obj(
+                    "line" to intProp("目标行号,1 起算"),
+                    "column" to intProp("目标列号,0 起算,默认 0")
+                ),
+                required = arrayOf("line")
+            )
+        )
+
+        tools.put(
+            tool(
+                "search_in_files",
+                "在项目内按文本或正则搜索,返回命中的文件与行号",
+                obj(
+                    "path" to strProp("搜索目录,缺省为当前项目"),
+                    "query" to strProp("搜索内容"),
+                    "regex" to boolProp("true=按正则匹配,默认 false 字面量"),
+                    "ignoreCase" to boolProp("是否忽略大小写,默认 true"),
+                    "maxResults" to intProp("最多返回条数,默认 200")
+                ),
+                required = arrayOf("query")
+            )
+        )
+
+        tools.put(
+            tool(
+                "read_files",
+                "一次读取多个文本文件",
+                obj("paths" to strProp("文件路径列表,JSON 数组或换行分隔")),
+                required = arrayOf("paths")
+            )
+        )
+
+        tools.put(
+            tool(
+                "replace_in_file",
+                "在单个文件中替换文本(支持正则与出现次数断言)",
+                obj(
+                    "path" to strProp("文件路径"),
+                    "find" to strProp("被替换内容"),
+                    "replace" to strProp("替换为"),
+                    "regex" to boolProp("true=按正则,默认 false"),
+                    "ignoreCase" to boolProp("是否忽略大小写,默认 false"),
+                    "expectCount" to intProp("期望出现次数,不符则不改写")
+                ),
+                required = arrayOf("path", "find", "replace")
+            )
+        )
+
+        tools.put(
+            tool(
+                "replace_in_files",
+                "在项目内批量替换文本,支持 dryRun 预览",
+                obj(
+                    "path" to strProp("项目或目录,缺省为当前项目"),
+                    "find" to strProp("被替换内容"),
+                    "replace" to strProp("替换为"),
+                    "regex" to boolProp("true=按正则,默认 false"),
+                    "ignoreCase" to boolProp("是否忽略大小写,默认 false"),
+                    "dryRun" to boolProp("true=只统计不写入,默认 false")
+                ),
+                required = arrayOf("find", "replace")
+            )
+        )
+
+        tools.put(
+            tool(
+                "rename_file",
+                "重命名/移动文件或目录,并同步编辑器标签",
+                obj(
+                    "from" to strProp("原路径"),
+                    "to" to strProp("新路径"),
+                    "overwrite" to boolProp("目标已存在时是否覆盖,默认 false")
+                ),
+                required = arrayOf("from", "to")
+            )
+        )
+
+        tools.put(
+            tool(
+                "make_directory",
+                "创建目录(递归)",
+                obj("path" to strProp("目录路径")),
+                required = arrayOf("path")
+            )
+        )
+
+        tools.put(
+            tool(
+                "file_info",
+                "获取文件/目录信息(大小、修改时间、行数、MD5)",
+                obj("path" to strProp("路径")),
+                required = arrayOf("path")
+            )
+        )
+
+        tools.put(
+            tool(
+                "check_syntax",
+                "对 Lua/ALY 代码做语法检查,返回是否通过及错误行",
+                obj(
+                    "path" to strProp("文件路径;缺省时使用 content 或当前活动文件"),
+                    "content" to strProp("直接检查的代码内容")
+                )
+            )
+        )
+
+        tools.put(
+            tool(
+                "wait_for_text",
+                "轮询等待界面出现(或消失)指定文本,用于运行后确认界面就绪",
+                obj(
+                    "text" to strProp("等待出现的文本"),
+                    "absent" to boolProp("true=等待该文本消失,默认 false"),
+                    "timeoutMs" to intProp("超时毫秒,默认 10000,上限 60000"),
+                    "intervalMs" to intProp("轮询间隔毫秒,默认 500")
+                ),
+                required = arrayOf("text")
+            )
+        )
+
+        tools.put(tool("list_templates", "列出可用于新建项目的模板", obj()))
+
+        tools.put(
+            tool(
+                "create_project",
+                "按模板新建项目",
+                obj(
+                    "name" to strProp("项目名,缺省自动生成"),
+                    "packageName" to strProp("包名,缺省由项目名推导"),
+                    "template" to strProp("模板 zip 文件名(见 list_templates),缺省不使用模板"),
+                    "debugMode" to boolProp("是否开启调试模式,默认 false"),
+                    "globalUtils" to strProp("全局工具类列表,JSON 数组或换行分隔"),
+                    "overwrite" to boolProp("同名项目存在时是否覆盖,默认 false")
+                )
+            )
+        )
+
+        tools.put(
+            tool(
+                "restore_backup",
+                "把 backup 目录中的备份 zip 还原为项目",
+                obj(
+                    "backupPath" to strProp("备份 zip 路径"),
+                    "projectName" to strProp("还原后的项目名,缺省由备份文件名推导"),
+                    "overwrite" to boolProp("同名项目存在时是否覆盖,默认 false")
+                ),
+                required = arrayOf("backupPath")
+            )
+        )
+
         return tools
     }
 
@@ -230,6 +462,23 @@ object McpTools {
                 "insert_text" -> insertText(args)
                 "save_files" -> saveFiles()
                 "format_code" -> formatCode()
+                "refresh_editor" -> refreshEditor(context, args)
+                "clean_compiled" -> cleanCompiled(context, args)
+                "search_in_files" -> searchInFiles(context, args)
+                "read_files" -> readFiles(context, args)
+                "replace_in_file" -> replaceInFile(context, args)
+                "replace_in_files" -> replaceInFiles(context, args)
+                "rename_file" -> renameFile(context, args)
+                "make_directory" -> makeDirectory(context, args)
+                "file_info" -> fileInfo(context, args)
+                "check_syntax" -> checkSyntax(context, args)
+                "get_selection" -> getSelection()
+                "editor_history" -> editorHistory(args)
+                "goto_line" -> gotoLine(args)
+                "wait_for_text" -> waitForText(args)
+                "list_templates" -> listTemplates(context)
+                "create_project" -> createProject(context, args)
+                "restore_backup" -> restoreBackup(context, args)
                 "compile_file" -> compileFile(context, args)
                 "build_apk" -> buildApk(context, args)
                 "run_project" -> runProject(context, args)
@@ -238,6 +487,10 @@ object McpTools {
                 "analyze_imports" -> analyzeImports(context, args)
                 "get_logs" -> getLogs(args)
                 "get_settings" -> getSettings()
+                "dump_screen" -> dumpScreen(args)
+                "check_screen" -> checkScreen(args)
+                "get_runtime_errors" -> getRuntimeErrors(args)
+                "clear_logs" -> clearLogs()
                 else -> errorResult("未知工具: $name")
             }
         } catch (e: Exception) {
@@ -351,10 +604,14 @@ object McpTools {
             file.parentFile?.mkdirs()
             file.writeText(content, Charsets.UTF_8)
         }
+        // 该文件若正在编辑器中打开,必须把新内容推回编辑器;
+        // 否则编辑器仍持有旧内容,用户之后一保存就会把外部写入覆盖掉。
+        val synced = syncEditorIfOpen(file.absolutePath)
         return textResult(
             JSONObject()
                 .put("path", file.absolutePath)
                 .put("bytes", content.toByteArray(Charsets.UTF_8).size)
+                .put("editorSynced", synced)
                 .put("message", "写入成功")
                 .toString(2)
         )
@@ -377,11 +634,14 @@ object McpTools {
             file.parentFile?.mkdirs()
             file.writeText(content, Charsets.UTF_8)
         }
+        // 覆盖已有文件时同样要刷新编辑器,避免旧缓冲区回写覆盖
+        val synced = syncEditorIfOpen(file.absolutePath)
         return textResult(
             JSONObject()
                 .put("path", file.absolutePath)
                 .put("created", true)
                 .put("overwritten", existedBefore)
+                .put("editorSynced", synced)
                 .toString(2)
         )
     }
@@ -394,11 +654,18 @@ object McpTools {
         if (!file.exists()) return errorResult("路径不存在: ${file.absolutePath}")
 
         val deleted = withContext(Dispatchers.IO) { file.delete() }
-        return if (deleted) {
-            textResult(JSONObject().put("path", file.absolutePath).put("deleted", true).toString(2))
-        } else {
-            errorResult("删除失败(目录非空或无权限): ${file.absolutePath}")
+        if (!deleted) {
+            return errorResult("删除失败(目录非空或无权限): ${file.absolutePath}")
         }
+        // 该文件若在编辑器中打开,需关闭标签;否则标签会指向已删除的文件
+        val closed = closeEditorIfOpen(file.absolutePath)
+        return textResult(
+            JSONObject()
+                .put("path", file.absolutePath)
+                .put("deleted", true)
+                .put("editorTabClosed", closed)
+                .toString(2)
+        )
     }
 
     private suspend fun getProjectInfo(context: Context, args: JSONObject): JSONObject {
@@ -469,13 +736,58 @@ object McpTools {
         withContext(Dispatchers.Main) {
             vm.openFile(file, project)
         }
+
         val line = args.optInt("line", 0)
+        var jumped = false
         if (line > 0) {
-            withContext(Dispatchers.Main) {
-                vm.getActiveEditor()?.post { vm.getActiveEditor()?.setSelection(line - 1, 0) }
+            jumped = withContext(Dispatchers.Main) {
+                moveCursorTo(vm, file.absolutePath, line, args.optInt("column", 0))
             }
         }
-        return textResult(JSONObject().put("opened", file.absolutePath).put("line", line).toString(2))
+        return textResult(
+            JSONObject()
+                .put("opened", file.absolutePath)
+                .put("line", line)
+                .put("cursorMoved", jumped)
+                .toString(2)
+        )
+    }
+
+    /**
+     * 把光标移到指定文件的活动编辑器上(1 起算行号)。
+     *
+     * openFile 内部是异步的,编辑器控件可能尚未创建或尚未切到目标文件,
+     * 因此这里带重试地等待编辑器就绪;必须在主线程调用。
+     *
+     * @return 是否成功移动光标
+     */
+    private suspend fun moveCursorTo(
+        vm: EditorViewModel,
+        filePath: String,
+        line: Int,
+        column: Int
+    ): Boolean {
+        repeat(CURSOR_MOVE_ATTEMPTS) { attempt ->
+            val active = vm.activeFileState
+            if (active != null && active.file.absolutePath == filePath) {
+                val editor = vm.getActiveEditor()
+                if (editor != null) {
+                    try {
+                        val lineCount = editor.text.lineCount
+                        val targetLine = (line - 1).coerceIn(0, maxOf(0, lineCount - 1))
+                        val lineLength = editor.text.getColumnCount(targetLine)
+                        val targetColumn = column.coerceAtLeast(0).coerceIn(0, lineLength)
+                        editor.setSelection(targetLine, targetColumn)
+                        return true
+                    } catch (e: Exception) {
+                        LogCatcher.e(TAG, "移动光标失败: $filePath", e)
+                        return false
+                    }
+                }
+            }
+            if (attempt < CURSOR_MOVE_ATTEMPTS - 1) delay(CURSOR_MOVE_INTERVAL_MS)
+        }
+        return false
     }
 
     private suspend fun setEditorContent(context: Context, args: JSONObject): JSONObject {
@@ -499,6 +811,20 @@ object McpTools {
         )
     }
 
+    /**
+     * 关闭指定文件在编辑器中的标签(仅当它已打开)。
+     *
+     * 删除/重命名文件后必须调用,否则标签会指向已不存在的路径。
+     */
+    private suspend fun closeEditorIfOpen(filePath: String): Boolean {
+        val vm = EditorBridge.currentViewModel() ?: return false
+        return withContext(Dispatchers.Main) {
+            val index = vm.openFiles.indexOfFirst { it.file.absolutePath == filePath }
+            if (index < 0) return@withContext false
+            runCatching { vm.closeFile(index) }.isSuccess
+        }
+    }
+
     private suspend fun insertText(args: JSONObject): JSONObject {
         val vm = EditorBridge.currentViewModel() ?: return errorResult("编辑器未打开")
         if (!args.has("text")) return errorResult("缺少参数 text")
@@ -513,6 +839,59 @@ object McpTools {
         val vm = EditorBridge.currentViewModel() ?: return errorResult("编辑器未打开")
         val saved = withContext(Dispatchers.Main) { vm.saveAllFilesSilently() }
         return textResult(JSONObject().put("saved", saved).toString(2))
+    }
+
+    /**
+     * 把磁盘内容推回编辑器(仅当该文件已在编辑器中打开)。
+     *
+     * write_file / create_file 等外部写入之后必须调用,否则编辑器缓冲区仍是旧内容,
+     * 用户随后保存会把外部写入覆盖掉。
+     */
+    private suspend fun syncEditorIfOpen(filePath: String): Boolean {
+        val vm = EditorBridge.currentViewModel() ?: return false
+        return withContext(Dispatchers.Main) {
+            runCatching { vm.refreshEditorFromDisk(filePath) }.getOrDefault(false)
+        }
+    }
+
+    private suspend fun refreshEditor(context: Context, args: JSONObject): JSONObject {
+        val vm = EditorBridge.currentViewModel() ?: return errorResult("编辑器未打开")
+        val raw = args.optString("path", "")
+
+        // 缺省刷新全部已打开文件(统一回到"以磁盘为准")
+        if (raw.isBlank()) {
+            val refreshed = ArrayList<String>()
+            for (state in vm.openFiles) {
+                val path = state.file.absolutePath
+                val ok = withContext(Dispatchers.Main) {
+                    runCatching { vm.refreshEditorFromDisk(path) }.getOrDefault(false)
+                }
+                if (ok) refreshed.add(path)
+            }
+            return textResult(
+                JSONObject()
+                    .put("refreshed", refreshed.size)
+                    .put("paths", JSONArray(refreshed))
+                    .put("editorSynced", refreshed.isNotEmpty())
+                    .toString(2)
+            )
+        }
+
+        val target = resolveProject(context, raw)
+        val ok = withContext(Dispatchers.Main) {
+            runCatching { vm.refreshEditorFromDisk(target.absolutePath) }.getOrDefault(false)
+        }
+        return if (ok) {
+            textResult(
+                JSONObject()
+                    .put("path", target.absolutePath)
+                    .put("refreshed", true)
+                    .put("editorSynced", true)
+                    .toString(2)
+            )
+        } else {
+            errorResult("刷新失败(文件未在编辑器中打开或不可读): ${target.absolutePath}")
+        }
     }
 
     private suspend fun formatCode(): JSONObject {
@@ -570,17 +949,71 @@ object McpTools {
         }
 
         val (compiledPath, errorMsg) = result
-        return if (compiledPath != null) {
-            textResult(
-                JSONObject()
-                    .put("success", true)
-                    .put("source", file.absolutePath)
-                    .put("output", compiledPath)
-                    .toString(2)
-            )
-        } else {
-            errorResult("编译失败: ${errorMsg ?: "未知错误"}")
+        if (compiledPath == null) {
+            return errorResult("编译失败: ${errorMsg ?: "未知错误"}")
         }
+
+        // 编译产物(.luac/.alyc)只是语法验证的副产物,不参与项目构建;
+        // 默认在验证成功后删除,避免残留污染项目目录。
+        val keepOutput = args.optBoolean("keepOutput", false)
+        val outputFile = File(compiledPath)
+        val outputExists = outputFile.exists() && outputFile.isFile
+        var deleted = false
+        if (!keepOutput && outputExists && isCompiledArtifact(outputFile) && isAllowed(context, outputFile)) {
+            deleted = withContext(Dispatchers.IO) { outputFile.delete() }
+        }
+
+        return textResult(
+            JSONObject()
+                .put("success", true)
+                .put("source", file.absolutePath)
+                .put("output", compiledPath)
+                .put("outputExisted", outputExists)
+                .put("outputDeleted", deleted)
+                .put("outputKept", outputExists && !deleted)
+                .put("note", if (deleted) "编译成功,产物已自动删除(keepOutput=true 可保留)" else "编译成功")
+                .toString(2)
+        )
+    }
+
+    /** 判断是否是编辑器编译产物(.luac/.alyc)。 */
+    private fun isCompiledArtifact(file: File): Boolean {
+        val name = file.name.lowercase()
+        return name.endsWith(".luac") || name.endsWith(".alyc")
+    }
+
+    /**
+     * 清理项目内的编译产物(.luac/.alyc)。
+     *
+     * 编译产物由 compile_file / 编辑器"编译文件"生成,不应留在项目里:
+     * 它们既会污染文件树,也可能被后续打包误收。
+     */
+    private suspend fun cleanCompiled(context: Context, args: JSONObject): JSONObject {
+        val project = resolveProjectPath(context, args.optString("path", ""))
+            ?: return errorResult("无法确定项目路径,请先在前台打开项目或传入 path")
+        val dryRun = args.optBoolean("dryRun", false)
+
+        val deleted = withContext(Dispatchers.IO) {
+            val root = File(project)
+            if (!root.exists() || !root.isDirectory) return@withContext null
+            val artifacts = root.walk()
+                .filter { it.isFile && isCompiledArtifact(it) }
+                .toList()
+            if (dryRun) {
+                artifacts.map { it.absolutePath }
+            } else {
+                artifacts.filter { it.delete() }.map { it.absolutePath }
+            }
+        } ?: return errorResult("项目目录不存在: $project")
+
+        return textResult(
+            JSONObject()
+                .put("projectPath", project)
+                .put("dryRun", dryRun)
+                .put("count", deleted.size)
+                .put("files", JSONArray(deleted))
+                .toString(2)
+        )
     }
 
     private suspend fun buildApk(context: Context, args: JSONObject): JSONObject {
@@ -763,6 +1196,118 @@ object McpTools {
         )
     }
 
+    // ------------------------------------------------------------------
+    // 运行时界面检查
+    // ------------------------------------------------------------------
+
+    /** 接受 JSON 数组,或换行/逗号分隔的字符串。 */
+    private fun stringList(args: JSONObject, key: String): List<String> {
+        val array = args.optJSONArray(key)
+        if (array != null) {
+            val out = ArrayList<String>(array.length())
+            for (i in 0 until array.length()) {
+                val value = array.optString(i, "")
+                if (value.isNotBlank()) out.add(value)
+            }
+            return out
+        }
+        val raw = args.optString(key, "")
+        if (raw.isBlank()) return emptyList()
+        return raw.split('\n', ',').map { it.trim() }.filter { it.isNotEmpty() }
+    }
+
+    private suspend fun dumpScreen(args: JSONObject): JSONObject {
+        val includeInvisible = args.optBoolean("includeInvisible", false)
+        val maxDepth = args.optInt("maxDepth", 40).coerceIn(1, 100)
+        return withContext(Dispatchers.Main) {
+            val activity = ActivityTracker.current()
+            if (activity == null) {
+                errorResult("没有前台 Activity,请先调用 run_project 启动界面")
+            } else {
+                textResult(RuntimeInspector.dumpScreen(activity, includeInvisible, maxDepth).toString(2))
+            }
+        }
+    }
+
+    private suspend fun checkScreen(args: JSONObject): JSONObject {
+        val expectTexts = stringList(args, "expectTexts")
+        val expectAnyOf = stringList(args, "expectAnyOf")
+        val absentTexts = stringList(args, "absentTexts")
+        val minViews = if (args.has("minViews")) args.optInt("minViews", 0) else null
+        val includeInvisible = args.optBoolean("includeInvisible", false)
+
+        if (expectTexts.isEmpty() && expectAnyOf.isEmpty() &&
+            absentTexts.isEmpty() && minViews == null
+        ) {
+            return errorResult("至少需要指定 expectTexts / expectAnyOf / absentTexts / minViews 之一")
+        }
+
+        return withContext(Dispatchers.Main) {
+            val activity = ActivityTracker.current()
+            if (activity == null) {
+                errorResult("没有前台 Activity,请先调用 run_project 启动界面")
+            } else {
+                val json = RuntimeInspector.checkScreen(
+                    activity, expectTexts, expectAnyOf, absentTexts, minViews, includeInvisible
+                )
+                val result = textResult(json.toString(2))
+                // 未通过时置 isError,便于客户端直接据此判断
+                if (!json.optBoolean("passed", false)) result.put("isError", true)
+                result
+            }
+        }
+    }
+
+    private suspend fun getRuntimeErrors(args: JSONObject): JSONObject {
+        val lines = args.optInt("lines", 50).coerceIn(1, 2000)
+        val file = File(LOG_FILE_PATH)
+        if (!file.exists()) return errorResult("日志文件不存在: $LOG_FILE_PATH")
+
+        val content = withContext(Dispatchers.IO) {
+            val maxBytes = 512 * 1024
+            if (file.length() <= maxBytes) {
+                file.readText(Charsets.UTF_8)
+            } else {
+                file.inputStream().use { stream ->
+                    stream.skip(file.length() - maxBytes)
+                    String(stream.readBytes(), Charsets.UTF_8)
+                }
+            }
+        }
+        val matched = content.lines().filter { line ->
+            line.contains("[ERROR]") || line.contains("[WARN]") ||
+                line.contains("Runtime error") || line.contains("traceback") ||
+                line.contains("is not a field")
+        }
+        val tail = if (matched.size > lines) matched.subList(matched.size - lines, matched.size) else matched
+        return textResult(
+            JSONObject()
+                .put("path", LOG_FILE_PATH)
+                .put("matched", matched.size)
+                .put("lines", tail.size)
+                .put("content", tail.joinToString("\n"))
+                .toString(2)
+        )
+    }
+
+    private suspend fun clearLogs(): JSONObject = withContext(Dispatchers.IO) {
+        try {
+            val file = File(LOG_FILE_PATH)
+            if (file.exists()) {
+                file.writeText("", Charsets.UTF_8)
+                textResult(JSONObject().put("cleared", true).put("path", LOG_FILE_PATH).toString(2))
+            } else {
+                textResult(
+                    JSONObject().put("cleared", false)
+                        .put("reason", "日志文件不存在").toString(2)
+                )
+            }
+        } catch (e: Exception) {
+            LogCatcher.e(TAG, "清空日志失败", e)
+            errorResult("清空日志失败: ${e.message}")
+        }
+    }
+
     private fun getSettings(): JSONObject {
         val s = SettingsManager.currentSettings
         return textResult(
@@ -842,6 +1387,741 @@ object McpTools {
         val root = projectsRoot(context)
         val children = root.listFiles()?.filter { it.isDirectory } ?: emptyList()
         return if (children.size == 1) children[0].absolutePath else null
+    }
+
+    // ------------------------------------------------------------------
+    // 搜索 / 批量文件操作
+    // ------------------------------------------------------------------
+
+    /** 在目录内收集可搜索的文本文件(跳过二进制与构建目录)。 */
+    private fun collectTextFiles(root: File, max: Int): List<File> {
+        if (!root.exists()) return emptyList()
+        val out = ArrayList<File>()
+        val queue = ArrayDeque<File>()
+        queue.add(root)
+        while (queue.isNotEmpty() && out.size < max) {
+            val dir = queue.removeFirst()
+            val children = dir.listFiles()?.sortedBy { it.name } ?: continue
+            for (child in children) {
+                if (out.size >= max) break
+                if (child.isDirectory) {
+                    // 跳过体积大且与代码无关的目录
+                    if (child.name == ".git" || child.name == "build" || child.name == "node_modules") continue
+                    queue.add(child)
+                } else {
+                    val name = child.name.lowercase()
+                    val isBinary = name.endsWith(".png") || name.endsWith(".jpg") ||
+                        name.endsWith(".jpeg") || name.endsWith(".zip") || name.endsWith(".apk") ||
+                        name.endsWith(".dex") || name.endsWith(".so") || name.endsWith(".jks") ||
+                        name.endsWith(".keystore") || name.endsWith(".luac") || name.endsWith(".alyc")
+                    if (!isBinary && child.length() <= MAX_READ_BYTES) out.add(child)
+                }
+            }
+        }
+        return out
+    }
+
+    private suspend fun searchInFiles(context: Context, args: JSONObject): JSONObject {
+        val query = args.optString("query", "")
+        if (query.isBlank()) return errorResult("缺少参数 query")
+        val root = resolveProject(context, args.optString("path", ""))
+        if (!root.exists()) return errorResult("路径不存在: ${root.absolutePath}")
+
+        val useRegex = args.optBoolean("regex", false)
+        val ignoreCase = args.optBoolean("ignoreCase", true)
+        val maxResults = args.optInt("maxResults", 200).coerceIn(1, 5000)
+
+        val regex = if (useRegex) {
+            try {
+                if (ignoreCase) Regex(query, RegexOption.IGNORE_CASE) else Regex(query)
+            } catch (e: Exception) {
+                return errorResult("正则表达式无效: ${e.message}")
+            }
+        } else null
+
+        val started = System.currentTimeMillis()
+        val matches = withContext(Dispatchers.IO) {
+            val result = JSONArray()
+            var truncated = false
+            val files = if (root.isFile) listOf(root) else collectTextFiles(root, 3000)
+            outer@ for (file in files) {
+                val text = try {
+                    file.readText(Charsets.UTF_8)
+                } catch (_: Exception) {
+                    continue
+                }
+                val lines = text.lines()
+                for (index in lines.indices) {
+                    if (result.length() >= maxResults) {
+                        truncated = true
+                        break@outer
+                    }
+                    val line = lines[index]
+                    val hit = if (regex != null) {
+                        regex.containsMatchIn(line)
+                    } else {
+                        line.contains(query, ignoreCase = ignoreCase)
+                    }
+                    if (hit) {
+                        result.put(
+                            JSONObject()
+                                .put("path", file.absolutePath)
+                                .put("line", index + 1)
+                                .put("text", line.take(500))
+                        )
+                    }
+                }
+            }
+            Pair(result, truncated)
+        }
+
+        return textResult(
+            JSONObject()
+                .put("query", query)
+                .put("regex", useRegex)
+                .put("root", root.absolutePath)
+                .put("count", matches.first.length())
+                .put("truncated", matches.second)
+                .put("elapsedMs", System.currentTimeMillis() - started)
+                .put("matches", matches.first)
+                .toString(2)
+        )
+    }
+
+    private suspend fun readFiles(context: Context, args: JSONObject): JSONObject {
+        val paths = stringList(args, "paths")
+        if (paths.isEmpty()) return errorResult("缺少参数 paths")
+
+        val results = JSONArray()
+        for (raw in paths) {
+            val file = resolveProject(context, raw)
+            val item = JSONObject().put("requested", raw).put("path", file.absolutePath)
+            when {
+                !file.exists() || !file.isFile -> item.put("error", "文件不存在")
+                file.length() > MAX_READ_BYTES -> item.put("error", "文件过大(${file.length()} 字节)")
+                else -> {
+                    val content = withContext(Dispatchers.IO) {
+                        runCatching { file.readText(Charsets.UTF_8) }.getOrNull()
+                    }
+                    if (content == null) {
+                        item.put("error", "读取失败(可能是二进制文件)")
+                    } else {
+                        item.put("size", file.length()).put("content", content)
+                    }
+                }
+            }
+            results.put(item)
+        }
+
+        val ok = (0 until results.length()).count { !results.getJSONObject(it).has("error") }
+        return textResult(
+            JSONObject()
+                .put("requested", paths.size)
+                .put("succeeded", ok)
+                .put("files", results)
+                .toString(2)
+        )
+    }
+
+    /** 统计并(可选)替换文本:返回出现次数与替换后内容。 */
+    private fun applyReplacement(
+        source: String,
+        find: String,
+        replace: String,
+        useRegex: Boolean,
+        ignoreCase: Boolean
+    ): Pair<String, Int> {
+        return if (useRegex) {
+            val regex = if (ignoreCase) Regex(find, RegexOption.IGNORE_CASE) else Regex(find)
+            val count = regex.findAll(source).count()
+            Pair(regex.replace(source, replace), count)
+        } else {
+            var count = 0
+            var index = source.indexOf(find, 0, ignoreCase)
+            while (index >= 0) {
+                count++
+                index = source.indexOf(find, index + find.length, ignoreCase)
+            }
+            val replaced = if (ignoreCase) {
+                // 保大小写的字面量替换
+                val regex = Regex(Regex.escape(find), RegexOption.IGNORE_CASE)
+                regex.replace(source, Regex.escapeReplacement(replace))
+            } else {
+                source.replace(find, replace)
+            }
+            Pair(replaced, count)
+        }
+    }
+
+    private suspend fun replaceInFile(context: Context, args: JSONObject): JSONObject {
+        val raw = args.optString("path", "")
+        if (raw.isBlank()) return errorResult("缺少参数 path")
+        if (!args.has("find")) return errorResult("缺少参数 find")
+        val file = resolveProject(context, raw)
+        if (!file.exists() || !file.isFile) return errorResult("文件不存在: ${file.absolutePath}")
+        if (!isAllowed(context, file)) return errorResult("路径不在允许范围内: ${file.absolutePath}")
+
+        val find = args.optString("find", "")
+        if (find.isEmpty()) return errorResult("find 不能为空")
+        val replace = args.optString("replace", "")
+        val useRegex = args.optBoolean("regex", false)
+        val ignoreCase = args.optBoolean("ignoreCase", false)
+
+        val source = withContext(Dispatchers.IO) {
+            runCatching { file.readText(Charsets.UTF_8) }.getOrNull()
+        } ?: return errorResult("读取失败: ${file.absolutePath}")
+
+        val outcome = try {
+            applyReplacement(source, find, replace, useRegex, ignoreCase)
+        } catch (e: Exception) {
+            return errorResult("正则表达式无效: ${e.message}")
+        }
+        val (updated, count) = outcome
+
+        if (args.has("expectCount")) {
+            val expected = args.optInt("expectCount", 0)
+            if (count != expected) {
+                return errorResult("出现次数不符: 期望 $expected,实际 $count(未做任何修改)")
+            }
+        }
+
+        if (count == 0) {
+            return textResult(
+                JSONObject()
+                    .put("path", file.absolutePath)
+                    .put("occurrences", 0)
+                    .put("changed", false)
+                    .put("message", "未找到匹配内容")
+                    .toString(2)
+            )
+        }
+
+        withContext(Dispatchers.IO) { file.writeText(updated, Charsets.UTF_8) }
+        val synced = syncEditorIfOpen(file.absolutePath)
+        return textResult(
+            JSONObject()
+                .put("path", file.absolutePath)
+                .put("occurrences", count)
+                .put("changed", true)
+                .put("editorSynced", synced)
+                .toString(2)
+        )
+    }
+
+    private suspend fun replaceInFiles(context: Context, args: JSONObject): JSONObject {
+        if (!args.has("find")) return errorResult("缺少参数 find")
+        val find = args.optString("find", "")
+        if (find.isEmpty()) return errorResult("find 不能为空")
+        val replace = args.optString("replace", "")
+        val useRegex = args.optBoolean("regex", false)
+        val ignoreCase = args.optBoolean("ignoreCase", false)
+        val dryRun = args.optBoolean("dryRun", false)
+
+        val root = resolveProject(context, args.optString("path", ""))
+        if (!root.exists()) return errorResult("路径不存在: ${root.absolutePath}")
+
+        // 先校验正则,避免扫到一半才失败
+        if (useRegex) {
+            try {
+                if (ignoreCase) Regex(find, RegexOption.IGNORE_CASE) else Regex(find)
+            } catch (e: Exception) {
+                return errorResult("正则表达式无效: ${e.message}")
+            }
+        }
+
+        val summary: List<Any> = withContext(Dispatchers.IO) {
+            val details = JSONArray()
+            var fileCount = 0
+            var totalOccurrences = 0
+            var skipped = 0
+            val files = if (root.isFile) listOf(root) else collectTextFiles(root, 3000)
+            for (file in files) {
+                if (!isAllowed(context, file)) {
+                    skipped++
+                    continue
+                }
+                val source = runCatching { file.readText(Charsets.UTF_8) }.getOrNull()
+                if (source == null) {
+                    skipped++
+                    continue
+                }
+                val (updated, count) = try {
+                    applyReplacement(source, find, replace, useRegex, ignoreCase)
+                } catch (_: Exception) {
+                    skipped++
+                    continue
+                }
+                if (count == 0) continue
+                fileCount++
+                totalOccurrences += count
+                if (!dryRun) file.writeText(updated, Charsets.UTF_8)
+                details.put(
+                    JSONObject()
+                        .put("path", file.absolutePath)
+                        .put("occurrences", count)
+                )
+            }
+            listOf(details, fileCount, totalOccurrences, skipped)
+        }
+
+        // 批量写入后统一刷新编辑器,避免缓冲区回写覆盖
+        if (!dryRun) {
+            val vm = EditorBridge.currentViewModel()
+            if (vm != null) {
+                withContext(Dispatchers.Main) {
+                    vm.openFiles.forEach { runCatching { vm.refreshEditorFromDisk(it.file.absolutePath) } }
+                }
+            }
+        }
+
+        return textResult(
+            JSONObject()
+                .put("root", root.absolutePath)
+                .put("dryRun", dryRun)
+                .put("changedFiles", summary[1])
+                .put("occurrences", summary[2])
+                .put("skipped", summary[3])
+                .put("files", summary[0])
+                .toString(2)
+        )
+    }
+
+    private suspend fun renameFile(context: Context, args: JSONObject): JSONObject {
+        val fromRaw = args.optString("from", "")
+        val toRaw = args.optString("to", "")
+        if (fromRaw.isBlank() || toRaw.isBlank()) return errorResult("缺少参数 from / to")
+        val from = resolveProject(context, fromRaw)
+        if (!from.exists()) return errorResult("源路径不存在: ${from.absolutePath}")
+        if (!isAllowed(context, from)) return errorResult("源路径不在允许范围内: ${from.absolutePath}")
+
+        val to = resolveProject(context, toRaw)
+        if (!isAllowed(context, to)) return errorResult("目标路径不在允许范围内: ${to.absolutePath}")
+        // 禁止把目录移入自身
+        if (to.absolutePath.startsWith(from.absolutePath + File.separator)) {
+            return errorResult("目标路径不能位于源目录内部: ${to.absolutePath}")
+        }
+
+        val overwrite = args.optBoolean("overwrite", false)
+        val targetExisting = to.exists()
+
+        if (targetExisting && !overwrite) {
+            return errorResult("目标已存在(overwrite=false): ${to.absolutePath}")
+        }
+
+        val success = withContext(Dispatchers.IO) {
+            runCatching {
+                to.parentFile?.mkdirs()
+                if (targetExisting && overwrite && to.isDirectory) {
+                    // 覆盖目录需先清空,否则 renameTo 会失败
+                    to.deleteRecursively()
+                } else if (targetExisting && overwrite) {
+                    to.delete()
+                }
+                from.renameTo(to)
+            }.getOrDefault(false)
+        }
+
+        if (!success) return errorResult("重命名失败: ${from.absolutePath} -> ${to.absolutePath}")
+
+        // 同步编辑器:关闭旧标签(路径已失效)
+        val closed = closeEditorIfOpen(from.absolutePath)
+
+        return textResult(
+            JSONObject()
+                .put("from", from.absolutePath)
+                .put("to", to.absolutePath)
+                .put("renamed", true)
+                .put("overwritten", targetExisting)
+                .put("editorTabClosed", closed)
+                .toString(2)
+        )
+    }
+
+    private suspend fun makeDirectory(context: Context, args: JSONObject): JSONObject {
+        val raw = args.optString("path", "")
+        if (raw.isBlank()) return errorResult("缺少参数 path")
+        val dir = resolveProject(context, raw)
+        if (!isAllowed(context, dir)) return errorResult("路径不在允许范围内: ${dir.absolutePath}")
+
+        val existed = dir.exists()
+        val created = withContext(Dispatchers.IO) { dir.mkdirs() || dir.isDirectory }
+        if (!created) return errorResult("创建目录失败: ${dir.absolutePath}")
+
+        return textResult(
+            JSONObject()
+                .put("path", dir.absolutePath)
+                .put("existed", existed)
+                .put("created", true)
+                .toString(2)
+        )
+    }
+
+    private suspend fun fileInfo(context: Context, args: JSONObject): JSONObject {
+        val raw = args.optString("path", "")
+        if (raw.isBlank()) return errorResult("缺少参数 path")
+        val file = resolveProject(context, raw)
+        if (!file.exists()) return errorResult("路径不存在: ${file.absolutePath}")
+
+        return withContext(Dispatchers.IO) {
+            val json = JSONObject()
+                .put("path", file.absolutePath)
+                .put("name", file.name)
+                .put("directory", file.isDirectory)
+                .put("size", file.length())
+                .put("lastModified", file.lastModified())
+                .put("readable", file.canRead())
+                .put("writable", file.canWrite())
+
+            if (file.isDirectory) {
+                val children = file.listFiles() ?: emptyArray()
+                json.put("childCount", children.size)
+                    .put("fileCount", children.count { it.isFile })
+                    .put("dirCount", children.count { it.isDirectory })
+            } else {
+                json.put("extension", file.extension.lowercase())
+                // 文本文件补充行数/MD5,便于比对
+                if (file.length() <= MAX_READ_BYTES) {
+                    val text = runCatching { file.readText(Charsets.UTF_8) }.getOrNull()
+                    if (text != null) {
+                        json.put("lines", text.lineSequence().count())
+                        json.put("md5", md5Of(text))
+                    }
+                }
+            }
+            textResult(json.toString(2))
+        }
+    }
+
+    private fun md5Of(text: String): String = try {
+        java.security.MessageDigest.getInstance("MD5")
+            .digest(text.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    } catch (_: Exception) {
+        ""
+    }
+
+    // ------------------------------------------------------------------
+    // 语法检查 / 编辑器光标
+    // ------------------------------------------------------------------
+
+    private suspend fun checkSyntax(context: Context, args: JSONObject): JSONObject {
+        val raw = args.optString("path", "")
+        val code = when {
+            args.has("content") -> args.optString("content", "")
+            raw.isNotBlank() -> {
+                val file = resolveProject(context, raw)
+                if (!file.exists() || !file.isFile) return errorResult("文件不存在: ${file.absolutePath}")
+                withContext(Dispatchers.IO) { runCatching { file.readText(Charsets.UTF_8) }.getOrNull() }
+                    ?: return errorResult("读取失败: ${file.absolutePath}")
+            }
+            else -> EditorBridge.currentViewModel()?.activeFileState?.content
+                ?: return errorResult("缺少参数 path/content,且编辑器没有活动文件")
+        }
+
+        val target = raw.ifBlank { EditorBridge.currentViewModel()?.activeFileState?.file?.absolutePath ?: "" }
+        val lowerName = target.lowercase()
+        if (target.isNotBlank() && !lowerName.endsWith(".lua") && !lowerName.endsWith(".aly")) {
+            return errorResult("只支持检查 .lua/.aly,当前: ${target.substringAfterLast('.')}")
+        }
+
+        val result = withContext(Dispatchers.IO) {
+            runCatching { LuaParserUtil.parse(code) }.getOrNull()
+        } ?: return errorResult("语法检查器不可用(原生库未加载)")
+
+        val parsed = runCatching { JsonUtil.parseObject(result) }.getOrNull()
+            ?: return errorResult("语法检查结果解析失败")
+
+        val status = parsed["status"] as? Boolean ?: false
+        val line = (parsed["line"] as? Number)?.toInt() ?: 0
+        val message = parsed["message"] as? String ?: ""
+
+        return textResult(
+            JSONObject()
+                .put("passed", status)
+                .put("status", status)
+                .put("line", line)
+                .put("message", message)
+                .put("path", target)
+                .put("codeLength", code.length)
+                .toString(2)
+        )
+    }
+
+    private fun getSelection(): JSONObject {
+        val vm = EditorBridge.currentViewModel() ?: return errorResult("编辑器未打开")
+        val state = vm.activeFileState ?: return errorResult("没有活动文件")
+        val editor = vm.getActiveEditor() ?: return errorResult("活动编辑器尚未创建")
+        return textResult(
+            JSONObject()
+                .put("path", state.file.absolutePath)
+                .put("fileName", state.file.name)
+                .put("isModified", state.isModified)
+                .put("cursorLine", editor.cursor.leftLine)
+                .put("cursorColumn", editor.cursor.leftColumn)
+                .put("selectionEndLine", editor.cursor.rightLine)
+                .put("hasSelection", editor.cursor.isSelected)
+                .put("selectedText", runCatching {
+                    val left = editor.cursor.left
+                    val right = editor.cursor.right
+                    if (right > left) editor.text.subSequence(left, right).toString() else ""
+                }.getOrDefault(""))
+                .toString(2)
+        )
+    }
+
+    private suspend fun editorHistory(args: JSONObject): JSONObject {
+        val vm = EditorBridge.currentViewModel() ?: return errorResult("编辑器未打开")
+        if (vm.activeFileState == null) return errorResult("没有活动文件")
+        val action = args.optString("action", "undo").lowercase()
+        if (action != "undo" && action != "redo") return errorResult("action 只支持 undo / redo")
+
+        withContext(Dispatchers.Main) {
+            if (action == "undo") vm.undo() else vm.redo()
+        }
+        return textResult(JSONObject().put("action", action).put("done", true).toString(2))
+    }
+
+    private suspend fun gotoLine(args: JSONObject): JSONObject {
+        val vm = EditorBridge.currentViewModel() ?: return errorResult("编辑器未打开")
+        val state = vm.activeFileState ?: return errorResult("没有活动文件")
+        val line = args.optInt("line", 0)
+        if (line <= 0) return errorResult("line 必须大于 0(1 起算)")
+        val column = args.optInt("column", 0).coerceAtLeast(0)
+
+        return withContext(Dispatchers.Main) {
+            val editor = vm.getActiveEditor()
+                ?: return@withContext errorResult("活动编辑器尚未创建,无法跳转")
+            try {
+                val lineCount = editor.text.lineCount
+                val targetLine = (line - 1).coerceIn(0, maxOf(0, lineCount - 1))
+                val lineLength = editor.text.getColumnCount(targetLine)
+                val targetColumn = column.coerceIn(0, lineLength)
+                editor.setSelection(targetLine, targetColumn)
+                textResult(
+                    JSONObject()
+                        .put("path", state.file.absolutePath)
+                        .put("line", targetLine + 1)
+                        .put("column", targetColumn)
+                        .put("moved", true)
+                        .toString(2)
+                )
+            } catch (e: Exception) {
+                LogCatcher.e(TAG, "跳转行失败", e)
+                errorResult("跳转失败: ${e.message}")
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 运行时等待 / 项目创建 / 备份还原
+    // ------------------------------------------------------------------
+
+    private suspend fun waitForText(args: JSONObject): JSONObject {
+        val text = args.optString("text", "")
+        if (text.isBlank()) return errorResult("缺少参数 text")
+        val absent = args.optBoolean("absent", false)
+        val timeoutMs = args.optInt("timeoutMs", 10000).coerceIn(200, 60000)
+        val intervalMs = args.optInt("intervalMs", 500).coerceIn(50, 5000)
+
+        val started = System.currentTimeMillis()
+        var lastTexts: List<String> = emptyList()
+
+        while (System.currentTimeMillis() - started < timeoutMs) {
+            val texts = withContext(Dispatchers.Main) {
+                val activity = ActivityTracker.current() ?: return@withContext null
+                RuntimeInspector.collectVisibleTexts(activity, false)
+            }
+            if (texts == null) {
+                delay(intervalMs.toLong())
+                continue
+            }
+            lastTexts = texts
+            val present = texts.any { it.contains(text) }
+            if (present != absent) {
+                return textResult(
+                    JSONObject()
+                        .put("text", text)
+                        .put("absent", absent)
+                        .put("matched", true)
+                        .put("elapsedMs", System.currentTimeMillis() - started)
+                        .put("texts", JSONArray(texts.take(50)))
+                        .toString(2)
+                )
+            }
+            delay(intervalMs.toLong())
+        }
+
+        val description = if (absent) "在 $timeoutMs ms 内未消失" else "在 $timeoutMs ms 内未出现"
+        // 与 check_screen 一致:保留结构化结果,同时置 isError 便于客户端直接判定
+        return textResult(
+            JSONObject()
+                .put("text", text)
+                .put("absent", absent)
+                .put("matched", false)
+                .put("elapsedMs", System.currentTimeMillis() - started)
+                .put("texts", JSONArray(lastTexts.take(50)))
+                .put("message", "文本$description")
+                .toString(2)
+        ).put("isError", true)
+    }
+
+    private suspend fun listTemplates(context: Context): JSONObject {
+        val deferred = CompletableDeferred<List<TemplateItem>>()
+        ProjectUtil.loadTemplates(context) { deferred.complete(it) }
+        val templates = withTimeoutOrNull(8000) { deferred.await() } ?: emptyList()
+
+        val array = JSONArray()
+        templates.forEach { item ->
+            array.put(
+                JSONObject()
+                    .put("name", item.name)
+                    .put("zipFileName", item.zipFileName)
+                    .put("hasPreview", item.previewUri != null)
+            )
+        }
+        return textResult(
+            JSONObject()
+                .put("count", templates.size)
+                .put("templates", array)
+                .toString(2)
+        )
+    }
+
+    private suspend fun createProject(context: Context, args: JSONObject): JSONObject {
+        val root = projectsRoot(context)
+        val name = args.optString("name", "").ifBlank {
+            ProjectUtil.generateDefaultProjectName(root)
+        }
+        if (name.contains('/') || name.contains('\\')) {
+            return errorResult("项目名不能包含路径分隔符: $name")
+        }
+
+        val packageName = args.optString("packageName", "").ifBlank {
+            ProjectUtil.generatePackageName(name)
+        }
+        if (!ProjectUtil.isValidPackageName(packageName)) {
+            return errorResult("包名无效: $packageName")
+        }
+
+        val projectDir = File(root, name)
+        val overwrite = args.optBoolean("overwrite", false)
+        if (projectDir.exists()) {
+            if (!overwrite) return errorResult("项目已存在(overwrite=false): ${projectDir.absolutePath}")
+            if (!isAllowed(context, projectDir)) {
+                return errorResult("路径不在允许范围内: ${projectDir.absolutePath}")
+            }
+            val cleared = withContext(Dispatchers.IO) { projectDir.deleteRecursively() }
+            if (!cleared) return errorResult("无法清空已存在的项目目录: ${projectDir.absolutePath}")
+        }
+
+        val debugMode = args.optBoolean("debugMode", false)
+        val globalUtils = stringList(args, "globalUtils")
+        val templateName = args.optString("template", "")
+
+        // 复用 UI 侧同一套模板检索逻辑,保证模板名与新建界面一致
+        var template: TemplateItem? = null
+        if (templateName.isNotBlank()) {
+            val deferred = CompletableDeferred<List<TemplateItem>>()
+            ProjectUtil.loadTemplates(context) { deferred.complete(it) }
+            val templates = withTimeoutOrNull(8000) { deferred.await() } ?: emptyList()
+            template = templates.firstOrNull {
+                it.zipFileName.equals(templateName, ignoreCase = true) ||
+                    it.name.equals(templateName, ignoreCase = true) ||
+                    it.zipFileName.equals("$templateName.zip", ignoreCase = true)
+            } ?: return errorResult(
+                "模板不存在: $templateName(可用: ${templates.joinToString { it.zipFileName }})"
+            )
+        }
+
+        val created = withContext(Dispatchers.IO) {
+            runCatching {
+                projectDir.mkdirs()
+                template?.let {
+                    ProjectUtil.extractTemplate(context, it, projectDir, name, packageName, debugMode)
+                }
+                ProjectUtil.saveSettingsFile(projectDir, name, packageName, debugMode, globalUtils)
+                if (template == null) {
+                    // 无模板时补一个可运行的 main.lua
+                    ProjectUtil.createDefaultMainLuaFile(projectDir, name)
+                }
+                true
+            }.getOrElse { e ->
+                LogCatcher.e(TAG, "创建项目失败: $name", e as? Exception ?: Exception(e))
+                false
+            }
+        }
+
+        if (!created) return errorResult("创建项目失败: ${projectDir.absolutePath}")
+
+        return textResult(
+            JSONObject()
+                .put("name", name)
+                .put("path", projectDir.absolutePath)
+                .put("packageName", packageName)
+                .put("template", template?.zipFileName ?: JSONObject.NULL)
+                .put("debugMode", debugMode)
+                .put("created", true)
+                .toString(2)
+        )
+    }
+
+    private suspend fun restoreBackup(context: Context, args: JSONObject): JSONObject {
+        val raw = args.optString("backupPath", "")
+        if (raw.isBlank()) return errorResult("缺少参数 backupPath")
+        val backup = File(raw)
+        if (!backup.exists() || !backup.isFile) return errorResult("备份文件不存在: ${backup.absolutePath}")
+        if (!isAllowed(context, backup)) {
+            return errorResult("备份文件不在允许范围内: ${backup.absolutePath}")
+        }
+        if (!backup.name.lowercase().endsWith(".zip")) {
+            return errorResult("只支持还原 .zip 备份: ${backup.name}")
+        }
+
+        val projectName = args.optString("projectName", "").ifBlank {
+            // 备份命名规则: 项目名_yyyyMMdd_HHmmss.zip
+            backup.nameWithoutExtension.replace(Regex("_\\d{8}_\\d{6}$"), "")
+        }
+        if (projectName.isBlank()) return errorResult("无法从备份文件名推导项目名,请显式传入 projectName")
+
+        val targetDir = File(projectsRoot(context), projectName)
+        if (!isAllowed(context, targetDir)) {
+            return errorResult("目标路径不在允许范围内: ${targetDir.absolutePath}")
+        }
+
+        val overwrite = args.optBoolean("overwrite", false)
+        if (targetDir.exists()) {
+            if (!overwrite) return errorResult("项目已存在(overwrite=false): ${targetDir.absolutePath}")
+            val cleared = withContext(Dispatchers.IO) { targetDir.deleteRecursively() }
+            if (!cleared) return errorResult("无法清空已存在的项目目录: ${targetDir.absolutePath}")
+        }
+
+        val restored = withContext(Dispatchers.IO) {
+            targetDir.mkdirs()
+            FileUtil.extractZip(backup, targetDir)
+        }
+        if (!restored) return errorResult("还原失败: ${backup.absolutePath}")
+
+        // 关闭编辑器中可能残留的同名文件标签
+        val vm = EditorBridge.currentViewModel()
+        if (vm != null) {
+            val prefix = targetDir.absolutePath + File.separator
+            val stale = vm.openFiles.map { it.file.absolutePath }.filter { it.startsWith(prefix) }
+            withContext(Dispatchers.Main) {
+                stale.forEach { path ->
+                    val index = vm.openFiles.indexOfFirst { it.file.absolutePath == path }
+                    if (index >= 0) runCatching { vm.closeFile(index) }
+                }
+            }
+        }
+
+        return textResult(
+            JSONObject()
+                .put("backupPath", backup.absolutePath)
+                .put("projectName", projectName)
+                .put("projectPath", targetDir.absolutePath)
+                .put("restored", true)
+                .toString(2)
+        )
     }
 
     // ------------------------------------------------------------------

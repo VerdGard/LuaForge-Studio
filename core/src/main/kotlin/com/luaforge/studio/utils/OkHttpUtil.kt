@@ -27,6 +27,8 @@ object OkHttpUtil {
     private fun getClient(): OkHttpClient {
         if (client == null) {
             client = OkHttpClient.Builder()
+                // 网络请求拦截:所有 okhttp.* 调用在发出前需用户确认
+                .addInterceptor(NetworkInterceptor())
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)

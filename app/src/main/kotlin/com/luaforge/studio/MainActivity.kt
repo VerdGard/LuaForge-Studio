@@ -64,6 +64,7 @@ import coil.compose.SubcomposeAsyncImage
 import com.luaforge.studio.ui.editor.persistence.EditorStateUtil
 import com.luaforge.studio.ui.about.AboutScreen
 import com.luaforge.studio.mcp.McpManager
+import com.luaforge.studio.network.NetworkApprovalManager
 import com.luaforge.studio.ui.components.FilePickerDialog
 import com.luaforge.studio.ui.components.SelectionMode
 import com.luaforge.studio.ui.components.Toast
@@ -140,6 +141,22 @@ fun MainApp() {
     }
     LaunchedEffect(settings.mcpEnabled, settings.mcpPort, settings.mcpToken, settings.mcpRequireToken) {
         McpManager.applySettings(settings)
+    }
+
+    // 网络拦截策略随设置同步(开关/允许列表/拒绝列表任一变化即时生效)
+    LaunchedEffect(Unit) {
+        NetworkApprovalManager.install()
+    }
+    LaunchedEffect(
+        settings.networkInterceptEnabled,
+        settings.networkAllowedHosts,
+        settings.networkBlockedHosts
+    ) {
+        NetworkApprovalManager.applyPolicy(
+            settings.networkInterceptEnabled,
+            settings.networkAllowedHosts,
+            settings.networkBlockedHosts
+        )
     }
 
     val toastTransitionSpec: AnimatedContentTransitionScope<ToastData?>.() -> ContentTransform = {

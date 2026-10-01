@@ -597,4 +597,23 @@
     <string name="settings_mcp_status_stopped">未运行</string>
     <string name="settings_mcp_hint">在 MCP 客户端中添加 HTTP 地址即可调用工具。服务随应用进程存活,退出应用即停止。</string>
 
+    <string name="settings_network">网络请求拦截</string>
+    <string name="settings_network_enable">拦截网络请求</string>
+    <string name="settings_network_enable_desc">请求发出前弹出确认框,用户允许后才放行</string>
+    <string name="settings_network_allowed">已允许的主机</string>
+    <string name="settings_network_allowed_desc">这些主机的请求不再询问,直接放行</string>
+    <string name="settings_network_blocked">已拒绝的主机</string>
+    <string name="settings_network_blocked_desc">这些主机的请求不再询问,直接拒绝</string>
+    <string name="settings_network_clear">清空记录</string>
+    <string name="settings_network_cleared">已清空允许与拒绝记录</string>
+    <string name="settings_network_hint">拦截范围包含编辑器自身的网络请求,以及用户项目通过 http、okhttp 发起的请求。图片加载与 WebView 请求不拦截。项目打包成 APK 后不包含拦截逻辑,因此打包后不会被拦截。</string>
+    <string name="settings_network_dialog_title">网络请求确认</string>
+    <string name="settings_network_dialog_allow">允许</string>
+    <string name="settings_network_dialog_deny">拒绝</string>
+    <string name="settings_network_remember">记住该主机的选择</string>
+    <string name="settings_network_url">地址</string>
+    <string name="settings_network_headers">请求头</string>
+    <string name="settings_network_body">请求体</string>
+    <string name="settings_network_source">来源</string>
+
 </resources>

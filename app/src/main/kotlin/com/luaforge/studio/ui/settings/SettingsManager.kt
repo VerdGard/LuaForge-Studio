@@ -91,6 +91,11 @@ private object PreferencesKeys {
     val MCP_PORT = intPreferencesKey("mcp_port")
     val MCP_REQUIRE_TOKEN = booleanPreferencesKey("mcp_require_token")
     val MCP_TOKEN = stringPreferencesKey("mcp_token")
+
+    // 【新增】网络请求拦截设置
+    val NETWORK_INTERCEPT_ENABLED = booleanPreferencesKey("network_intercept_enabled")
+    val NETWORK_ALLOWED_HOSTS = stringPreferencesKey("network_allowed_hosts")
+    val NETWORK_BLOCKED_HOSTS = stringPreferencesKey("network_blocked_hosts")
 }
 
 // 排序方式枚举
@@ -239,6 +244,21 @@ object SettingsManager {
         val mcpRequireToken = preferences[PreferencesKeys.MCP_REQUIRE_TOKEN] ?: false
         val mcpToken = preferences[PreferencesKeys.MCP_TOKEN] ?: ""
 
+        // 【新增】加载网络请求拦截设置
+        val networkInterceptEnabled = preferences[PreferencesKeys.NETWORK_INTERCEPT_ENABLED] ?: false
+        val networkAllowedHosts: Set<String> = try {
+            val type = object : TypeToken<Set<String>>() {}.type
+            Gson().fromJson(preferences[PreferencesKeys.NETWORK_ALLOWED_HOSTS] ?: "[]", type) ?: emptySet()
+        } catch (e: Exception) {
+            emptySet()
+        }
+        val networkBlockedHosts: Set<String> = try {
+            val type = object : TypeToken<Set<String>>() {}.type
+            Gson().fromJson(preferences[PreferencesKeys.NETWORK_BLOCKED_HOSTS] ?: "[]", type) ?: emptySet()
+        } catch (e: Exception) {
+            emptySet()
+        }
+
         updateSettings(
             SettingsData(
                 themeType = themeType,
@@ -273,7 +293,10 @@ object SettingsManager {
                 mcpEnabled = mcpEnabled,                  // 【新增】
                 mcpPort = mcpPort,                        // 【新增】
                 mcpRequireToken = mcpRequireToken,        // 【新增】
-                mcpToken = mcpToken                       // 【新增】
+                mcpToken = mcpToken,                      // 【新增】
+                networkInterceptEnabled = networkInterceptEnabled,  // 【新增】
+                networkAllowedHosts = networkAllowedHosts,          // 【新增】
+                networkBlockedHosts = networkBlockedHosts           // 【新增】
             )
         )
     }
@@ -337,6 +360,11 @@ object SettingsManager {
             preferences[PreferencesKeys.MCP_PORT] = currentSettings.mcpPort
             preferences[PreferencesKeys.MCP_REQUIRE_TOKEN] = currentSettings.mcpRequireToken
             preferences[PreferencesKeys.MCP_TOKEN] = currentSettings.mcpToken
+
+            // 【新增】保存网络请求拦截设置
+            preferences[PreferencesKeys.NETWORK_INTERCEPT_ENABLED] = currentSettings.networkInterceptEnabled
+            preferences[PreferencesKeys.NETWORK_ALLOWED_HOSTS] = Gson().toJson(currentSettings.networkAllowedHosts)
+            preferences[PreferencesKeys.NETWORK_BLOCKED_HOSTS] = Gson().toJson(currentSettings.networkBlockedHosts)
         }
         notifyListeners()
     }
@@ -453,4 +481,7 @@ data class SettingsData(
     val mcpPort: Int = 8787,                         // 【新增】MCP 服务端口
     val mcpRequireToken: Boolean = false,            // 【新增】MCP 是否要求令牌
     val mcpToken: String = "",                       // 【新增】MCP 访问令牌
+    val networkInterceptEnabled: Boolean = false,    // 【新增】网络请求拦截开关(默认关闭)
+    val networkAllowedHosts: Set<String> = emptySet(), // 【新增】已允许的请求主机
+    val networkBlockedHosts: Set<String> = emptySet(), // 【新增】已拒绝的请求主机
 )

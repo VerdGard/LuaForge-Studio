@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Swipe
 import androidx.compose.material3.Button
@@ -216,6 +217,7 @@ fun SettingsScreen(
     var mcpExpanded by remember { mutableStateOf(false) }
     var mcpPortText by remember { mutableStateOf(currentSettingsState.mcpPort.toString()) }
     var mcpTokenText by remember { mutableStateOf(currentSettingsState.mcpToken) }
+    var networkExpanded by remember { mutableStateOf(false) }
 
     var fontMenuExpanded by remember { mutableStateOf(false) }
     var editorFontMenuExpanded by remember { mutableStateOf(false) }
@@ -1194,6 +1196,139 @@ SettingsListItem(
 
                             Text(
                                 text = stringResource(R.string.settings_mcp_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                SettingsCardGroup(
+                    title = stringResource(R.string.settings_network),
+                    icon = Icons.Filled.Security,
+                    initiallyExpanded = networkExpanded,
+                    onExpandedChange = { networkExpanded = it }
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        SettingsListItem(
+                            title = stringResource(R.string.settings_network_enable),
+                            subtitle = stringResource(R.string.settings_network_enable_desc),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Security,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = currentSettingsState.networkInterceptEnabled,
+                                    onCheckedChange = { enabled ->
+                                        updateSettingsWithSave(
+                                            currentSettingsState.copy(networkInterceptEnabled = enabled)
+                                        )
+                                    }
+                                )
+                            },
+                            onClick = {
+                                updateSettingsWithSave(
+                                    currentSettingsState.copy(
+                                        networkInterceptEnabled = !currentSettingsState.networkInterceptEnabled
+                                    )
+                                )
+                            }
+                        )
+
+                        if (currentSettingsState.networkInterceptEnabled) {
+                            Text(
+                                text = stringResource(R.string.settings_network_allowed) +
+                                    " (${currentSettingsState.networkAllowedHosts.size})",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = stringResource(R.string.settings_network_allowed_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            if (currentSettingsState.networkAllowedHosts.isNotEmpty()) {
+                                currentSettingsState.networkAllowedHosts.sorted().forEach { hostName ->
+                                    Text(
+                                        text = hostName,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            Text(
+                                text = stringResource(R.string.settings_network_blocked) +
+                                    " (${currentSettingsState.networkBlockedHosts.size})",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = stringResource(R.string.settings_network_blocked_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            if (currentSettingsState.networkBlockedHosts.isNotEmpty()) {
+                                currentSettingsState.networkBlockedHosts.sorted().forEach { hostName ->
+                                    Text(
+                                        text = hostName,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            if (currentSettingsState.networkAllowedHosts.isNotEmpty() ||
+                                currentSettingsState.networkBlockedHosts.isNotEmpty()
+                            ) {
+                                Button(
+                                    onClick = {
+                                        updateSettingsWithSave(
+                                            currentSettingsState.copy(
+                                                networkAllowedHosts = emptySet(),
+                                                networkBlockedHosts = emptySet()
+                                            )
+                                        )
+                                        toast.showToast(
+                                            context.getString(R.string.settings_network_cleared)
+                                        )
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Clear,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(stringResource(R.string.settings_network_clear))
+                                }
+                            }
+
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                thickness = 0.5.dp,
+                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.05f)
+                            )
+
+                            Text(
+                                text = stringResource(R.string.settings_network_hint),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

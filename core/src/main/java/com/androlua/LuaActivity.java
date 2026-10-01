@@ -58,6 +58,7 @@ import com.luajava.LuaState;
 import com.luajava.LuaStateFactory;
 
 import com.luaforge.studio.core.R;
+import com.luaforge.studio.utils.RuntimeLog;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -1471,10 +1472,13 @@ public class LuaActivity extends AppCompatActivity
     message.what = 0;
     handler.sendMessage(message);
     Log.i("lua", msg);
+    // 同步落盘到 luaforge.log:此前仅写 logcat,导致 Lua 运行时错误无从排查
+    RuntimeLog.logLua(msg);
   }
 
   @Override
   public void sendError(String title, Exception msg) {
+    RuntimeLog.error(pageName + "." + title, title + ": " + msg.getMessage(), msg);
     Object ret = runFunc("onError", title, msg);
     if (ret != null && ret.getClass() == Boolean.class && (Boolean) ret) {
     } else sendMsg(title + ": " + msg.getMessage());

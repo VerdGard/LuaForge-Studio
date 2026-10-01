@@ -81,8 +81,68 @@ local excludeAttributes = {
   theme = true,
   style = true,
   id = true,
-  viewId = true
+  viewId = true,
+  -- 属性别名(与 attributeNormalization 对应);归一化后不会命中,此处仅作幂等兜底
+  width = true,
+  height = true,
+  weight = true,
+  margin = true,
+  marginHorizontal = true,
+  marginVertical = true,
+  marginLeft = true,
+  marginTop = true,
+  marginRight = true,
+  marginBottom = true,
+  marginStart = true,
+  marginEnd = true
 }
+
+-- 常见属性别名归一化:允许直接写 marginTop / width 等(与 Android XML 习惯一致),
+-- 统一转换为 layout_marginTop / layout_width。
+-- 若不归一化,这些键会落到 setAttribute 的兜底分支 view["marginTop"] = v,
+-- 由 luajava 抛出 "xxx is not a field",导致整个布局加载失败。
+local attributeNormalization = {
+  width = "layout_width",
+  height = "layout_height",
+  weight = "layout_weight",
+  margin = "layout_margin",
+  marginHorizontal = "layout_marginHorizontal",
+  marginVertical = "layout_marginVertical",
+  marginLeft = "layout_marginLeft",
+  marginTop = "layout_marginTop",
+  marginRight = "layout_marginRight",
+  marginBottom = "layout_marginBottom",
+  marginStart = "layout_marginStart",
+  marginEnd = "layout_marginEnd"
+}
+
+--- 就地归一化布局表中的属性别名(幂等)
+---@param layout table
+local function normalizeAttributes(layout)
+  for alias, canonical in pairs(attributeNormalization) do
+    local aliasValue = layout[alias]
+    if aliasValue ~= nil then
+      if layout[canonical] == nil then
+        layout[canonical] = aliasValue
+      end
+      layout[alias] = nil
+    end
+  end
+end
+
+-- 布局属性告警落盘:写入应用日志(luaforge.log),便于 MCP 运行时检查与排查
+local layoutLogPath = "/storage/emulated/0/LuaForge-Studio/luaforge.log"
+local function logLayoutWarning(attribute, value, err)
+  pcall(function()
+    local file = io.open(layoutLogPath, "a+")
+    if file then
+      file:write(stringFormat("[%s] [WARN] [loadlayout] 未知或无法设置的属性 key='%s' value='%s'%s\n",
+        os.date("%Y-%m-%d %H:%M:%S"), tostring(attribute), tostring(value),
+        err and (" error=" .. tostring(err)) or ""))
+      file:close()
+    end
+  end)
+end
 
 local ruleConstants = {
   layout_above = 2,
@@ -820,17 +880,30 @@ local function setAttribute(view, attribute, value, layoutParams, views, deferre
     view = layoutParams
   end
 
+  local setterName = "set" .. stringGsub(attribute, "^(%a)", stringUpper)
+
   if valueType == "table" then
-    -- Table type attributes cannot omit set
-    view["set" .. stringGsub(attribute, "^(%a)", stringUpper)](parseValues(value))
+    -- Table type attributes must go through their setter
+    local ok, err = pcall(function()
+      view[setterName](parseValues(value))
+    end)
+    if not ok then
+      logLayoutWarning(attribute, value, err)
+    end
    else
     -- Try to call setter
-    local success, err = pcall(function()
-      view["set" .. stringGsub(attribute, "^(%a)", stringUpper)](parseValue(value))
+    local ok = pcall(function()
+      view[setterName](parseValue(value))
     end)
-    if not success then
+    if not ok then
       -- Try direct assignment
-      view[attribute] = parseValue(value)
+      local assigned = pcall(function()
+        view[attribute] = parseValue(value)
+      end)
+      if not assigned then
+        -- 未知属性不再中断整棵布局:记录告警后跳过该属性
+        logLayoutWarning(attribute, value, nil)
+      end
     end
   end
 end
@@ -1056,6 +1129,7 @@ end
 function loadlayout(layout, views, parentViewClass)
   layout = getLayoutTable(layout)
   views = views or _G
+  normalizeAttributes(layout)
   local view, layoutParams, viewClass = createView(layout, views, parentViewClass)
 
   -- Reset deferred set (changed to local variable to avoid interference during recursive calls)
