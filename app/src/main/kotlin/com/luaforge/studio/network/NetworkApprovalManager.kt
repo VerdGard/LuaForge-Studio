@@ -388,7 +388,7 @@ object NetworkApprovalManager : NetworkGate.DecisionHandler {
     private fun scrollableBox(
         activity: Activity,
         content: String,
-        background: Int,
+        boxBackground: Int,
         stroke: Int,
         textColor: Int,
         maxHeightDp: Int
@@ -409,7 +409,8 @@ object NetworkApprovalManager : NetworkGate.DecisionHandler {
         return ScrollView(activity).apply {
             isFillViewport = false
             addView(text, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            background = rounded(background, dp(activity, 12).toFloat(), dp(activity, 1), stroke)
+            this.background =
+                rounded(boxBackground, dp(activity, 12).toFloat(), dp(activity, 1), stroke)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(activity, maxHeightDp)
