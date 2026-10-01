@@ -14,7 +14,6 @@ import com.luajava.LuaState;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Arrays;
@@ -1074,11 +1073,10 @@ public class LuaFunctionRegistrar {
     /** 按与运行时相同的规则描述一个反射注册的静态方法。 */
     private static FunctionInfo describeMethod(String source, Method method) {
         Class<?>[] types = method.getParameterTypes();
-        Parameter[] parameters = method.getParameters();
         boolean contextInjected = types.length > 0 && Context.class.isAssignableFrom(types[0]);
         List<String> params = new ArrayList<>(types.length);
         for (int i = 0; i < types.length; i++) {
-            params.add(paramLabel(types[i], i == 0 && contextInjected, parameters[i]));
+            params.add(paramLabel(types[i], i == 0 && contextInjected, i));
         }
         return new FunctionInfo(
                 method.getName(),
@@ -1090,11 +1088,16 @@ public class LuaFunctionRegistrar {
                 null);
     }
 
-    /** 形参标签 = "名字: 类型"。名字取不到时退化为 argN(Kotlin 默认不保留形参名)。 */
-    private static String paramLabel(Class<?> type, boolean injected, Parameter parameter) {
-        String name = parameter.isNamePresent()
-                ? parameter.getName()
-                : ("arg" + (parameter.getIndex() + 1));
+    /**
+     * 形参标签 = "argN: 类型"。
+     *
+     * 不用 java.lang.reflect.Parameter / method.getParameters():它们从 API 26 才存在,
+     * 而本模块 minSdk = 23,直接引用会让低版本设备在运行到此处时抛 NoClassDefFoundError。
+     * 且本项目未开启 -parameters(Java)/ javaParameters(Kotlin),形参名本来就取不到,
+     * 因此统一用 argN(由 parameterTypes 的下标得到)。
+     */
+    private static String paramLabel(Class<?> type, boolean injected, int index) {
+        String name = "arg" + (index + 1);
         String typeName = type.isArray()
                 ? type.getComponentType().getSimpleName() + "[]"
                 : type.getSimpleName();
