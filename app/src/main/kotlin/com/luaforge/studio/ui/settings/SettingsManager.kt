@@ -85,6 +85,12 @@ private object PreferencesKeys {
 
     // 【新增】滑动手势开关
     val ENABLE_SWIPE_GESTURE = booleanPreferencesKey("enable_swipe_gesture")
+
+    // 【新增】MCP 服务设置
+    val MCP_ENABLED = booleanPreferencesKey("mcp_enabled")
+    val MCP_PORT = intPreferencesKey("mcp_port")
+    val MCP_REQUIRE_TOKEN = booleanPreferencesKey("mcp_require_token")
+    val MCP_TOKEN = stringPreferencesKey("mcp_token")
 }
 
 // 排序方式枚举
@@ -227,6 +233,12 @@ object SettingsManager {
         // 【新增】加载滑动手势开关
         val enableSwipeGesture = preferences[PreferencesKeys.ENABLE_SWIPE_GESTURE] ?: false
 
+        // 【新增】加载 MCP 服务设置
+        val mcpEnabled = preferences[PreferencesKeys.MCP_ENABLED] ?: false
+        val mcpPort = preferences[PreferencesKeys.MCP_PORT] ?: 8787
+        val mcpRequireToken = preferences[PreferencesKeys.MCP_REQUIRE_TOKEN] ?: false
+        val mcpToken = preferences[PreferencesKeys.MCP_TOKEN] ?: ""
+
         updateSettings(
             SettingsData(
                 themeType = themeType,
@@ -257,7 +269,11 @@ object SettingsManager {
                 editorWordWrap = editorWordWrap,
                 languageTag = languageTag,
                 hexColorHighlightEnabled = hexColorHighlightEnabled,
-                enableSwipeGesture = enableSwipeGesture  // 【新增】
+                enableSwipeGesture = enableSwipeGesture,  // 【新增】
+                mcpEnabled = mcpEnabled,                  // 【新增】
+                mcpPort = mcpPort,                        // 【新增】
+                mcpRequireToken = mcpRequireToken,        // 【新增】
+                mcpToken = mcpToken                       // 【新增】
             )
         )
     }
@@ -314,6 +330,13 @@ object SettingsManager {
 
             // 【新增】保存滑动手势开关
             preferences[PreferencesKeys.ENABLE_SWIPE_GESTURE] = currentSettings.enableSwipeGesture
+       
+
+            // 【新增】保存 MCP 服务设置
+            preferences[PreferencesKeys.MCP_ENABLED] = currentSettings.mcpEnabled
+            preferences[PreferencesKeys.MCP_PORT] = currentSettings.mcpPort
+            preferences[PreferencesKeys.MCP_REQUIRE_TOKEN] = currentSettings.mcpRequireToken
+            preferences[PreferencesKeys.MCP_TOKEN] = currentSettings.mcpToken
         }
         notifyListeners()
     }
@@ -348,6 +371,12 @@ object SettingsManager {
             false
         }
     }
+
+    /**
+     * 生成一个随机的 MCP 访问令牌
+     */
+    fun generateMcpToken(): String =
+        java.util.UUID.randomUUID().toString().replace("-", "").take(24)
 
     /**
      * 设置应用语言（兼容 Android 13+ 和旧版本）
@@ -420,4 +449,8 @@ data class SettingsData(
     val languageTag: String = "zh",
     val hexColorHighlightEnabled: Boolean = false,  // 【新增】十六进制颜色高亮开关
     val enableSwipeGesture: Boolean = false,         // 【新增】滑动手势开关
+    val mcpEnabled: Boolean = false,                 // 【新增】MCP 服务开关
+    val mcpPort: Int = 8787,                         // 【新增】MCP 服务端口
+    val mcpRequireToken: Boolean = false,            // 【新增】MCP 是否要求令牌
+    val mcpToken: String = "",                       // 【新增】MCP 访问令牌
 )

@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Comment
 import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
@@ -36,6 +37,7 @@ import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ColorLens
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DataArray
 import androidx.compose.material.icons.filled.Edit
@@ -45,9 +47,11 @@ import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material.icons.filled.Functions
 import androidx.compose.material.icons.filled.Highlight
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Settings
@@ -85,11 +89,13 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.os.LocaleListCompat
 import com.luaforge.studio.R
+import com.luaforge.studio.mcp.McpManager
 import com.luaforge.studio.ui.components.AppIconGrid
 import com.luaforge.studio.ui.components.ColorPickerDialog
 import com.luaforge.studio.ui.theme.ThemeType
@@ -207,6 +213,9 @@ fun SettingsScreen(
     var editorConfigExpanded by remember { mutableStateOf(false) }
     var syntaxHighlightExpanded by remember { mutableStateOf(false) }
     var toastSettingsExpanded by remember { mutableStateOf(false) }
+    var mcpExpanded by remember { mutableStateOf(false) }
+    var mcpPortText by remember { mutableStateOf(currentSettingsState.mcpPort.toString()) }
+    var mcpTokenText by remember { mutableStateOf(currentSettingsState.mcpToken) }
 
     var fontMenuExpanded by remember { mutableStateOf(false) }
     var editorFontMenuExpanded by remember { mutableStateOf(false) }
@@ -985,6 +994,210 @@ SettingsListItem(
                                 updateSettingsWithSave(currentSettingsState.copy(toastBorderEnabled = !currentSettingsState.toastBorderEnabled))
                             }
                         )
+                    }
+                }
+            }
+
+            item {
+                SettingsCardGroup(
+                    title = stringResource(R.string.settings_mcp),
+                    icon = Icons.Filled.Hub,
+                    initiallyExpanded = mcpExpanded,
+                    onExpandedChange = { mcpExpanded = it }
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        SettingsListItem(
+                            title = stringResource(R.string.settings_mcp_enable),
+                            subtitle = stringResource(R.string.settings_mcp_enable_desc),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Hub,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = currentSettingsState.mcpEnabled,
+                                    onCheckedChange = { enabled ->
+                                        updateSettingsWithSave(
+                                            currentSettingsState.copy(mcpEnabled = enabled)
+                                        )
+                                    }
+                                )
+                            },
+                            onClick = {
+                                updateSettingsWithSave(
+                                    currentSettingsState.copy(mcpEnabled = !currentSettingsState.mcpEnabled)
+                                )
+                            }
+                        )
+
+                        if (currentSettingsState.mcpEnabled) {
+                            OutlinedTextField(
+                                value = mcpPortText,
+                                onValueChange = { input ->
+                                    mcpPortText = input.filter { it.isDigit() }.take(5)
+                                    val parsed = mcpPortText.toIntOrNull()
+                                    if (parsed != null && parsed in 1024..65535) {
+                                        updateSettingsWithSave(
+                                            currentSettingsState.copy(mcpPort = parsed)
+                                        )
+                                    }
+                                },
+                                label = { Text(stringResource(R.string.settings_mcp_port)) },
+                                supportingText = { Text(stringResource(R.string.settings_mcp_port_desc)) },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            SettingsListItem(
+                                title = stringResource(R.string.settings_mcp_require_token),
+                                subtitle = stringResource(R.string.settings_mcp_require_token_desc),
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Lock,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                },
+                                trailingContent = {
+                                    Switch(
+                                        checked = currentSettingsState.mcpRequireToken,
+                                        onCheckedChange = { require ->
+                                            var newToken = currentSettingsState.mcpToken
+                                            if (require && newToken.isBlank()) {
+                                                newToken = SettingsManager.generateMcpToken()
+                                                mcpTokenText = newToken
+                                            }
+                                            updateSettingsWithSave(
+                                                currentSettingsState.copy(
+                                                    mcpRequireToken = require,
+                                                    mcpToken = newToken
+                                                )
+                                            )
+                                        }
+                                    )
+                                },
+                                onClick = {
+                                    var newToken = currentSettingsState.mcpToken
+                                    val require = !currentSettingsState.mcpRequireToken
+                                    if (require && newToken.isBlank()) {
+                                        newToken = SettingsManager.generateMcpToken()
+                                        mcpTokenText = newToken
+                                    }
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(
+                                            mcpRequireToken = require,
+                                            mcpToken = newToken
+                                        )
+                                    )
+                                }
+                            )
+
+                            if (currentSettingsState.mcpRequireToken) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = mcpTokenText,
+                                        onValueChange = { input ->
+                                            mcpTokenText = input
+                                            updateSettingsWithSave(
+                                                currentSettingsState.copy(mcpToken = input)
+                                            )
+                                        },
+                                        label = { Text(stringResource(R.string.settings_mcp_token)) },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    IconButton(
+                                        onClick = {
+                                            val newToken = SettingsManager.generateMcpToken()
+                                            mcpTokenText = newToken
+                                            updateSettingsWithSave(
+                                                currentSettingsState.copy(mcpToken = newToken)
+                                            )
+                                        }
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.RestartAlt,
+                                            contentDescription = stringResource(R.string.settings_mcp_generate_token)
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            val clipboard = context.getSystemService(
+                                                android.content.ClipboardManager::class.java
+                                            )
+                                            clipboard?.setPrimaryClip(
+                                                android.content.ClipData.newPlainText(
+                                                    "MCP Token",
+                                                    currentSettingsState.mcpToken
+                                                )
+                                            )
+                                            toast.showToast(
+                                                context.getString(R.string.settings_mcp_token_copied)
+                                            )
+                                        }
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.ContentCopy,
+                                            contentDescription = stringResource(R.string.settings_mcp_copy_token)
+                                        )
+                                    }
+                                }
+                            }
+
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                thickness = 0.5.dp,
+                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.05f)
+                            )
+
+                            val mcpStatus = McpManager.status
+                            Text(
+                                text = if (mcpStatus.running) {
+                                    stringResource(R.string.settings_mcp_status_running, mcpStatus.port)
+                                } else {
+                                    stringResource(R.string.settings_mcp_status_stopped)
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = if (mcpStatus.running) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            if (mcpStatus.running) {
+                                mcpStatus.addresses.forEach { address ->
+                                    Text(
+                                        text = address,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            if (!mcpStatus.error.isNullOrBlank()) {
+                                Text(
+                                    text = mcpStatus.error!!,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+
+                            Text(
+                                text = stringResource(R.string.settings_mcp_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }

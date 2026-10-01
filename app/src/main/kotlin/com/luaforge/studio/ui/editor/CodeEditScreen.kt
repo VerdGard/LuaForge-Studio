@@ -53,6 +53,7 @@ import com.luaforge.studio.ui.analyse.AnalyseScreen
 import com.luaforge.studio.ui.attribute.AttributeScreen
 import com.luaforge.studio.ui.components.ColorPickerDialog
 import com.luaforge.studio.ui.components.EdgeSwipeDismissibleDrawer
+import com.luaforge.studio.mcp.EditorBridge
 import com.luaforge.studio.ui.editor.viewmodel.EditorViewModel
 import com.luaforge.studio.ui.javaapi.JavaApiScreen
 import com.luaforge.studio.ui.settings.SettingsManager
@@ -230,6 +231,12 @@ fun CodeEditScreen(
         if (!viewModel.isInitialized) {
             viewModel.initialize(context)
         }
+    }
+
+    // 将编辑器注册到 MCP 桥接,便于 MCP 工具读写代码 / 运行 / 构建
+    DisposableEffect(viewModel, projectPath) {
+        EditorBridge.register(viewModel, projectPath)
+        onDispose { EditorBridge.unregister(viewModel) }
     }
 
     LaunchedEffect(currentSettings.editorFontType, currentSettings.customFontPath) {

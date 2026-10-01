@@ -581,4 +581,20 @@
 
 <string name="code_editor_terminal">终端</string>
 
+    <!-- MCP 服务 -->
+    <string name="settings_mcp">MCP 服务</string>
+    <string name="settings_mcp_enable">启用 MCP 服务</string>
+    <string name="settings_mcp_enable_desc">开放编辑器能力(编写代码、调试运行、构建)给 MCP 客户端</string>
+    <string name="settings_mcp_port">监听端口</string>
+    <string name="settings_mcp_port_desc">取值 1024-65535,修改后自动重启服务</string>
+    <string name="settings_mcp_require_token">需要访问令牌</string>
+    <string name="settings_mcp_require_token_desc">开启后请求需携带 Authorization: Bearer &lt;令牌&gt;</string>
+    <string name="settings_mcp_token">访问令牌</string>
+    <string name="settings_mcp_generate_token">重新生成令牌</string>
+    <string name="settings_mcp_copy_token">复制令牌</string>
+    <string name="settings_mcp_token_copied">令牌已复制</string>
+    <string name="settings_mcp_status_running">运行中 · 端口 %1$d</string>
+    <string name="settings_mcp_status_stopped">未运行</string>
+    <string name="settings_mcp_hint">在 MCP 客户端中添加 HTTP 地址即可调用工具。服务随应用进程存活,退出应用即停止。</string>
+
 </resources>

@@ -33,6 +33,7 @@ import com.androlua.LuaApplication
 import com.androlua.LuaUtil
 import com.luaforge.studio.ui.crash.CrashManager
 import com.luaforge.studio.ui.editor.persistence.EditorStateUtil
+import com.luaforge.studio.mcp.McpManager
 import com.luaforge.studio.ui.editor.viewmodel.CompletionDataManager
 import com.luaforge.studio.ui.settings.SettingsManager
 import com.luaforge.studio.ui.theme.AppThemeWithObserver
@@ -98,6 +99,14 @@ class SplashWelcome : ComponentActivity() {
             SettingsManager.loadSavedSettings(this@SplashWelcome)
         } catch (e: Exception) {
             LogCatcher.e("SplashWelcome", "加载设置失败", e)
+        }
+
+        // 依据已保存的设置启动 MCP 服务(若已启用)
+        try {
+            McpManager.initialize(this@SplashWelcome)
+            McpManager.applySettings(SettingsManager.currentSettings)
+        } catch (e: Exception) {
+            LogCatcher.e("SplashWelcome", "启动 MCP 服务失败", e)
         }
 
         // 语言处理：仅在已持久化用户设置语言时应用；不匹配时不阻塞启动流程

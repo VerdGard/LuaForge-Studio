@@ -63,6 +63,7 @@ import androidx.lifecycle.lifecycleScope
 import coil.compose.SubcomposeAsyncImage
 import com.luaforge.studio.ui.editor.persistence.EditorStateUtil
 import com.luaforge.studio.ui.about.AboutScreen
+import com.luaforge.studio.mcp.McpManager
 import com.luaforge.studio.ui.components.FilePickerDialog
 import com.luaforge.studio.ui.components.SelectionMode
 import com.luaforge.studio.ui.components.Toast
@@ -131,6 +132,15 @@ fun MainApp() {
 
     val settings = SettingsManager.currentSettings
     val toastPosition = settings.toastPosition
+
+    // MCP 服务随设置变化同步启停(端口/令牌变化会自动重启)
+    LaunchedEffect(Unit) {
+        McpManager.initialize(context)
+        McpManager.applySettings(SettingsManager.currentSettings)
+    }
+    LaunchedEffect(settings.mcpEnabled, settings.mcpPort, settings.mcpToken, settings.mcpRequireToken) {
+        McpManager.applySettings(settings)
+    }
 
     val toastTransitionSpec: AnimatedContentTransitionScope<ToastData?>.() -> ContentTransform = {
         TransitionUtil.createToastPositionedScaleTransition(toastPosition)

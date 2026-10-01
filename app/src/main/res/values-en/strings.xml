@@ -580,4 +580,20 @@
 
 <string name="code_editor_terminal">Terminal</string>
 
+    <!-- MCP service -->
+    <string name="settings_mcp">MCP Service</string>
+    <string name="settings_mcp_enable">Enable MCP Service</string>
+    <string name="settings_mcp_enable_desc">Expose editor capabilities (write code, debug run, build) to MCP clients</string>
+    <string name="settings_mcp_port">Listen Port</string>
+    <string name="settings_mcp_port_desc">Range 1024-65535; the service restarts automatically on change</string>
+    <string name="settings_mcp_require_token">Require Access Token</string>
+    <string name="settings_mcp_require_token_desc">When on, requests must send Authorization: Bearer &lt;token&gt;</string>
+    <string name="settings_mcp_token">Access Token</string>
+    <string name="settings_mcp_generate_token">Regenerate Token</string>
+    <string name="settings_mcp_copy_token">Copy Token</string>
+    <string name="settings_mcp_token_copied">Token copied</string>
+    <string name="settings_mcp_status_running">Running · port %1$d</string>
+    <string name="settings_mcp_status_stopped">Stopped</string>
+    <string name="settings_mcp_hint">Add the HTTP endpoint in your MCP client to call tools. The service lives with the app process and stops when the app exits.</string>
+
 </resources>
