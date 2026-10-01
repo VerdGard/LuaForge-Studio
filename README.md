@@ -9,7 +9,7 @@
   - `call_global_util`:在**运行中**的项目里调用 `global_utils` 注册的 Lua 全局函数(如 `dp2px`、`parseColor`)
     - 与项目自身调用**同一条路径**(运行实例主线程执行),UI 相关函数也能生效
     - 参数支持 JSON 数组或分隔字符串(自动推断 number / boolean / null),并按形参类型做个数与类型校验
-    - 需要控件 / Java 对象 / Lua 回调的函数(Glide 图片加载、网络请求、Recycler 适配器)会明确拒绝并说明原因
+    - 需要控件 / Java 对象 / Lua 回调的函数(如 `GlideUtil.loadImage` 需 `ImageView`、网络请求、Recycler 适配器)会明确拒绝并说明原因
 - 修复 `global_utils` 注册函数的小数入参调用失败
   - 之前 `LuaState.toJavaObject` 得到的 `Double` 直接传给 `Float` / `Int` 形参会抛 `argument type mismatch`(如 `dp2px(16.5)`)
   - 现在按形参类型做数值收窄,不再依赖 Java 的自动转换

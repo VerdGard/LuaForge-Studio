@@ -132,7 +132,8 @@ curl -X POST http://127.0.0.1:8787/ -H 'Content-Type: application/json' \
 不会与运行结果漂移;`overrides` 字段标出被后注册者覆盖的同名函数(`get` / `post` / `upload` / `download`)。
 
 `call_global_util` 的调用方式与项目自身调用**完全同一条路径**(在运行实例主线程上执行),
-所以连 `applyEdgeToEdgePreference` 这类 UI 相关函数也能正常生效。使用时注意:
+所以 `dp2px`、`statusBarHeight()` 这类需要真实 `Context` 的 UI 函数也能正常生效
+(首个 `Context` / `Activity` 形参由框架自动注入,无需传入)。使用时注意:
 
 - 需要先 `run_project` 把项目跑起来;页面未运行时返回明确错误
 - 参数可用 JSON 数组(`"args": [16]`)保留类型,也可用换行/逗号分隔的字符串(自动推断 `number` / `boolean` / `null`)
