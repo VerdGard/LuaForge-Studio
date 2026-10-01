@@ -1175,10 +1175,27 @@ public class LuaFunctionRegistrar {
 
         @Override
         public String toString() {
-            return name + "(" + String.join(", ", params) + ") -> " + returnType
+            return name + "(" + joinParams(params) + ") -> " + returnType
                     + " [" + source + "]"
                     + (overrides == null ? "" : " 覆盖 " + overrides);
         }
+    }
+
+    /**
+     * 拼接形参列表。
+     *
+     * 不用 String.join:它是 API 26 才加入的 Android 平台方法,而本模块 minSdk = 23,
+     * 在 API 23-25 设备上会抛 NoSuchMethodError(Java 8 desugaring 不覆盖 String.join)。
+     */
+    private static String joinParams(List<String> params) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < params.size(); i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(params.get(i));
+        }
+        return sb.toString();
     }
 
     /**
