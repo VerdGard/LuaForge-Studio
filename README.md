@@ -1,5 +1,20 @@
 # 更新日志
 
+## 1.6.4
+- MCP:新增 `global_utils` 工具类的查看与调用能力,工具总数 42 → 44
+  - `list_global_utils`:查看项目 `global_utils` 配置,以及这些工具类在**运行时会实际注册**的 Lua 全局函数(参数、返回类型、context 注入、同名覆盖)
+    - 注册清单与运行时反射注册共用同一套规则,不会与运行结果漂移
+    - 顺带暴露 `unknown`(settings.json 里拼错的名字,运行时只会静默跳过)
+    - 同时返回当前正在运行的页面(`runningPages`),便于确认调用目标
+  - `call_global_util`:在**运行中**的项目里调用 `global_utils` 注册的 Lua 全局函数(如 `dp2px`、`parseColor`)
+    - 与项目自身调用**同一条路径**(运行实例主线程执行),UI 相关函数也能生效
+    - 参数支持 JSON 数组或分隔字符串(自动推断 number / boolean / null),并按形参类型做个数与类型校验
+    - 需要控件 / Java 对象 / Lua 回调的函数(Glide 图片加载、网络请求、Recycler 适配器)会明确拒绝并说明原因
+- 修复 `global_utils` 注册函数的小数入参调用失败
+  - 之前 `LuaState.toJavaObject` 得到的 `Double` 直接传给 `Float` / `Int` 形参会抛 `argument type mismatch`(如 `dp2px(16.5)`)
+  - 现在按形参类型做数值收窄,不再依赖 Java 的自动转换
+- `LuaActivity` 新增运行实例定位能力(`getPageName` / `getRunningActivities` / `getActivityByLuaDir`),并给 `sLuaActivityMap` 的读写加同步
+
 ## 1.6.3
 - 新增「网络请求拦截」(设置 → 网络请求拦截,默认关闭)
   - 所有网络请求在真正发出前弹出 MD3 对话框展示方法、主机、完整地址、请求头、请求体与来源,用户允许后才放行

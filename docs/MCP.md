@@ -1,4 +1,4 @@
-# MCP 服务(LuaForge-Studio 1.6.2)
+# MCP 服务(LuaForge-Studio 1.6.4)
 
 把编辑器的能力(读写代码、调试运行、构建 APK、界面检查)通过 [Model Context Protocol](https://modelcontextprotocol.io) 暴露给外部 AI 客户端。
 
@@ -49,7 +49,7 @@ curl -X POST http://127.0.0.1:8787/ -H 'Content-Type: application/json' \
 { "headers": { "Authorization": "Bearer <你的令牌>" } }
 ```
 
-## 4. 工具清单(42 个)
+## 4. 工具清单(44 个)
 
 参数均为可选,除非标 **必填**。带 `array` 的参数可传 JSON 数组,也可传换行/逗号分隔的字符串。
 
@@ -120,6 +120,26 @@ curl -X POST http://127.0.0.1:8787/ -H 'Content-Type: application/json' \
 | `clear_logs` | 清空 `luaforge.log` | — |
 | `get_logs` | 读取应用日志末尾内容 | `lines`(默认 200) |
 
+### 全局工具类(global_utils)
+
+| 工具 | 说明 | 参数 |
+| --- | --- | --- |
+| `list_global_utils` | 查看项目的 `global_utils`,以及这些工具类在运行时**实际会注册**的 Lua 全局函数(参数、返回类型、是否自动注入 context、同名覆盖) | `path` |
+| `call_global_util` | 在**运行中**的项目里调用 `global_utils` 注册的 Lua 全局函数 | `name` **必填**、`args`、`page`、`path`、`timeoutMs`(默认 5000) |
+
+`global_utils` 里的工具类会按规则把 `public static` 方法注册成 **Lua 全局函数**(如 `dp2px`、`parseColor`),
+因此 Lua 代码里可以直接调用。`list_global_utils` 的 `registeredFunctions` 与运行时注册共用同一套规则推导,
+不会与运行结果漂移;`overrides` 字段标出被后注册者覆盖的同名函数(`get` / `post` / `upload` / `download`)。
+
+`call_global_util` 的调用方式与项目自身调用**完全同一条路径**(在运行实例主线程上执行),
+所以连 `applyEdgeToEdgePreference` 这类 UI 相关函数也能正常生效。使用时注意:
+
+- 需要先 `run_project` 把项目跑起来;页面未运行时返回明确错误
+- 参数可用 JSON 数组(`"args": [16]`)保留类型,也可用换行/逗号分隔的字符串(自动推断 `number` / `boolean` / `null`)
+- 需要控件或 Java 对象作参数的函数(如 `GlideUtil.loadImage` 需要 `ImageView`)经 MCP 无法传参,调用会明确拒绝并给出提示
+- 网络请求函数(`get` / `post` / `upload` / `download`)与 Recycler 适配器函数需要 Lua 回调,不支持经 MCP 调用
+- 调用在运行实例主线程排队执行,脚本繁忙时可能超时;超时会如实返回"尚未完成"而非静默成功
+
 ## 5. 运行时界面检查工作流
 
 这是本版本新增的核心能力:**不再只看进程是否起来,而是断言屏幕是否真的符合预期**。
@@ -176,3 +196,5 @@ compile_file keepOutput=false   # 编译验证,成功后自动清理产物
 - `check_screen` 只读取当前前台 Activity;界面未启动时会返回“没有前台 Activity”
 - 单次 `dump_screen` 最多 3000 个节点,超出部分被截断并置 `truncated=true`
 - 日志读取上限 512KB / `read_file` 上限 2MB
+- `call_global_util` 只支持可 JSON 表达的标量参数;需要控件 / Java 对象的函数请直接在项目代码里调用
+- `call_global_util` 执行于运行实例主线程,项目脚本长时间占用主线程时可能超时

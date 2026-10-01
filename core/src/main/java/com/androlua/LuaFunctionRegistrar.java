@@ -14,10 +14,14 @@ import com.luajava.LuaState;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Parameter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -95,14 +99,8 @@ public class LuaFunctionRegistrar {
             Method[] methods = clazz.getMethods();
 
             for (final Method method : methods) {
-                // 只处理公共静态方法
-                if (!Modifier.isStatic(method.getModifiers())
-                        || !Modifier.isPublic(method.getModifiers())) {
-                    continue;
-                }
-
-                // 跳过Kotlin自动生成的方法
-                if (method.getName().contains("$")) {
+                // 只处理公共静态方法,并跳过 Kotlin 合成方法(规则见 isRegisterable)
+                if (!isRegisterable(method)) {
                     continue;
                 }
 
@@ -139,7 +137,8 @@ public class LuaFunctionRegistrar {
                                     int fixedParamCount = isVarArgs ? paramCount - 1 : paramCount;
                                     for (int i = needsContext ? 1 : 0; i < fixedParamCount; i++) {
                                         if (luaIndex <= L.getTop()) {
-                                            args[i] = L.toJavaObject(luaIndex);
+                                            args[i] =
+                                                    coerce(L.toJavaObject(luaIndex), paramTypes[i]);
                                             luaIndex++;
                                         } else {
                                             // 缺少参数，设为null
@@ -160,7 +159,8 @@ public class LuaFunctionRegistrar {
 
                                             // 从Lua栈中获取可变参数
                                             for (int i = 0; i < varArgCount; i++) {
-                                                varArgs[i] = L.toJavaObject(luaIndex);
+                                                varArgs[i] =
+                                                        coerce(L.toJavaObject(luaIndex), varArgType);
                                                 luaIndex++;
                                             }
 
@@ -945,6 +945,236 @@ public class LuaFunctionRegistrar {
                     };
             getLuaDirectory.register("getLuaDir");
         } catch (Exception e) {
+        }
+    }
+
+    /**
+     * 判断某个方法是否会按名字注册为 Lua 全局函数。
+     *
+     * [registerUtilClass] 与 [describeFunctions] 共用此规则:两处规则一旦不一致,
+     * "查看"结果就会与运行时实际注册的函数漂移。
+     */
+    public static boolean isRegisterable(Method method) {
+        return Modifier.isStatic(method.getModifiers())
+                && Modifier.isPublic(method.getModifiers())
+                && !method.getName().contains("$");
+    }
+
+    /**
+     * 可注册为 Lua 全局函数的工具类名(运行时按 global_utils 里的名字查这张表)。
+     *
+     * 排序输出:底层是 HashMap,顺序本身不保证稳定,MCP 输出需要确定性。
+     */
+    public static List<String> getUtilNames() {
+        List<String> names = new ArrayList<>(UTIL_CLASS_MAP.keySet());
+        Collections.sort(names);
+        return names;
+    }
+
+    /**
+     * 按函数名查找其反射来源方法。
+     *
+     * 手工注册的 http / recycler 函数(以及 getLuaDir)没有对应的 Java 方法,返回 null。
+     * 与 [describeFunctions] 共用同一套规则,因此"能查到方法"等价于"能按形参类型调用"。
+     */
+    public static Method findUtilMethod(String functionName, List<String> selectedUtils) {
+        if (functionName == null || functionName.isEmpty() || selectedUtils == null) {
+            return null;
+        }
+        for (String utilName : new LinkedHashSet<>(selectedUtils)) {
+            String className = UTIL_CLASS_MAP.get(utilName);
+            if (className == null) {
+                continue;
+            }
+            try {
+                for (Method method : Class.forName(className).getMethods()) {
+                    if (isRegisterable(method) && method.getName().equals(functionName)) {
+                        return method;
+                    }
+                }
+            } catch (ClassNotFoundException e) {
+                // 与 registerUtilClass 一致:找不到类就跳过
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 描述给定 global_utils 列表在运行时**实际会注册**的 Lua 全局函数。
+     *
+     * 规则与 [registerSelectedFunctions] 保持一致:同一套反射过滤 + 同样三个特殊分支,
+     * 供 MCP 的 list_global_utils 使用。未知名称、找不到的类在运行时只是被跳过,这里同样跳过。
+     */
+    public static List<FunctionInfo> describeFunctions(List<String> selectedUtils) {
+        Set<String> selected = new LinkedHashSet<>(selectedUtils);
+        // global_utils 为空时 LuaActivity 根本不会构造 LuaFunctionRegistrar(见 initENV),
+        // 因此这里也返回空:没有函数会被注册。
+        if (selected.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        Map<String, FunctionInfo> out = new LinkedHashMap<>();
+
+        for (String utilName : selected) {
+            String className = UTIL_CLASS_MAP.get(utilName);
+            if (className == null) {
+                continue;
+            }
+            try {
+                for (Method method : Class.forName(className).getMethods()) {
+                    if (isRegisterable(method)) {
+                        putFunction(out, describeMethod(utilName, method));
+                    }
+                }
+            } catch (ClassNotFoundException e) {
+                // 运行时同样会因找不到类而跳过
+            }
+        }
+
+        if (selected.contains("OkHttpUtil")) {
+            String callbackNote = "回调参数 (code, content, cookie, headers)";
+            putFunction(out, handRegistered("get", "http",
+                    Arrays.asList("url: string", "callback: function"), "无返回值",
+                    "可选参数按类型识别:cookie / charset(string)、header(table);至少需要 url + callback。" + callbackNote));
+            putFunction(out, handRegistered("post", "http",
+                    Arrays.asList("url: string", "data: table", "callback: function"), "无返回值",
+                    "data 为表单字段表;可选参数同 get;至少需要 url + data + callback。" + callbackNote));
+            putFunction(out, handRegistered("download", "http",
+                    Arrays.asList("url: string", "path: string", "callback: function"), "无返回值",
+                    "path 相对项目目录解析;可选 cookie / header;至少需要 url + path + callback。" + callbackNote));
+            putFunction(out, handRegistered("upload", "http",
+                    Arrays.asList("url: string", "filePath: string", "callback: function"), "无返回值",
+                    "表单字段名固定为 file,不支持附加字段;可选 cookie / header。" + callbackNote));
+        }
+
+        if (selected.contains("RecyclerAdapterUtil")) {
+            putFunction(out, handRegistered("createRecyclerAdapter", "recycler",
+                    Arrays.asList("data", "list_item", "method"), "LuaRecyclerAdapter",
+                    "list_item 为列表项布局,method 为逐项绑定函数"));
+            putFunction(out, handRegistered("notifyDataSetChanged", "recycler",
+                    Arrays.asList("adapter"), "无返回值", null));
+        }
+
+        // 与 registerCommonFunctions 一致:只要 global_utils 非空就会注册
+        putFunction(out, handRegistered("getLuaDir", "common",
+                new ArrayList<>(), "string", "与所选工具类无关,始终注册;返回项目目录"));
+
+        return new ArrayList<>(out.values());
+    }
+
+    /** 同名函数以后注册者为准(get/post/upload/download 会被 registerHttpFunctions 覆盖)。 */
+    private static void putFunction(Map<String, FunctionInfo> out, FunctionInfo info) {
+        FunctionInfo old = out.get(info.name);
+        if (old != null) {
+            info.overrides = old.source;
+        }
+        out.put(info.name, info);
+    }
+
+    /** 按与运行时相同的规则描述一个反射注册的静态方法。 */
+    private static FunctionInfo describeMethod(String source, Method method) {
+        Class<?>[] types = method.getParameterTypes();
+        Parameter[] parameters = method.getParameters();
+        boolean contextInjected = types.length > 0 && Context.class.isAssignableFrom(types[0]);
+        List<String> params = new ArrayList<>(types.length);
+        for (int i = 0; i < types.length; i++) {
+            params.add(paramLabel(types[i], i == 0 && contextInjected, parameters[i]));
+        }
+        return new FunctionInfo(
+                method.getName(),
+                source,
+                params,
+                method.getReturnType().getSimpleName(),
+                method.isVarArgs(),
+                contextInjected,
+                null);
+    }
+
+    /** 形参标签 = "名字: 类型"。名字取不到时退化为 argN(Kotlin 默认不保留形参名)。 */
+    private static String paramLabel(Class<?> type, boolean injected, Parameter parameter) {
+        String name = parameter.isNamePresent()
+                ? parameter.getName()
+                : ("arg" + (parameter.getIndex() + 1));
+        String typeName = type.isArray()
+                ? type.getComponentType().getSimpleName() + "[]"
+                : type.getSimpleName();
+        if (injected) {
+            // 首参只要是 Context 子类就会被框架注入。注意 Activity 也是 Context 子类,
+            // 所以 ThemeUtil 那几个以 Activity 为首参的函数同样由框架注入真实 Activity。
+            return name + ": " + typeName + "(自动注入)";
+        }
+        if (Context.class.isAssignableFrom(type)) {
+            return name + ": " + typeName + "(需显式传入)";
+        }
+        return name + ": " + typeName;
+    }
+
+    /** 手工注册(非反射)的 Lua 全局函数描述。 */
+    private static FunctionInfo handRegistered(String name, String source, List<String> params,
+                                               String returnType, String note) {
+        return new FunctionInfo(name, source, params, returnType, false, false, note);
+    }
+
+    /**
+     * 把 Lua 送来的实参收窄/拓宽到目标形参类型。
+     *
+     * [LuaState.toJavaObject] 对数字统一返回 Long/Double,而反射调用只接受 Java 的
+     * 拓宽转换:整数入参没问题(long 可拓宽到 float),但小数入参到 float/int/short
+     * 形参属于收窄,会直接抛 "argument type mismatch"(例如 dp2px(16.5))。
+     */
+    private static Object coerce(Object value, Class<?> target) {
+        if (value == null || target.isInstance(value)) {
+            return value;
+        }
+        if (value instanceof Number number) {
+            if (target == float.class || target == Float.class) return number.floatValue();
+            if (target == double.class || target == Double.class) return number.doubleValue();
+            if (target == int.class || target == Integer.class) return number.intValue();
+            if (target == long.class || target == Long.class) return number.longValue();
+            if (target == short.class || target == Short.class) return number.shortValue();
+            if (target == byte.class || target == Byte.class) return number.byteValue();
+            if (target == char.class || target == Character.class) return (char) number.intValue();
+        }
+        // 不再对 String 做 toString 兜底:那会把"传错类型"变成静默可用,
+        // 掩盖项目里本该暴露的错误。数值收窄是必要的,类型不符则照旧抛给调用方。
+        return value;
+    }
+
+    /** 一个会被注册到 Lua 全局表的函数(供 MCP 查看;不参与实际注册流程)。 */
+    public static final class FunctionInfo {
+        /** Lua 全局函数名。 */
+        public final String name;
+        /** 来源:工具类名,或 "http" / "recycler" / "common"。 */
+        public final String source;
+        /** 形参(简单类型名);首个 Context 形参标注为自动注入。 */
+        public final List<String> params;
+        /** 返回类型简单名。 */
+        public final String returnType;
+        /** 是否可变参数。 */
+        public final boolean varArgs;
+        /** 首个 Context 形参是否由框架自动注入,而非由 Lua 侧传入。 */
+        public final boolean contextInjected;
+        /** 覆盖了哪个来源的同名函数;未被覆盖时为 null(由 putFunction 填充)。 */
+        public String overrides;
+        /** 额外说明(可选参数、使用限制等)。 */
+        public final String note;
+
+        FunctionInfo(String name, String source, List<String> params, String returnType,
+                     boolean varArgs, boolean contextInjected, String note) {
+            this.name = name;
+            this.source = source;
+            this.params = params;
+            this.returnType = returnType;
+            this.varArgs = varArgs;
+            this.contextInjected = contextInjected;
+            this.note = note;
+        }
+
+        @Override
+        public String toString() {
+            return name + "(" + String.join(", ", params) + ") -> " + returnType
+                    + " [" + source + "]"
+                    + (overrides == null ? "" : " 覆盖 " + overrides);
         }
     }
 

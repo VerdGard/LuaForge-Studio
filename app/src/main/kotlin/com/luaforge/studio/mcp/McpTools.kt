@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import androidx.core.content.FileProvider
+import com.androlua.LuaActivity
+import com.androlua.LuaFunctionRegistrar
 import com.androlua.LuaLexer
 import com.androlua.LuaTokenTypes
 import com.luaforge.studio.langs.lua.tools.CompleteHashmapUtils
@@ -21,6 +23,7 @@ import com.luaforge.studio.utils.LuaParserUtil
 import com.luaforge.studio.utils.FileUtil
 import com.luaforge.studio.utils.LogCatcher
 import com.luaforge.studio.utils.ProjectUtil
+import com.luajava.LuaObject
 import com.luajava.LuaState
 import com.luajava.LuaStateFactory
 import kotlinx.coroutines.CompletableDeferred
@@ -31,6 +34,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.lang.reflect.Method
 
 /**
  * MCP 工具集:把编辑器的全部能力(读写代码、调试运行、编译构建、日志等)暴露为 MCP 工具。
@@ -49,6 +53,30 @@ object McpTools {
     /** 等待编辑器控件就绪的重试次数与间隔(open_file / goto_line 共用)。 */
     private const val CURSOR_MOVE_ATTEMPTS = 10
     private const val CURSOR_MOVE_INTERVAL_MS = 50L
+
+    /** call_global_util 的分隔字符串实参类型推断。 */
+    private val INTEGER_ARG = Regex("^[+-]?\\d+$")
+    private val DECIMAL_ARG = Regex("^[+-]?(?:\\d+\\.\\d*|\\.\\d+|\\d+)(?:[eE][+-]?\\d+)?$")
+
+    /**
+     * 能由 JSON / 字面量表达的形参类型;其余(控件、Java 对象、LuaObject 等)无法经 MCP 传参。
+     *
+     * 注意 KClass.java 给的是原始类型(int/long...),装箱类型要另取 javaObjectType:
+     * 两者都列进来,否则形参写成 java.lang.Integer 的方法会被误判为不可调用。
+     */
+    private val SCALAR_PARAM_TYPES: Set<Class<*>> = setOf(
+        String::class.java,
+        Any::class.java,
+        Number::class.java,
+        Int::class.java, Int::class.javaObjectType,
+        Long::class.java, Long::class.javaObjectType,
+        Double::class.java, Double::class.javaObjectType,
+        Float::class.java, Float::class.javaObjectType,
+        Short::class.java, Short::class.javaObjectType,
+        Byte::class.java, Byte::class.javaObjectType,
+        Boolean::class.java, Boolean::class.javaObjectType,
+        Char::class.java, Char::class.javaObjectType
+    )
 
     // ------------------------------------------------------------------
     // 工具清单
@@ -438,6 +466,31 @@ object McpTools {
             )
         )
 
+        tools.put(
+            tool(
+                "list_global_utils",
+                "查看项目 global_utils 配置,以及这些工具类在运行时会注册的 Lua 全局函数" +
+                    "(参数、返回类型、是否自动注入 context、同名覆盖)",
+                obj("path" to strProp("项目路径,缺省为当前打开的项目"))
+            )
+        )
+
+        tools.put(
+            tool(
+                "call_global_util",
+                "在运行中的项目里调用 global_utils 注册的 Lua 全局函数(需先 run_project)。" +
+                    "与项目自身调用走同一条路径,因此需要项目正在运行",
+                obj(
+                    "name" to strProp("Lua 全局函数名,如 dp2px"),
+                    "args" to strProp("实参:JSON 数组,或换行/逗号分隔的字符串(分隔形式会自动推断 number/boolean)"),
+                    "page" to strProp("目标页面名(pageName),存在多个运行页面时用于精确指定"),
+                    "path" to strProp("目标项目路径,缺省用当前打开的项目"),
+                    "timeoutMs" to intProp("等待毫秒,默认 5000,上限 30000")
+                ),
+                required = arrayOf("name")
+            )
+        )
+
         return tools
     }
 
@@ -491,6 +544,8 @@ object McpTools {
                 "check_screen" -> checkScreen(args)
                 "get_runtime_errors" -> getRuntimeErrors(args)
                 "clear_logs" -> clearLogs()
+                "list_global_utils" -> listGlobalUtils(context, args)
+                "call_global_util" -> callGlobalUtil(context, args)
                 else -> errorResult("未知工具: $name")
             }
         } catch (e: Exception) {
@@ -2122,6 +2177,302 @@ object McpTools {
                 .put("restored", true)
                 .toString(2)
         )
+    }
+
+    // ------------------------------------------------------------------
+    // global_utils(全局工具类)
+    // ------------------------------------------------------------------
+
+    /** 读取项目 settings.json 中的 global_utils。 */
+    private fun readGlobalUtils(settingsFile: File): List<String> {
+        if (!settingsFile.exists() || !settingsFile.isFile) return emptyList()
+        return try {
+            val map = JsonUtil.parseObject(settingsFile.readText())
+            val raw = map["global_utils"] as? List<*>
+            raw?.mapNotNull { it?.toString()?.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+        } catch (e: Exception) {
+            LogCatcher.e(TAG, "读取 global_utils 失败: ${settingsFile.absolutePath}", e)
+            emptyList()
+        }
+    }
+
+    /**
+     * 查看项目的 global_utils 以及运行时**实际会注册**的 Lua 全局函数。
+     *
+     * 注册清单来自 [LuaFunctionRegistrar.describeFunctions],与运行时反射注册共用同一套规则,
+     * 因此不会与运行结果漂移。
+     */
+    private suspend fun listGlobalUtils(context: Context, args: JSONObject): JSONObject {
+        val project = resolveProjectPath(context, args.optString("path", ""))
+            ?: return errorResult("无法确定项目路径,请先在前台打开项目或传入 path")
+        val settingsFile = File(project, "settings.json")
+        if (!settingsFile.exists()) {
+            return errorResult("项目缺少 settings.json: ${settingsFile.absolutePath}")
+        }
+
+        val selected = readGlobalUtils(settingsFile)
+
+        val functions = JSONArray()
+        LuaFunctionRegistrar.describeFunctions(selected).forEach { info ->
+            functions.put(
+                JSONObject()
+                    .put("name", info.name)
+                    .put("source", info.source)
+                    .put("params", JSONArray(info.params))
+                    .put("returns", info.returnType)
+                    .put("varArgs", info.varArgs)
+                    .put("contextInjected", info.contextInjected)
+                    .put("overrides", info.overrides ?: JSONObject.NULL)
+                    .put("note", info.note ?: JSONObject.NULL)
+            )
+        }
+
+        val running = LuaActivity.getRunningActivities()
+        val pages = JSONArray()
+        running.forEach { (page, activity) ->
+            pages.put(
+                JSONObject()
+                    .put("page", page)
+                    .put("luaDir", activity.getLuaDir() ?: JSONObject.NULL)
+                    .put("isCurrentProject", sameDir(activity.getLuaDir(), project))
+            )
+        }
+
+        return textResult(
+            JSONObject()
+                .put("projectPath", project)
+                .put("global_utils", JSONArray(selected))
+                .put("available", JSONArray(LuaFunctionRegistrar.getUtilNames()))
+                // 名字拼错时运行时只会跳过并不会报错,这里显式点出来
+                .put(
+                    "unknown",
+                    JSONArray(selected.filter { it !in LuaFunctionRegistrar.getUtilNames() })
+                )
+                .put("registeredFunctions", functions)
+                .put("runningPages", pages)
+                .put(
+                    "note",
+                    "registeredFunctions 按当前 settings.json 推导运行时会注册的 Lua 全局函数;" +
+                        "overrides 表示同名函数被后注册者覆盖(如 get/post/upload/download);" +
+                        "修改 global_utils 后需重新运行项目才生效。调用请用 call_global_util。"
+                )
+                .toString(2)
+        )
+    }
+
+    /**
+     * 在**运行中**的项目里调用 global_utils 注册的 Lua 全局函数。
+     *
+     * 走 LuaObject.call 而非 LuaActivity.runFunc:后者有 isFunction 守卫,而 global_utils
+     * 注册的是带 __call 元方法的 userdata,lua_isfunction 为 false,会被静默跳过。
+     */
+    private suspend fun callGlobalUtil(context: Context, args: JSONObject): JSONObject {
+        val name = args.optString("name", "").trim()
+        if (name.isBlank()) return errorResult("缺少参数 name")
+
+        val running = LuaActivity.getRunningActivities()
+        val activity = resolveRunningActivity(context, args)
+        if (activity == null) {
+            if (running.isEmpty()) {
+                return errorResult("没有正在运行的项目。请先 run_project 启动调试运行,再调用 global_utils 函数。")
+            }
+            val pages = running.keys.joinToString(", ")
+            return errorResult("未匹配到运行中的项目(当前运行页面: $pages)。请用 page 指定 pageName,或用 path 指定项目。")
+        }
+
+        val luaDir = activity.getLuaDir()
+        if (luaDir.isNullOrBlank()) return errorResult("运行实例没有项目目录,无法读取 global_utils")
+
+        val selected = readGlobalUtils(File(luaDir, "settings.json"))
+        val registered = LuaFunctionRegistrar.describeFunctions(selected)
+        val info = registered.firstOrNull { it.name == name }
+        if (info == null) {
+            val hint = if (registered.isEmpty()) {
+                "当前 global_utils = $selected"
+            } else {
+                "可用函数: " + registered.joinToString(", ") { it.name }
+            }
+            return errorResult(
+                "函数 $name 未由该项目的 global_utils 注册,无法调用。$hint"
+            )
+        }
+
+        // 手工注册的 http / recycler 函数需要 Lua 回调或控件对象,JSON 表达不了。
+        // 尤其 http 函数必须在后台线程执行才会走网络审批,放这里会绕过审批,因此直接拒绝。
+        if (info.source == "http") {
+            return errorResult(
+                "$name 是网络请求函数:需要 Lua 回调,且必须在后台线程执行以走网络审批流程,不支持经 MCP 调用。请在项目代码中调用。"
+            )
+        }
+        if (info.source == "recycler") {
+            return errorResult("$name 需要 Lua 回调或控件对象作参数,不支持经 MCP 调用。请在项目代码中调用。")
+        }
+
+        val method = LuaFunctionRegistrar.findUtilMethod(name, selected)
+        if (method != null) {
+            val unsupported = unsupportedParam(method, info.contextInjected)
+            if (unsupported != null) {
+                return errorResult(
+                    "$name 的参数类型 $unsupported 需要控件或 Java 对象,无法经 JSON 传入。" +
+                        "请在项目代码中调用。签名: $name(${info.params.joinToString(", ")})"
+                )
+            }
+        }
+
+        val luaArgs = parseLuaArgs(args)
+
+        if (method != null) {
+            val luaSideCount = method.parameterTypes.size - (if (info.contextInjected) 1 else 0)
+            val min = if (method.isVarArgs) (luaSideCount - 1).coerceAtLeast(0) else luaSideCount
+            val max = if (method.isVarArgs) Int.MAX_VALUE else luaSideCount
+            if (luaArgs.size < min || luaArgs.size > max) {
+                val expect = if (method.isVarArgs) "至少 $min 个" else "$min 个"
+                return errorResult(
+                    "参数个数不符:$name 需要 $expect(Lua 侧),实际 ${luaArgs.size} 个。" +
+                        "签名: $name(${info.params.joinToString(", ")})"
+                )
+            }
+        }
+
+        val state = activity.getLuaState() ?: return errorResult("运行实例没有 LuaState")
+        val timeoutMs = args.optInt("timeoutMs", 5000).coerceIn(200, 30000)
+
+        // 与项目自身调用一致:在运行实例的主线程上执行,因此 UI 相关函数也能正常生效。
+        // 代价是脚本忙时本调用需排队,超时后如实报告"尚未完成"。
+        val outcome = withTimeoutOrNull(timeoutMs.toLong()) {
+            withContext(Dispatchers.Main) {
+                runCatching {
+                    val fn = state.getLuaObject(name)
+                    if (fn == null || fn.isNil()) {
+                        error("全局函数 $name 当前不存在(项目可能尚未初始化完成,或注册失败)")
+                    }
+                    if (!fn.isFunction() && !fn.isTable() && !fn.isUserdata()) {
+                        error("全局变量 $name 不是可调用的对象")
+                    }
+                    fn._call_aux(luaArgs.toTypedArray(), LuaState.LUA_MULTRET).toList()
+                }
+            }
+        } ?: return errorResult(
+            "调用 $name 超时(${timeoutMs}ms)。Lua 主线程可能正忙,调用尚未返回;请稍后重试。"
+        )
+
+        val results = outcome.getOrElse { e ->
+            return errorResult("调用 $name 失败: ${e.message ?: e.toString()}")
+        }
+
+        val values = JSONArray()
+        results.forEach { values.put(luaValueToJson(it)) }
+
+        return textResult(
+            JSONObject()
+                .put("name", name)
+                .put("page", activity.getPageName() ?: JSONObject.NULL)
+                .put("projectPath", luaDir)
+                .put("returnCount", results.size)
+                .put("result", results.firstOrNull()?.let { luaValueToJson(it) } ?: JSONObject.NULL)
+                .put("results", values)
+                .put("note", "调用在运行实例主线程执行(与项目自身调用同一路径),会受脚本忙碌程度影响。")
+                .toString(2)
+        )
+    }
+
+    /** 定位要调用的运行实例:page 优先,其次 path,再退化为当前项目 / 唯一页面。 */
+    private fun resolveRunningActivity(context: Context, args: JSONObject): LuaActivity? {
+        val page = args.optString("page", "").trim()
+        if (page.isNotBlank()) return LuaActivity.getActivity(page)
+
+        val running = LuaActivity.getRunningActivities()
+        if (running.isEmpty()) return null
+
+        val raw = args.optString("path", "").trim()
+        if (raw.isNotBlank()) {
+            val project = resolveProjectPath(context, raw) ?: return null
+            return LuaActivity.getActivityByLuaDir(project)
+        }
+
+        EditorBridge.currentProjectPath()?.takeIf { it.isNotBlank() }?.let { current ->
+            LuaActivity.getActivityByLuaDir(current)?.let { return it }
+        }
+        return if (running.size == 1) running.values.first() else null
+    }
+
+    /** 返回第一个无法经 JSON 表达的形参类型名;全部可表达时返回 null。 */
+    private fun unsupportedParam(method: Method, contextInjected: Boolean): String? {
+        val types = method.parameterTypes
+        for ((index, type) in types.withIndex()) {
+            // 首个 Context 形参由框架注入,不需要 Lua 侧传
+            if (contextInjected && index == 0) continue
+            val target = if (method.isVarArgs && index == types.size - 1) type.componentType else type
+            if (target != null && target !in SCALAR_PARAM_TYPES) return target.simpleName
+        }
+        return null
+    }
+
+    /** 解析实参:JSON 数组保留类型;分隔字符串按字面量推断。 */
+    private fun parseLuaArgs(args: JSONObject): List<Any?> {
+        val array = args.optJSONArray("args")
+        if (array != null) {
+            return (0 until array.length()).map { index -> jsonArgToJava(array.opt(index)) }
+        }
+        val raw = args.opt("args")
+        val text = when (raw) {
+            null, JSONObject.NULL -> ""
+            is String -> raw
+            else -> raw.toString()
+        }
+        if (text.isBlank()) return emptyList()
+        return text.split('\n', ',').map { it.trim() }.filter { it.isNotEmpty() }.map { inferScalar(it) }
+    }
+
+    private fun jsonArgToJava(value: Any?): Any? = when (value) {
+        null, JSONObject.NULL -> null
+        is Boolean, is String, is Number -> value
+        else -> value.toString()
+    }
+
+    private fun inferScalar(text: String): Any? = when {
+        text.equals("true", true) -> true
+        text.equals("false", true) -> false
+        text.equals("nil", true) || text.equals("null", true) -> null
+        INTEGER_ARG.matches(text) -> text.toLongOrNull() ?: text
+        DECIMAL_ARG.matches(text) -> text.toDoubleOrNull() ?: text
+        else -> text
+    }
+
+    /** 把 Lua 返回值转成 org.json 可序列化的形式。 */
+    private fun luaValueToJson(value: LuaObject): Any {
+        return try {
+            when {
+                value.isNil() -> JSONObject.NULL
+                value.isBoolean() -> value.getBoolean()
+                value.isInteger() -> value.getInteger()
+                value.isNumber() -> value.getNumber()
+                value.isString() -> value.getString()
+                value.isTable() -> toJsonValue(value.getTable())
+                value.isUserdata() -> {
+                    val obj = runCatching { value.getObject() }.getOrNull()
+                    if (obj == null) value.toString() else toJsonValue(obj)
+                }
+                else -> value.toString()
+            }
+        } catch (e: Exception) {
+            "无法转换返回值: ${e.message}"
+        }
+    }
+
+    /** 保证结果能被 org.json 序列化:非 JSON 类型退化为字符串。 */
+    private fun toJsonValue(value: Any?): Any {
+        val safe = toJsonSafe(value)
+        // JSONObject.NULL 不是 JSONObject 实例,若落到 toString() 会变成字符串 "null"
+        if (safe === JSONObject.NULL) return JSONObject.NULL
+        return if (safe is JSONObject || safe is JSONArray || safe is String ||
+            safe is Boolean || safe is Number
+        ) safe else safe.toString()
+    }
+
+    private fun sameDir(a: String?, b: String?): Boolean {
+        if (a.isNullOrBlank() || b.isNullOrBlank()) return false
+        return runCatching { File(a).canonicalPath == File(b).canonicalPath }.getOrDefault(false)
     }
 
     // ------------------------------------------------------------------

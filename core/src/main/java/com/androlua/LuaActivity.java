@@ -222,7 +222,9 @@ public class LuaActivity extends AppCompatActivity
 
       mLuaDexLoader = new LuaDexLoader(this);
       mLuaDexLoader.loadLibs();
-      sLuaActivityMap.put(pageName, this);
+      synchronized (sLuaActivityMap) {
+        sLuaActivityMap.put(pageName, this);
+      }
       doFile(luaPath, arg);
       isCreate = true;
       if (!pageName.equals("main")) runFunc("main", arg);
@@ -605,7 +607,46 @@ public class LuaActivity extends AppCompatActivity
   }
 
   public static LuaActivity getActivity(String name) {
-    return sLuaActivityMap.get(name);
+    synchronized (sLuaActivityMap) {
+      return sLuaActivityMap.get(name);
+    }
+  }
+
+  public String getPageName() {
+    return pageName;
+  }
+
+  /**
+   * 当前正在运行的页面快照(键为 pageName)。
+   *
+   * 供 MCP 定位"运行中"的 Lua 环境:global_utils 注册的全局函数只存在于运行中的
+   * LuaState 里,不查运行实例就无法调用它们。返回的是快照,避免与生命周期回调并发修改。
+   */
+  public static Map<String, LuaActivity> getRunningActivities() {
+    synchronized (sLuaActivityMap) {
+      return new HashMap<String, LuaActivity>(sLuaActivityMap);
+    }
+  }
+
+  /**
+   * 按项目目录(luaDir)查找运行中的页面。
+   *
+   * 同一项目可能同时打开多个页面,此时返回其中一个;调用方可改用 pageName 精确指定。
+   */
+  public static LuaActivity getActivityByLuaDir(String dir) {
+    if (dir == null || dir.isEmpty()) {
+      return null;
+    }
+    String target = new File(dir).getAbsolutePath();
+    synchronized (sLuaActivityMap) {
+      for (LuaActivity activity : sLuaActivityMap.values()) {
+        if (activity.luaDir != null
+            && new File(activity.luaDir).getAbsolutePath().equals(target)) {
+          return activity;
+        }
+      }
+    }
+    return null;
   }
 
   @Override
@@ -615,7 +656,9 @@ public class LuaActivity extends AppCompatActivity
     for (LuaGcable obj : gclist) {
       obj.gc();
     }
-    sLuaActivityMap.remove(pageName);
+    synchronized (sLuaActivityMap) {
+      sLuaActivityMap.remove(pageName);
+    }
     runFunc("onDestroy");
 
     if (mLuaDexLoader != null) {
