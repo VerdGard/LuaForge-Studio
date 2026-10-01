@@ -5,6 +5,11 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+# softprops/action-gh-release 需要写入 contents 才能创建 Release;
+# 不声明时 GITHUB_TOKEN 默认为只读,该步骤会以 403 失败。
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
