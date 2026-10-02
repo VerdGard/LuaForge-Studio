@@ -2,12 +2,13 @@
 
 ## 1.6.4
 - 构建项目支持选择构建类型(构建时弹出 MD3 对话框)
+  - **跟随项目设置**(默认):加密与调试模式均取项目属性里的设置
   - **未加密版**:Lua / ALY 源码不做加密处理,以明文脚本打包
   - **Debug 版**:开启调试模式(打包内 `settings.json` 的 `debugmode` 置为 true)
   - **Release 版**:关闭调试模式(`debugmode` 置为 false)
-  - 未加密与调试模式是两个独立维度:未加密版沿用项目自身的调试模式设置
+  - 未加密与调试模式是两个独立维度:只有「未加密版」会关掉加密,调试模式默认仍沿用项目自身设置
 - 设置 → MCP 服务:每个访问地址独立一行并带**复制按钮**,一键复制到剪贴板
-- 设置 → 网络请求拦截:允许 / 拒绝主机名单支持**单条删除**与**清空全部**,列表行改为卡片式并配删除按钮
+- 设置 → 安全防护 → 网络请求拦截:允许 / 拒绝主机名单支持**单条删除**与**清空全部**,列表行改为卡片式并配删除按钮
   - 名单超过 5 条时自动折叠,可展开查看并逐条清理
 - MCP:新增 `global_utils` 工具类的查看与调用能力,工具总数 42 → 44
   - `list_global_utils`:查看项目 `global_utils` 配置,以及这些工具类在**运行时会实际注册**的 Lua 全局函数(参数、返回类型、context 注入、同名覆盖)
@@ -22,6 +23,32 @@
   - 之前 `LuaState.toJavaObject` 得到的 `Double` 直接传给 `Float` / `Int` 形参会抛 `argument type mismatch`(如 `dp2px(16.5)`)
   - 现在按形参类型做数值收窄,不再依赖 Java 的自动转换
 - `LuaActivity` 新增运行实例定位能力(`getPageName` / `getRunningActivities` / `getActivityByLuaDir`),并给 `sLuaActivityMap` 的读写加同步
+- 新增 `memory` 库(`core/src/main/resources/lua/memory.lua`),纯 Lua 内存管理,`require "memory"` 即可使用
+  - `start(cfg)`:自动模式,内部用 `Handler` + 协程定时巡检,不额外起线程
+  - `start_manual(cfg)` + `tick()`:手动模式,由项目自己驱动巡检节奏
+  - 自适应 GC:按当前用量与峰值比例动态调 `setpause` / `setstepmul`
+  - 泄漏检测:滚动窗口采样(最多 10 次)统计平均增长,持续增长即告警并回收;回落则进入冷却或分步 GC
+  - `stop()` / `monitoring()` / `force_gc()` / `get_status()` / `on_destroy()` / `help()`
+  - 入参越界(如 `pause`、`stepmul`、`interval`)自动收敛到合法默认值
+- 三方控件支持(设置 → 编辑器配置,默认开启)
+  - 使用 `.aly` 布局前预载项目 `libs/*.dex|jar`,并把 `DexClassLoader` 链路打通到裸类名解析
+    - 背景:`luajava.bindClass` 走 `Class.forName`,只看宿主 classpath,看不到 `activity.loadDex` 追加的装载器
+  - 关闭后仅允许系统与官方控件(布局助手按白名单门控)
+- 项目属性新增「图标路径」(`settings.json` 顶层 `iconPath`)
+  - 路径框只读 + 文件夹按钮:仅改引用路径,不复制文件,文件选择器锁根在项目内
+  - 点击大图更换图片:走内置文件选择器(默认 `/sdcard/DCIM`),选中即复制到项目根并保持原名
+  - 路径自检:绝对路径 / 含 `..` / 空值一律回退 `icon.png` 并回写修正
+  - 项目卡片缩略图跟随 `iconPath`,保存后即时刷新
+- 项目属性新增「构建选项」:`encrypt`(加密项目)与 `mergeDex`(合并 `libs/*.dex`),存于 `settings.json` 的 `application` 层
+  - `mergeDex` 开启时把 `libs/*.dex` 移出 `assets`,并按现有 `classes*.dex` 续号重命名到 APK 根
+- 新增「防火墙」(设置 → 安全防护,两项默认开启)
+  - 越级写入拦截:运行中的项目写入 / 删除 / 重命名其它项目目录时拦截,读取不受影响
+  - 自我守护:拦截项目删除或移动 LuaForge-Studio 工作目录的行为
+  - Lua 侧改写写入入口:`io.open` / `io.output`、`os.remove` / `os.rename`、`os.execute` / `io.popen`(含危险命令词法判定)、`lfs.remove` / `rmdir` / `rename`
+  - Java 侧同步拦截 `File`、`LuaUtil`、`Runtime.exec`、`ProcessBuilder` 与输出流构造
+  - 命中时弹 MD3 对话框说明,并按项目累计「已守护 N 次」,计数显示在设置页
+  - 仅在编辑器内运行项目时生效(需项目开启调试模式);打包成 APK 后不含防火墙逻辑
+- 设置 → 安全防护:由原「网络请求拦截」卡片扩展而来,内含「网络请求拦截」「防火墙」两个分区标题
 
 ### 其他
 - 布局助手(`loadlayout`):修复 `@id/xxx`、`@+id/xxx` 形式的控件引用
