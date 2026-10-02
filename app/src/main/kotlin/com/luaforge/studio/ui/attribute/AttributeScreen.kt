@@ -2,11 +2,7 @@ package com.luaforge.studio.ui.attribute
 
 import android.content.Context
 import android.content.pm.PackageManager
-import android.net.Uri
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -39,6 +35,8 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.luaforge.studio.R
+import com.luaforge.studio.ui.components.FilePickerDialog
+import com.luaforge.studio.ui.components.SelectionMode
 import com.luaforge.studio.ui.components.SwitchBar
 import com.luaforge.studio.ui.project.CompactUtilCard
 import com.luaforge.studio.ui.project.GlobalUtilItem
@@ -51,6 +49,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.os.Environment
 import java.io.File
 import java.io.FileOutputStream
 
@@ -179,22 +178,23 @@ fun AttributeScreen(
 
     val selectedGlobalUtils = remember { mutableStateMapOf<String, Boolean>() }
 
-    var iconUri by remember { mutableStateOf<Uri?>(null) }
-    val iconFile = File(projectPath, "icon.png")
+    // 图标路径（相对项目根）：来自 settings.json 顶层 iconPath
+    var iconPath by remember { mutableStateOf("icon.png") }
+    var iconRefreshTick by remember { mutableStateOf(0) }
+    var showGalleryFilePicker by remember { mutableStateOf(false) }
+    var showIconPicker by remember { mutableStateOf(false) }
+    val iconFile = File(projectPath, iconPath)
     val hasExistingIcon = iconFile.exists() && iconFile.isFile
+
+    // 构建选项：存于 settings.json 的 application 层
+    var encryptEnabled by remember { mutableStateOf(true) }
+    var mergeDexEnabled by remember { mutableStateOf(true) }
 
     var minSdkMenuExpanded by remember { mutableStateOf(false) }
     var targetSdkMenuExpanded by remember { mutableStateOf(false) }
 
     var showPermissionSheet by remember { mutableStateOf(false) }
     var permissionSearchQuery by remember { mutableStateOf("") }
-
-    val pickImageLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia(),
-        onResult = { uri ->
-            uri?.let { iconUri = it }
-        }
-    )
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
@@ -213,6 +213,31 @@ fun AttributeScreen(
                     debugMode =
                         ((jsonMap["application"] as? Map<*, *>)?.get("debugmode") as? Boolean)
                             ?: false
+                    encryptEnabled =
+                        ((jsonMap["application"] as? Map<*, *>)?.get("encrypt") as? Boolean)
+                            ?: true
+                    mergeDexEnabled =
+                        ((jsonMap["application"] as? Map<*, *>)?.get("mergeDex") as? Boolean)
+                            ?: true
+
+                    // 图标路径越界/绝对路径自检：回退默认并落盘，防止脏值持续生效
+                    val rawIcon = (jsonMap["iconPath"] as? String ?: "icon.png").trim()
+                    iconPath = if (rawIcon.isEmpty() || rawIcon.startsWith("/") || rawIcon.contains("..")) {
+                        "icon.png"
+                    } else {
+                        rawIcon
+                    }
+                    if (iconPath != rawIcon.ifEmpty { "icon.png" }) {
+                        val safeMap =
+                            (jsonMap as? Map<String, Any?>)?.toMutableMap() ?: mutableMapOf()
+                        safeMap["iconPath"] = iconPath
+                        try {
+                            settingsFile.writeText(JsonUtil.toFormattedString(safeMap, 4))
+                            LogCatcher.i("AttributeScreen", "图标路径越界，已恢复默认")
+                        } catch (e: Exception) {
+                            LogCatcher.e("AttributeScreen", "回写修复后的图标路径失败", e)
+                        }
+                    }
 
                     val usesSdk = jsonMap["uses_sdk"] as? Map<*, *>
                     minSdkVersion = (usesSdk?.get("minSdkVersion") as? String)?.toIntOrNull() ?: 21
@@ -237,12 +262,9 @@ fun AttributeScreen(
         }
     }
 
-    fun saveSettings() {
-        if (isSaving) return
-        isSaving = true
-        scope.launch {
-            try {
-                withContext(Dispatchers.IO) {
+    // 仅落盘，无 UI 行为；供 FAB 保存与图标即时更换共用
+    suspend fun persistSettings() {
+        withContext(Dispatchers.IO) {
                     val settingsFile = File(projectPath, "settings.json")
                     val jsonMap: MutableMap<String, Any?> = if (settingsFile.exists()) {
                         val parsed = JsonUtil.parseObject(settingsFile.readText())
@@ -255,11 +277,14 @@ fun AttributeScreen(
                         ?: mutableMapOf<String, Any?>()
                     application["label"] = label
                     application["debugmode"] = debugMode
+                    application["encrypt"] = encryptEnabled
+                    application["mergeDex"] = mergeDexEnabled
                     jsonMap["application"] = application
 
                     jsonMap["package"] = packageName
                     jsonMap["versionName"] = versionName
                     jsonMap["versionCode"] = versionCode
+                    jsonMap["iconPath"] = iconPath
 
                     val usesSdk = (jsonMap["uses_sdk"] as? Map<String, Any?>)?.toMutableMap()
                         ?: mutableMapOf<String, Any?>()
@@ -277,16 +302,15 @@ fun AttributeScreen(
 
                     val updatedJson = JsonUtil.toFormattedString(jsonMap, 4)
                     settingsFile.writeText(updatedJson)
+        }
+    }
 
-                    iconUri?.let { uri ->
-                        val outputFile = File(projectPath, "icon.png")
-                        context.contentResolver.openInputStream(uri)?.use { input ->
-                            FileOutputStream(outputFile).use { output ->
-                                input.copyTo(output)
-                            }
-                        }
-                    }
-                }
+    fun saveSettings() {
+        if (isSaving) return
+        isSaving = true
+        scope.launch {
+            try {
+                persistSettings()
                 withContext(Dispatchers.Main) {
                     toast.showToast(context.getString(R.string.attribute_save_success))
                     onSaveComplete()
@@ -388,11 +412,7 @@ fun AttributeScreen(
                                 .size(100.dp)
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
-                                .clickable {
-                                    pickImageLauncher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                    )
-                                }
+                                .clickable { showGalleryFilePicker = true }
                                 .border(
                                     2.dp,
                                     MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
@@ -400,12 +420,16 @@ fun AttributeScreen(
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
-                            val imageModel = iconUri ?: if (hasExistingIcon) iconFile else null
+                            val imageModel = if (hasExistingIcon) iconFile else null
                             if (imageModel != null) {
                                 AsyncImage(
                                     model = ImageRequest.Builder(context)
                                         .data(imageModel)
                                         .crossfade(true)
+                                        .size(256) // 缩小采样，避免超大图标解码致内存压力
+                                        // 路径 + tick 双参与缓存键：换图与同路径覆盖都强制刷新预览
+                                        .memoryCacheKey("project_icon_${iconPath}_${iconRefreshTick}")
+                                        .diskCacheKey("project_icon_${iconPath}_${iconRefreshTick}")
                                         .build(),
                                     contentDescription = stringResource(R.string.cd_project_icon),
                                     modifier = Modifier.fillMaxSize(),
@@ -426,6 +450,24 @@ fun AttributeScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 8.dp)
+                        )
+
+                        // 图标路径（只读）：编辑按钮仅改引用路径；更换图片才复制到项目内
+                        OutlinedTextField(
+                            value = iconPath,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text(stringResource(R.string.attribute_icon_path)) },
+                            shape = MaterialTheme.shapes.small,
+                            trailingIcon = {
+                                IconButton(onClick = { showIconPicker = true }) {
+                                    Icon(Icons.Filled.FolderOpen, contentDescription = null)
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp),
+                            singleLine = true
                         )
                     }
                 }
@@ -539,6 +581,28 @@ fun AttributeScreen(
                     )
                 }
 
+                // 构建选项卡片
+                SettingsCard(
+                    title = stringResource(R.string.attribute_build_options),
+                    icon = Icons.Filled.Build
+                ) {
+                    SwitchBar(
+                        checked = encryptEnabled,
+                        onCheckedChange = { encryptEnabled = it },
+                        text = stringResource(
+                            R.string.attribute_encrypt_build,
+                            com.luaforge.studio.utils.AppInfoUtil.getAppName(context)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    SwitchBar(
+                        checked = mergeDexEnabled,
+                        onCheckedChange = { mergeDexEnabled = it },
+                        text = stringResource(R.string.attribute_merge_dex),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
                 // 权限卡片
                 SettingsCard(title = stringResource(R.string.attribute_permission_title), icon = Icons.Filled.Lock) {
                     Row(
@@ -609,6 +673,57 @@ fun AttributeScreen(
         }
     }
 
+    // 大图点击 → 内置文件选择器（默认 /sdcard/DCIM），选中后复制到项目根（保持原名）
+    if (showGalleryFilePicker) {
+        FilePickerDialog(
+            initialPath = File(Environment.getExternalStorageDirectory(), "DCIM").absolutePath,
+            selectionMode = SelectionMode.FILE,
+            title = stringResource(R.string.cd_project_icon),
+            allowedExtensions = listOf("jpg", "jpeg", "png", "webp", "gif", "bmp"),
+            onDismiss = { showGalleryFilePicker = false },
+            onFileSelected = { path ->
+                showGalleryFilePicker = false
+                scope.launch {
+                    val copiedName = withContext(Dispatchers.IO) {
+                        copyGalleryImageToProject(File(path), projectPath)
+                    }
+                    if (copiedName != null) {
+                        iconPath = copiedName
+                        iconRefreshTick++ // 换缓存键刷新预览
+                        persistSettings()
+                        toast.showToast(context.getString(R.string.attribute_icon_updated))
+                    } else {
+                        toast.showToast(context.getString(R.string.attribute_icon_copy_failed))
+                    }
+                }
+            }
+        )
+    }
+
+    // 图标路径编辑：仅改引用路径（锁根在项目内），不复制
+    if (showIconPicker) {
+        FilePickerDialog(
+            initialPath = projectPath,
+            selectionMode = SelectionMode.FILE,
+            title = stringResource(R.string.attribute_icon_picker_title),
+            allowedExtensions = listOf("png", "jpg", "jpeg", "webp", "gif"),
+            rootPath = projectPath, // 锁根：只在项目内选择
+            onDismiss = { showIconPicker = false },
+            onFileSelected = { path ->
+                showIconPicker = false
+                val rel = runCatching {
+                    File(path).relativeTo(File(projectPath)).path.replace('\\', '/')
+                }.getOrNull()
+                // 仅以 relativeTo 结果判定：不同根抛异常->null 拒绝；同根父目录逃逸->rel 含 .. 拒绝
+                if (rel != null && !rel.contains("..")) {
+                    iconPath = rel
+                    iconRefreshTick++
+                    toast.showToast(context.getString(R.string.attribute_icon_updated))
+                }
+            }
+        )
+    }
+
     if (showPermissionSheet) {
         ModalBottomSheet(
             onDismissRequest = { showPermissionSheet = false }
@@ -620,6 +735,24 @@ fun AttributeScreen(
                 onConfirm = { showPermissionSheet = false }
             )
         }
+    }
+}
+
+// 从本地文件复制图片到项目根目录，保持原文件名与后缀（净化路径分隔符）；失败返回 null
+private fun copyGalleryImageToProject(sourceFile: File, projectPath: String): String? {
+    return try {
+        if (!sourceFile.exists() || !sourceFile.isFile) return null
+        val safeName = sourceFile.name
+            .takeIf { it.isNotBlank() && !it.contains("..") && !it.contains('\\') }
+            ?: "icon.png"
+        val outputFile = File(projectPath, safeName)
+        sourceFile.inputStream().use { input ->
+            FileOutputStream(outputFile).use { output -> input.copyTo(output) }
+        }
+        safeName
+    } catch (e: Exception) {
+        LogCatcher.e("AttributeScreen", "复制图标失败", e)
+        null
     }
 }
 

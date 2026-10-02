@@ -1251,14 +1251,19 @@ fun ProjectCard(
     val context = LocalContext.current
 
     var manifestInfo by remember { mutableStateOf<ManifestInfo?>(null) }
-    val iconFile = remember(project.path) {
-        File(project.path, "icon.png")
+    // settings.json 修改时间:属性页改图标/名称后回到列表能自动刷新
+    val settingsStamp = remember(project.path) {
+        File(project.path, "settings.json").lastModified()
+    }
+    // 图标路径遵从 settings.json 的 iconPath(重读取)
+    val iconFile = remember(project.path, settingsStamp) {
+        File(project.path, com.luaforge.studio.utils.ProjectUtil.projectIconPath(File(project.path)))
     }
     val hasIcon by derivedStateOf {
         iconFile.exists() && iconFile.isFile
     }
 
-    LaunchedEffect(project.path) {
+    LaunchedEffect(project.path, settingsStamp) {
         withContext(Dispatchers.IO) {
             val projectDir = File(project.path)
             if (projectDir.exists() && projectDir.isDirectory) {

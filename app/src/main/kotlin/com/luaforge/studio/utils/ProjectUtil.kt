@@ -508,6 +508,28 @@ object ProjectUtil {
     }
 
     /**
+     * 解析项目图标路径（相对项目根）。
+     *
+     * 取 settings.json 顶层 `iconPath`；为空、绝对路径或含 `..` 时回退 `icon.png`，
+     * 避免脏值引入项目外文件。同时兼容旧的 `icon` 键名。
+     */
+    fun projectIconPath(projectDir: File): String {
+        val raw = try {
+            val settingsFile = File(projectDir, "settings.json")
+            if (!settingsFile.exists() || !settingsFile.isFile) {
+                "icon.png"
+            } else {
+                val jsonMap = JsonUtil.parseObject(settingsFile.readText())
+                ((jsonMap["iconPath"] as? String) ?: (jsonMap["icon"] as? String) ?: "icon.png")
+                    .trim()
+            }
+        } catch (e: Exception) {
+            "icon.png"
+        }
+        return if (raw.isEmpty() || raw.startsWith("/") || raw.contains("..")) "icon.png" else raw
+    }
+
+    /**
      * 获取项目信息
      */
     suspend fun getProjectInfo(projectPath: String): Map<String, Any?> {
@@ -537,8 +559,8 @@ object ProjectUtil {
                     }
                 }
 
-                // 检查是否有icon.png
-                val iconFile = File(projectDir, "icon.png")
+                // 检查项目图标（遵从 settings.json 的 iconPath）
+                val iconFile = File(projectDir, projectIconPath(projectDir))
                 info["hasIcon"] = iconFile.exists() && iconFile.isFile
 
                 // 统计文件数量

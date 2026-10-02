@@ -461,6 +461,13 @@
     <string name="attribute_global_utils_hint">选择需要导入的工具类（长按查看文档）</string>
     <string name="attribute_save_success">保存成功</string>
     <string name="attribute_save_failed">保存失败: %s</string>
+    <string name="attribute_build_options">构建选项</string>
+    <string name="attribute_encrypt_build">让 %1$s 加密项目</string>
+    <string name="attribute_merge_dex">合并 libs/*.dex 至 classes*.dex</string>
+    <string name="attribute_icon_path">图标路径</string>
+    <string name="attribute_icon_picker_title">选择项目图标</string>
+    <string name="attribute_icon_updated">图标已更新</string>
+    <string name="attribute_icon_copy_failed">图标复制失败</string>
 
     <!-- 全局工具名称 -->
     <string name="global_util_bitmap">BitmapUtil</string>
@@ -639,6 +646,7 @@
     <string name="code_editor_build_type_debug_desc">开启调试模式</string>
     <string name="code_editor_build_type_release">Release 版</string>
     <string name="code_editor_build_type_release_desc">关闭调试模式</string>
+    <string name="code_editor_build_type_default_desc">按项目属性中的加密与调试设置构建</string>
     <string name="code_editor_build_start">开始构建</string>
 
 </resources>

@@ -32,7 +32,10 @@ enum class BuildType(
     /** 是否覆盖打包内 `settings.json` 的 `debugmode`;null 表示沿用项目设置。 */
     val debugOverride: Boolean?
 ) {
-    /** 内部默认:保持历史行为(加密打包,调试模式沿用项目设置)。 */
+    /**
+     * 跟随项目设置:是否加密取 settings.json 的 `encrypt`
+     * (此枚举口的 encryptLua 对它不生效),调试模式沿用项目设置。
+     */
     PROJECT_DEFAULT(true, null),
 
     /** 未加密版:Lua 源码不做加密处理。 */
@@ -45,8 +48,8 @@ enum class BuildType(
     RELEASE(true, false);
 
     companion object {
-        /** 供构建对话框展示的可选类型(不含内部默认值)。 */
-        val selectable: List<BuildType> = listOf(UNENCRYPTED, DEBUG, RELEASE)
+        /** 供构建对话框展示的可选类型。 */
+        val selectable: List<BuildType> = listOf(PROJECT_DEFAULT, UNENCRYPTED, DEBUG, RELEASE)
     }
 }
 
@@ -123,7 +126,11 @@ class ApkBuilder {
             minSdkVersion: Int,
             targetSdkVersion: Int,
             mavenDependencies: List<String> = emptyList(),
-            buildType: BuildType = BuildType.PROJECT_DEFAULT
+            buildType: BuildType = BuildType.PROJECT_DEFAULT,
+            /** 项目 settings.json 的 encrypt：PROJECT_DEFAULT 构建类型下生效。 */
+            encryptEnabled: Boolean = true,
+            /** 项目 settings.json 的 mergeDex：是否合并 libs/*.dex 至 classes*.dex。 */
+            mergeDexEnabled: Boolean = true
         ): String {
             LogCatcher.i("ApkBuilder", "开始构建APK")
             LogCatcher.i("ApkBuilder", "项目路径: $projectPath")
@@ -138,6 +145,13 @@ class ApkBuilder {
             LogCatcher.i("ApkBuilder", "权限数量: ${permissions?.size ?: 0}")
             LogCatcher.i("ApkBuilder", "Maven依赖数量: ${mavenDependencies.size}")
             LogCatcher.i("ApkBuilder", "构建类型: $buildType")
+
+            // 加密与否:PROJECT_DEFAULT 取项目 settings.json 的 encrypt,其余构建类型显式决定
+            val encryptLua = when (buildType) {
+                BuildType.PROJECT_DEFAULT -> encryptEnabled
+                else -> buildType.encryptLua
+            }
+            LogCatcher.i("ApkBuilder", "是否加密 Lua/ALY 源码: $encryptLua")
 
             var unsignedApkPath: String? = null
 
@@ -174,7 +188,8 @@ class ApkBuilder {
                     processedPermissions,
                     minSdkVersion,
                     targetSdkVersion,
-                    isDebug
+                    isDebug,
+                    iconPath
                 )
 
                 if (tempApkPath == null) {
@@ -195,7 +210,9 @@ class ApkBuilder {
                     projectPath,
                     unsignedApkPath,
                     mavenJars,
-                    buildType
+                    buildType,
+                    encryptLua,
+                    mergeDexEnabled
                 )
 
                 if (unsignedApkPath == null) {
@@ -508,7 +525,8 @@ class ApkBuilder {
             permissions: Array<String>?,
             minSdkVersion: Int,
             targetSdkVersion: Int,
-            isDebug: Boolean
+            isDebug: Boolean,
+            iconPath: String?
         ): String? {
             try {
                 // 1. 创建临时目录
@@ -529,7 +547,7 @@ class ApkBuilder {
                 }
 
                 // 4. 替换图标文件（如果存在）
-                replaceIconFile(projectPath, tempDir)
+                replaceIconFile(projectPath, tempDir, iconPath)
 
                 // 5. 使用AxmlEditor修改AndroidManifest.xml
                 modifyManifestWithAxmlEditor(
@@ -580,13 +598,14 @@ class ApkBuilder {
         }
 
         // 替换图标文件
-        private fun replaceIconFile(projectPath: String, tempDir: File) {
+        private fun replaceIconFile(projectPath: String, tempDir: File, iconPath: String?) {
             try {
-                // 检查项目目录中是否有icon.png
-                val projectIconFile = File(projectPath, "icon.png")
+                // 优先用调用方传入的绝对路径（已在构建入口按 iconPath 消歧），回退项目根 icon.png
+                val projectIconFile = iconPath?.let { File(it).takeIf { f -> f.isFile } }
+                    ?: File(projectPath, "icon.png")
 
                 if (!projectIconFile.exists() || !projectIconFile.isFile) {
-                    LogCatcher.i("ApkBuilder", "项目目录中未找到icon.png，跳过图标替换")
+                    LogCatcher.i("ApkBuilder", "未找到项目图标，跳过图标替换")
                     return
                 }
 
@@ -747,7 +766,9 @@ class ApkBuilder {
             projectPath: String,
             outputPath: String,
             mavenJars: List<File> = emptyList(),
-            buildType: BuildType = BuildType.PROJECT_DEFAULT
+            buildType: BuildType = BuildType.PROJECT_DEFAULT,
+            encryptLua: Boolean = true,
+            mergeDexEnabled: Boolean = true
         ): String? {
             val L = getSharedLuaState()
 
@@ -772,7 +793,7 @@ class ApkBuilder {
                 cleanUnusedLibraries(workDir, referencedModules, projectPath)
 
                 // 5. 加密core.apk中引用的库文件(未加密版跳过,保持明文)
-                if (buildType.encryptLua) {
+                if (encryptLua) {
                     encryptCoreLibraries(L, workDir, referencedModules)
                 } else {
                     LogCatcher.i("ApkBuilder", "未加密版:跳过 core 库文件加密")
@@ -791,7 +812,7 @@ class ApkBuilder {
                 applyBuildSettingsOverrides(assetsDir, buildType.debugOverride)
 
                 // 9. 加密项目文件(未加密版跳过,保持明文)
-                if (buildType.encryptLua) {
+                if (encryptLua) {
                     encryptProjectFiles(L, assetsDir)
                 } else {
                     LogCatcher.i("ApkBuilder", "未加密版:跳过项目文件加密")
@@ -825,6 +846,13 @@ class ApkBuilder {
                     LogCatcher.w("ApkBuilder", "缺少 android.jar，跳过 Java 编译")
                 }
                 // ---------------------------------------------------------
+
+                // 9.5 合并 libs/*.dex 至 APK 根 classes*.dex（构建选项关闭时跳过）
+                if (mergeDexEnabled) {
+                    mergeLibsDexToApkRoot(assetsDir, workDir)
+                } else {
+                    LogCatcher.i("ApkBuilder", "构建选项已关闭合并 libs dex，保留 assets/libs/*.dex")
+                }
 
                 // 10. 删除已存在的输出文件
                 val outputFile = File(outputPath)
@@ -1896,6 +1924,37 @@ class ApkBuilder {
                 LogCatcher.e("ApkBuilder", "D8 DEX 生成失败", e)
                 throw RuntimeException("D8 DEX 生成失败: ${e.message}", e)
             }
+        }
+
+        // 合并 assets/libs/*.dex 至 APK 根 classes*.dex
+        // 将项目 libs/ 下的 dex 从 assets/libs 移出，按 workDir 根现有 classes*.dex
+        // 最大索引续号重命名（classes.dex 索引 1，classes2.dex 索引 2...），源文件移除
+        private fun mergeLibsDexToApkRoot(assetsDir: File, workDir: File) {
+            val libsDir = File(assetsDir, "libs")
+            if (!libsDir.exists() || !libsDir.isDirectory) return
+            val dexFiles = libsDir.listFiles { _, name ->
+                name.endsWith(".dex", ignoreCase = true)
+            } ?: return
+            if (dexFiles.isEmpty()) return
+
+            // 计算根目录现有 classes*.dex 的最大索引（classes.dex 索引为 1）
+            val existingDex = workDir.listFiles { _, name ->
+                name.matches(Regex("classes(\\d*)\\.dex", RegexOption.IGNORE_CASE))
+            } ?: emptyArray()
+            val maxIndex = existingDex.mapNotNull { file ->
+                val match = Regex("classes(\\d*)\\.dex", RegexOption.IGNORE_CASE).find(file.name)
+                match?.groupValues?.get(1)?.toIntOrNull() ?: 1
+            }.maxOrNull() ?: 0
+
+            var nextIndex = maxIndex + 1
+            for (dexFile in dexFiles.sortedBy { it.name }) {
+                val targetName = if (nextIndex == 1) "classes.dex" else "classes${nextIndex}.dex"
+                val targetFile = File(workDir, targetName)
+                dexFile.copyTo(targetFile, overwrite = true)
+                dexFile.delete()
+                nextIndex++
+            }
+            LogCatcher.i("ApkBuilder", "已合并 ${dexFiles.size} 个 libs/*.dex 至 APK 根")
         }
 
         // 将目录中的所有 DEX 文件复制到目标目录，并自动重命名避免覆盖

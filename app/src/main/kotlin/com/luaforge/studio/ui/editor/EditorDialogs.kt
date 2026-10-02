@@ -92,7 +92,8 @@ fun BuildTypeDialog(
 ) {
     if (!showBuildTypeDialog) return
 
-    var selected by remember { mutableStateOf(BuildType.UNENCRYPTED) }
+    // 默认跟随项目属性中的加密/调试设置
+    var selected by remember { mutableStateOf(BuildType.PROJECT_DEFAULT) }
 
     AlertDialog(
         modifier = modifier,
@@ -205,7 +206,7 @@ private fun buildTypeDescription(type: BuildType): String = when (type) {
     BuildType.UNENCRYPTED -> stringResource(R.string.code_editor_build_type_unencrypted_desc)
     BuildType.DEBUG -> stringResource(R.string.code_editor_build_type_debug_desc)
     BuildType.RELEASE -> stringResource(R.string.code_editor_build_type_release_desc)
-    BuildType.PROJECT_DEFAULT -> stringResource(R.string.code_editor_build_type_debug_desc)
+    BuildType.PROJECT_DEFAULT -> stringResource(R.string.code_editor_build_type_default_desc)
 }
 
 /** 构建类型图标。 */

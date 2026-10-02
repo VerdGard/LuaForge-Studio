@@ -194,9 +194,31 @@ val mavenDependencies = try {
     emptyList<String>()
 }
 
-        // 获取图标路径
-        val iconFile = File(projectPath, "icon.png")
+        // 获取图标路径（取自 settings.json 顶层 iconPath，净化后回退根 icon.png）
+        val rawIcon = (settings["iconPath"] as? String ?: "icon.png").trim()
+        val safeIcon = if (rawIcon.isEmpty() || rawIcon.startsWith("/") || rawIcon.contains("..")) {
+            "icon.png"
+        } else {
+            rawIcon
+        }
+        val iconFile = File(projectPath, safeIcon)
         val iconPath = if (iconFile.exists()) iconFile.absolutePath else null
+
+        // 获取加密项目开关（默认开启）
+        val encryptProject = try {
+            val application = settings["application"] as? Map<String, Any?>
+            (application?.get("encrypt") as? Boolean) ?: true
+        } catch (e: Exception) {
+            true
+        }
+
+        // 获取合并 libs dex 开关（默认开启）
+        val mergeDexEnabled = try {
+            val application = settings["application"] as? Map<String, Any?>
+            (application?.get("mergeDex") as? Boolean) ?: true
+        } catch (e: Exception) {
+            true
+        }
 
         // 获取minSdkVersion和targetSdkVersion
         var minSdkVersion = 21  // 默认值
@@ -290,7 +312,9 @@ val mavenDependencies = try {
                 minSdkVersion,               // minSdkVersion
                 targetSdkVersion,             // targetSdkVersion
                 mavenDependencies,
-                buildType                    // 构建类型(未加密 / Debug / Release)
+                buildType,                   // 构建类型(跟随项目 / 未加密 / Debug / Release)
+                encryptProject,              // settings.json 的 encrypt（PROJECT_DEFAULT 时生效）
+                mergeDexEnabled              // settings.json 的 mergeDex
             )
 
             // 构建后再次检查内存
