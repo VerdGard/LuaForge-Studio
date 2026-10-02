@@ -25,6 +25,10 @@ import com.luaforge.studio.console.core.ConsoleState
  * 面板打开 = BALL→PANEL；完全关闭 = 移除浮球 → CLOSED（首次 Toast 提示音量键恢复）。
  */
 class OverlayController(private val appContext: Context) {
+    /** 浮球高度(dp):胶囊固定高;宽度由 ConsoleBallView 自适应(含未读计数芯片)。 */
+    private companion object {
+        const val BALL_HEIGHT_DP = 34
+    }
 
     private val settings = ConsoleSettings(appContext)
     private var wm: WindowManager? = null
@@ -38,6 +42,16 @@ class OverlayController(private val appContext: Context) {
     private var fullyClosing = false
     /** 未读 Lua 错误角标计数（浮球重建/换宿主后仍保持）。 */
     private var ballErrorCount = 0
+
+    /** 当前浮球实宽;未测量时回退高度,保证初始拖动钳制不越界。 */
+    private fun ballWidth(): Int =
+        ball?.let { if (it.measuredWidth > 0) it.measuredWidth else appContext.dp(BALL_HEIGHT_DP) }
+            ?: appContext.dp(BALL_HEIGHT_DP)
+
+    /** 当前浮球实高。 */
+    private fun ballHeight(): Int =
+        ball?.let { if (it.measuredHeight > 0) it.measuredHeight else appContext.dp(BALL_HEIGHT_DP) }
+            ?: appContext.dp(BALL_HEIGHT_DP)
 
     /** 设置/清除浮球未读错误角标；浮球不在时缓存，下次 showBall 补上。 */
     fun setErrorCount(n: Int) {
@@ -60,8 +74,8 @@ class OverlayController(private val appContext: Context) {
         if (canOverlay()) {
             wm = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
             params = WindowManager.LayoutParams(
-                appContext.dp(56),
-                appContext.dp(56),
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                appContext.dp(BALL_HEIGHT_DP),
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                 android.graphics.PixelFormat.TRANSLUCENT
@@ -79,7 +93,10 @@ class OverlayController(private val appContext: Context) {
             }
         }
         // 权限兜底：挂到当前 Activity 内容视图
-        val lp = FrameLayout.LayoutParams(appContext.dp(56), appContext.dp(56))
+        val lp = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            appContext.dp(BALL_HEIGHT_DP)
+        )
         lp.gravity = Gravity.TOP or Gravity.END
         lp.setMargins(0, appContext.dp(160), appContext.dp(12), 0)
         (activity.window.decorView as ViewGroup).addView(view, lp)
@@ -116,8 +133,8 @@ class OverlayController(private val appContext: Context) {
         val w = b?.width() ?: 0
         val h = b?.height() ?: 0
         return intArrayOf(
-            maxOf(0, w - appContext.dp(56)),
-            maxOf(0, h - appContext.dp(56))
+            maxOf(0, w - ballWidth()),
+            maxOf(0, h - ballHeight())
         )
     }
 
