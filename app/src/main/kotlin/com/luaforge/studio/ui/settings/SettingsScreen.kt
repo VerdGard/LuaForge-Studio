@@ -33,6 +33,7 @@ import androidx.compose.material.icons.automirrored.filled.Comment
 import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
 import androidx.compose.material.icons.automirrored.filled.MergeType
 import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.automirrored.filled.TextSnippet
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Code
@@ -846,6 +847,35 @@ Column(
                         }
                     )
                     
+                    SettingsListItem(
+                        title = stringResource(R.string.settings_per_project_word_wrap),
+                        subtitle = stringResource(R.string.settings_per_project_word_wrap_desc),
+                        leadingIcon = {
+                            Icon(
+                                Icons.AutoMirrored.Filled.TextSnippet,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = currentSettingsState.perProjectWordWrap,
+                                onCheckedChange = {
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(perProjectWordWrap = it)
+                                    )
+                                }
+                            )
+                        },
+                        onClick = {
+                            updateSettingsWithSave(
+                                currentSettingsState.copy(
+                                    perProjectWordWrap = !currentSettingsState.perProjectWordWrap
+                                )
+                            )
+                        }
+                    )
+
                     HorizontalDivider(
                         modifier = Modifier.padding(vertical = 4.dp),
                         thickness = 0.5.dp,

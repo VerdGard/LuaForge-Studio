@@ -174,6 +174,8 @@
     <string name="settings_indent_guide_desc">在编辑器中显示垂直的缩进参考线，帮助对齐代码</string>
     <string name="settings_completion_case_sensitive">补全大小写敏感</string>
     <string name="settings_completion_case_sensitive_desc">代码补全是否区分大小写</string>
+    <string name="settings_per_project_word_wrap">项目间自动换行独立</string>
+    <string name="settings_per_project_word_wrap_desc">为每个项目使用独立的自动换行状态,关闭时全局共享同一个设置</string>
     <string name="settings_smart_sorting">智能排序</string>
     <string name="settings_smart_sorting_desc">根据使用频率自动排序快捷功能和符号栏</string>
     <string name="settings_hex_color_highlight">十六进制颜色高亮</string>
@@ -404,6 +406,7 @@
     <string name="code_editor_run_permission_denied">权限不足，无法启动运行环境</string>
     <string name="code_editor_run_failed">启动失败: %s</string>
     <string name="code_editor_main_lua_not_found">未找到 main.lua 文件</string>
+    <string name="code_editor_run_current_file">运行当前文件</string>
     <string name="code_editor_cache_cleared">项目缓存已清理</string>
     <string name="code_editor_clear_cache_failed">清理失败: %s</string>
     <string name="code_editor_more_tabs">更多标签</string>
@@ -505,6 +508,7 @@
     <string name="filetree_new_folder">新建文件夹</string>
     <string name="filetree_rename">重命名</string>
     <string name="filetree_copy_path">复制绝对路径</string>
+    <string name="filetree_copy_rel_path">复制相对路径</string>
 
     <!-- FileTree - 删除确认对话框 -->
     <string name="filetree_delete_confirm_title">确认删除</string>

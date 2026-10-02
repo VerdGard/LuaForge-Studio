@@ -1034,6 +1034,7 @@ fun EditorContent(
                         onOpenFileTree = {
                             scope.launch { if (fileTreeDrawerState.isClosed) fileTreeDrawerState.open() }
                         },
+                        projectPath = projectPath,
                         modifier = Modifier.fillMaxSize(),
                         onSwipe = onSwipe // 传递滑动手势回调
                     )

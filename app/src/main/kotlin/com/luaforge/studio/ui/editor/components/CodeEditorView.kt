@@ -66,6 +66,8 @@ fun CodeEditorView(
     viewModel: EditorViewModel,
     isActiveFile: Boolean = false,
     expansionRatio: Float = 0f,
+    // 所属项目路径(用于按项目读取自动换行状态;为空时回退全局)
+    projectPath: String = "",
     // 滑动手势回调
     onSwipe: ((SwipeDirection) -> Unit)? = null
 ) {
@@ -297,9 +299,14 @@ fun CodeEditorView(
         }
     }
 
-    LaunchedEffect(settingsState.editorWordWrap) {
+    // 换行状态按项目读取(独立开关关闭时回退全局);切文件/项目/首次就绪均重新应用,
+    // 避免「切项目后换行状态不生效,需重新切换一次」的问题
+    LaunchedEffect(
+        isActiveFile, isEditorReady, settingsState.editorWordWrap,
+        settingsState.perProjectWordWrap, settingsState.editorWordWrapByProject, projectPath
+    ) {
         if (isEditorReady) {
-            editor.isWordwrap = settingsState.editorWordWrap
+            editor.isWordwrap = SettingsManager.getEditorWordWrap(projectPath)
         }
     }
 

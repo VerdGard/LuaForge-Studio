@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import com.luaforge.studio.R
 import com.luaforge.studio.ui.crash.CrashManager.EXTRA_CRASH_CONTEXT
+import com.luaforge.studio.ui.crash.CrashManager.EXTRA_DIAGNOSTICS
 import com.luaforge.studio.ui.crash.CrashManager.EXTRA_EXCEPTION_TYPE
 import com.luaforge.studio.ui.crash.CrashManager.EXTRA_STACK_TRACE
 import com.luaforge.studio.ui.crash.CrashManager.EXTRA_THREAD_INFO
@@ -101,6 +102,7 @@ fun CrashLogScreen(intent: Intent) {
     val threadInfo = intent.getStringExtra(EXTRA_THREAD_INFO) ?: "Unknown"
     val crashContext = intent.getStringExtra(EXTRA_CRASH_CONTEXT) ?: "Unknown"
     val stackTrace = intent.getStringExtra(EXTRA_STACK_TRACE) ?: "No stack trace"
+    val diagnostics = intent.getStringExtra(EXTRA_DIAGNOSTICS) ?: "unavailable"
 
     // 获取当前时间
     val crashTime = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()) }
@@ -250,8 +252,46 @@ fun CrashLogScreen(intent: Intent) {
                 processStackTraceWithUnderlinedClassNames(stackTrace, normalStyle)
             }
             Text(text = annotatedStackTrace)
+
+            // [Diagnostics] - crash-site diagnostics (thread dump + LuaState registry + running Lua pages)
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(text = "[Diagnostics]", style = titleStyle)
+            Spacer(modifier = Modifier.height(4.dp))
+            val diagnosticSections = remember(diagnostics) {
+                decomposeDiagnostics(diagnostics)
+            }
+            diagnosticSections.forEach { (title, body) ->
+                Text(text = "[" + title + "]", style = titleStyle)
+                Text(text = body, style = normalStyle)
+                Spacer(modifier = Modifier.height(6.dp))
+            }
         }
     }
+}
+
+/**
+ * Split diagnostics text into (title, body) pairs by "[Section]" headers,
+ * so the crash screen can display them flat. Input comes from
+ * CrashManager.buildCrashDiagnostics(): [Thread Dump] / [LuaState Registry] / [Running Lua]
+ */
+private fun decomposeDiagnostics(raw: String): List<Pair<String, String>> {
+    val result = mutableListOf<Pair<String, String>>()
+    if (raw.isBlank() || raw == "unavailable") {
+        result.add("Diagnostics" to raw)
+        return result
+    }
+    // 在 "[" 前切分（非空段），再在每个段提取标题
+    val segments = raw.trimStart().split(Regex("(?=\\[[^\\]]+])"))
+    val header = Regex("""^\[([^]]+)](.*)$""", RegexOption.DOT_MATCHES_ALL)
+    for (seg in segments) {
+        val m = header.find(seg.trimStart())
+        if (m != null) {
+            result.add(m.groupValues[1] to m.groupValues[2].trim())
+        } else if (seg.isNotBlank()) {
+            result.add("Diagnostics" to seg.trim())
+        }
+    }
+    return result
 }
 
 /**

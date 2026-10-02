@@ -216,13 +216,20 @@ el, add_title = mDialogListView, mDialogTitle
 
 local mAdapter = ArrayExpandableListAdapter(activity)
 
+-- 类名与中文显示名合并: 按 wds 长度迭代(两表以本表为准), 任一侧缺失都容错,
+-- 避免 wds/wds2 长短不一致时 "attempt to concatenate a nil value" 崩溃
 for k, v in ipairs(ns) do
-  for i = 1, #wds2[k] do
-    wds2[k][i] = wds[k][i] .. (" - " .. wds2[k][i] or "")
+  local src, src2 = wds[k], wds2[k]
+  local dst = {}
+  for i = 1, #src do
+    local e = src[i]
+    if e then
+      local cn = src2 and src2[i] or nil
+      dst[i] = cn and (e .. " - " .. cn) or e
+    end
   end
-
   ns[k] = ns2[k] or ""
-  mAdapter.add(ns[k], wds2[k])
+  mAdapter.add(ns[k], dst)
 end
 
 el.setAdapter(mAdapter)

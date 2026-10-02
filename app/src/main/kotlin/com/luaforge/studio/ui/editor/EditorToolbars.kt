@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 
 package com.luaforge.studio.ui.editor
 
@@ -6,6 +6,8 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Checkbox
@@ -100,33 +103,86 @@ fun EditorTopBar(
                 Icon(Icons.AutoMirrored.Filled.Redo, stringResource(R.string.code_editor_redo))
             }
 
-            IconButton(onClick = {
-                scope.launch {
-                    viewModel.saveAllFilesSilently()
+            // 运行按钮:单击运行项目入口;长按且当前标签为 .lua 时展开「运行当前文件」菜单
+            val isCurrentLua = currentFileName.endsWith(".lua", ignoreCase = true)
+            var isRunMenuExpanded by remember { mutableStateOf(false) }
 
-                    val mainLuaFile = File(projectPath, "main.lua")
+            Box(
+                modifier = Modifier
+                    .combinedClickable(
+                        onClick = {
+                            scope.launch {
+                                viewModel.saveAllFilesSilently()
 
-                    if (!mainLuaFile.exists() || !mainLuaFile.isFile) {
-                        toast.showToast(context.getString(R.string.code_editor_main_lua_not_found))
-                        return@launch
-                    }
+                                val mainLuaFile = File(projectPath, "main.lua")
 
-                    try {
-                        val intent = Intent(context, com.androlua.LuaActivity::class.java)
-                        intent.data = Uri.fromFile(mainLuaFile)
-                        context.startActivity(intent)
+                                if (!mainLuaFile.exists() || !mainLuaFile.isFile) {
+                                    toast.showToast(context.getString(R.string.code_editor_main_lua_not_found))
+                                    return@launch
+                                }
 
-                    } catch (_: ActivityNotFoundException) {
-                        toast.showToast(context.getString(R.string.code_editor_install_not_found))
-                    } catch (_: SecurityException) {
-                        toast.showToast(context.getString(R.string.code_editor_install_permission_denied))
-                    } catch (e: Exception) {
-                        LogCatcher.e("CodeEditScreen", "启动失败", e)
-                        toast.showToast(context.getString(R.string.code_editor_run_failed, e.message))
-                    }
-                }
-            }) {
+                                try {
+                                    val intent = Intent(context, com.androlua.LuaActivity::class.java)
+                                    intent.data = Uri.fromFile(mainLuaFile)
+                                    context.startActivity(intent)
+
+                                } catch (_: ActivityNotFoundException) {
+                                    toast.showToast(context.getString(R.string.code_editor_install_not_found))
+                                } catch (_: SecurityException) {
+                                    toast.showToast(context.getString(R.string.code_editor_install_permission_denied))
+                                } catch (e: Exception) {
+                                    LogCatcher.e("CodeEditScreen", "启动失败", e)
+                                    toast.showToast(context.getString(R.string.code_editor_run_failed, e.message))
+                                }
+                            }
+                        },
+                        onLongClick = {
+                            if (isCurrentLua) {
+                                isRunMenuExpanded = true
+                            }
+                        }
+                    )
+                    .size(48.dp),
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(Icons.Filled.PlayArrow, stringResource(R.string.code_editor_run))
+                DropdownMenu(
+                    expanded = isRunMenuExpanded,
+                    onDismissRequest = { isRunMenuExpanded = false }
+                ) {
+                    DropdownMenuItem(
+                        leadingIcon = {
+                            Icon(Icons.Filled.BugReport, contentDescription = null)
+                        },
+                        text = { Text(stringResource(R.string.code_editor_run_current_file)) },
+                        onClick = {
+                            isRunMenuExpanded = false
+                            scope.launch {
+                                viewModel.saveAllFilesSilently()
+
+                                val currentFile = viewModel.activeFileState?.file
+                                if (currentFile == null || !currentFile.isFile) {
+                                    toast.showToast(context.getString(R.string.code_editor_no_active_file))
+                                    return@launch
+                                }
+
+                                try {
+                                    val intent = Intent(context, com.androlua.LuaActivity::class.java)
+                                    intent.data = Uri.fromFile(currentFile)
+                                    context.startActivity(intent)
+
+                                } catch (_: ActivityNotFoundException) {
+                                    toast.showToast(context.getString(R.string.code_editor_install_not_found))
+                                } catch (_: SecurityException) {
+                                    toast.showToast(context.getString(R.string.code_editor_install_permission_denied))
+                                } catch (e: Exception) {
+                                    LogCatcher.e("CodeEditScreen", "运行当前文件失败", e)
+                                    toast.showToast(context.getString(R.string.code_editor_run_failed, e.message))
+                                }
+                            }
+                        }
+                    )
+                }
             }
 
             Box {
@@ -163,7 +219,14 @@ fun EditorMoreMenu(
 ) {
     val scope = rememberCoroutineScope()
     val settings = SettingsManager.currentSettings
-    var wordWrap by remember { mutableStateOf(settings.editorWordWrap) }
+    var wordWrap by remember { mutableStateOf(SettingsManager.getEditorWordWrap(projectPath)) }
+    // 项目路径变化或项目级换行记录被刷新时,同步勾选状态
+    LaunchedEffect(
+        projectPath, settings.perProjectWordWrap,
+        settings.editorWordWrap, settings.editorWordWrapByProject
+    ) {
+        wordWrap = SettingsManager.getEditorWordWrap(projectPath)
+    }
     var isEditSubmenu by remember { mutableStateOf(false) }
 
     LaunchedEffect(expanded) {
@@ -209,9 +272,7 @@ fun EditorMoreMenu(
                 onClick = {
                     val newValue = !wordWrap
                     wordWrap = newValue
-                    val newSettings = settings.copy(editorWordWrap = newValue)
-                    SettingsManager.updateSettings(newSettings)
-                    SettingsManager.saveSettings(context)
+                    SettingsManager.setEditorWordWrap(context, projectPath, newValue)
                     onDismiss()
                 }
             )

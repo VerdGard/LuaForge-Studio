@@ -76,6 +76,9 @@ private object PreferencesKeys {
     val TOAST_BORDER_ENABLED = booleanPreferencesKey("toast_border_enabled")
 
     val EDITOR_WORD_WRAP = booleanPreferencesKey("editor_word_wrap")
+    // 项目间自动换行独立:开=每项目独立换行状态;关=全局共享
+    val EDITOR_WORD_WRAP_INDEPENDENT = booleanPreferencesKey("editor_word_wrap_independent")
+    val EDITOR_WORD_WRAP_PROJECTS = stringPreferencesKey("editor_word_wrap_projects")
 
     // 语言设置（使用 DataStore，不再用 SharedPreferences）
     val LANGUAGE_TAG = stringPreferencesKey("language_tag")
@@ -228,6 +231,14 @@ object SettingsManager {
         val toastBorderEnabled = preferences[PreferencesKeys.TOAST_BORDER_ENABLED] ?: false
 
         val editorWordWrap = preferences[PreferencesKeys.EDITOR_WORD_WRAP] ?: false
+        val perProjectWordWrap = preferences[PreferencesKeys.EDITOR_WORD_WRAP_INDEPENDENT] ?: true
+        val editorWordWrapByProject: Map<String, Boolean> = try {
+            val type = object : TypeToken<Map<String, Boolean>>() {}.type
+            Gson().fromJson(preferences[PreferencesKeys.EDITOR_WORD_WRAP_PROJECTS] ?: "{}", type)
+                ?: emptyMap()
+        } catch (_: Exception) {
+            emptyMap()
+        }
 
         // 从 DataStore 加载语言设置（未设置时跟随系统，避免强制切换语言）
         val languageTag = preferences[PreferencesKeys.LANGUAGE_TAG] ?: ""
@@ -287,6 +298,8 @@ object SettingsManager {
                 toastPosition = toastPosition,
                 toastBorderEnabled = toastBorderEnabled,
                 editorWordWrap = editorWordWrap,
+                perProjectWordWrap = perProjectWordWrap,
+                editorWordWrapByProject = editorWordWrapByProject,
                 languageTag = languageTag,
                 hexColorHighlightEnabled = hexColorHighlightEnabled,
                 enableSwipeGesture = enableSwipeGesture,  // 【新增】
@@ -344,6 +357,9 @@ object SettingsManager {
             preferences[PreferencesKeys.TOAST_BORDER_ENABLED] = currentSettings.toastBorderEnabled
 
             preferences[PreferencesKeys.EDITOR_WORD_WRAP] = currentSettings.editorWordWrap
+            preferences[PreferencesKeys.EDITOR_WORD_WRAP_INDEPENDENT] = currentSettings.perProjectWordWrap
+            preferences[PreferencesKeys.EDITOR_WORD_WRAP_PROJECTS] =
+                Gson().toJson(currentSettings.editorWordWrapByProject)
 
             // 保存语言设置到 DataStore
             preferences[PreferencesKeys.LANGUAGE_TAG] = currentSettings.languageTag
@@ -374,6 +390,36 @@ object SettingsManager {
         CoroutineScope(Dispatchers.IO).launch {
             saveSettingsAsync(context)
         }
+    }
+
+    /** 每项目换行状态的规范化键(去掉结尾分隔符,避免同一路径出现两种写法)。 */
+    private fun normalizeProjectPath(projectPath: String): String =
+        projectPath.trimEnd('/', '\\')
+
+    /**
+     * 读取某项目应使用的自动换行状态。
+     * 独立开关关闭或未指定项目时 → 全局 editorWordWrap;
+     * 否则取项目级记录,缺失时回退全局值。
+     */
+    fun getEditorWordWrap(projectPath: String?): Boolean {
+        val global = currentSettings.editorWordWrap
+        if (!currentSettings.perProjectWordWrap || projectPath.isNullOrBlank()) return global
+        return currentSettings.editorWordWrapByProject[normalizeProjectPath(projectPath)] ?: global
+    }
+
+    /** 写入某项目的自动换行状态:独立开关开启且路径有效 → 项目级;否则写全局。 */
+    fun setEditorWordWrap(context: Context, projectPath: String?, value: Boolean) {
+        if (currentSettings.perProjectWordWrap && !projectPath.isNullOrBlank()) {
+            val key = normalizeProjectPath(projectPath)
+            updateSettings(
+                currentSettings.copy(
+                    editorWordWrapByProject = currentSettings.editorWordWrapByProject + (key to value)
+                )
+            )
+        } else {
+            updateSettings(currentSettings.copy(editorWordWrap = value))
+        }
+        saveSettings(context)
     }
 
     /**
@@ -474,6 +520,10 @@ data class SettingsData(
     val toastPosition: ToastPosition = ToastPosition.BOTTOM,
     val toastBorderEnabled: Boolean = false,
     val editorWordWrap: Boolean = false,
+    /** 项目间自动换行独立:默认开启(每项目独立换行状态) */
+    val perProjectWordWrap: Boolean = true,
+    /** 项目路径 → 该项目的自动换行状态(仅当 perProjectWordWrap 为 true 时生效) */
+    val editorWordWrapByProject: Map<String, Boolean> = emptyMap(),
     val languageTag: String = "zh",
     val hexColorHighlightEnabled: Boolean = false,  // 【新增】十六进制颜色高亮开关
     val enableSwipeGesture: Boolean = false,         // 【新增】滑动手势开关

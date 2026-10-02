@@ -174,6 +174,8 @@
     <string name="settings_indent_guide_desc">Show vertical indentation guides in the editor to help align code.</string>
     <string name="settings_completion_case_sensitive">Case-sensitive completion</string>
     <string name="settings_completion_case_sensitive_desc">Whether code completion is case-sensitive.</string>
+    <string name="settings_per_project_word_wrap">Per-project word wrap</string>
+    <string name="settings_per_project_word_wrap_desc">Keep an independent word wrapping state for each project; when disabled, all projects share one global setting.</string>
     <string name="settings_smart_sorting">Smart sorting</string>
     <string name="settings_smart_sorting_desc">Automatically sort quick actions and symbol bar based on usage frequency.</string>
     <string name="settings_hex_color_highlight">Hex Color Highlight</string>
@@ -404,6 +406,7 @@
     <string name="code_editor_run_permission_denied">Insufficient permissions to start runtime</string>
     <string name="code_editor_run_failed">Start failed: %s</string>
     <string name="code_editor_main_lua_not_found">main.lua not found</string>
+    <string name="code_editor_run_current_file">Run current file</string>
     <string name="code_editor_cache_cleared">Project cache cleared</string>
     <string name="code_editor_clear_cache_failed">Clear failed: %s</string>
     <string name="code_editor_more_tabs">More Labels</string>
@@ -505,6 +508,7 @@
     <string name="filetree_new_folder">New folder</string>
     <string name="filetree_rename">Rename</string>
     <string name="filetree_copy_path">Copy absolute path</string>
+    <string name="filetree_copy_rel_path">Copy relative path</string>
 
     <!-- FileTree - delete confirmation dialog -->
     <string name="filetree_delete_confirm_title">Confirm deletion</string>

@@ -23,6 +23,28 @@
   - 现在按形参类型做数值收窄,不再依赖 Java 的自动转换
 - `LuaActivity` 新增运行实例定位能力(`getPageName` / `getRunningActivities` / `getActivityByLuaDir`),并给 `sLuaActivityMap` 的读写加同步
 
+### 其他
+- 布局助手(`loadlayout`):修复 `@id/xxx`、`@+id/xxx` 形式的控件引用
+  - 之前引用未在 `views` 表注册的 id 会直接抛 `attempt to index a nil value`
+  - 现在先剥离 `@id/` / `@+id/` 前缀再查表,仍找不到时给出可读报错(`deferred attribute references undefined id: xxx`)
+  - 核心库 `core/src/main/resources/lua/loadlayout.lua` 与布局助手 `app/src/main/assets/layouthelper/loadlayout2.lua` 双源同步
+- 布局助手:控件清单移除 9 个易混淆 / 已废弃控件,并加入容错合并
+  - 移除 `AppCompatImageButton`、`AppCompatCheckedTextView`、`AppCompatRatingBar`、`AppCompatToggleButton`、`AbsoluteLayout`、`CheckedTextView`、`ImageButton`、`RatingBar`、`ToggleButton`
+  - 类名表与中文名表改为按表长容错合并,两表长度不一致时不再因 `nil` 拼接崩溃
+- 文件树:文件/文件夹长按菜单新增「复制相对路径」(相对项目根目录)
+- 编辑器:自动换行支持**按项目独立**(设置 → 编辑器配置可开关,默认开启)
+  - 关闭时所有项目共用同一个全局换行设置;切换项目 / 文件后立即应用,无需手动再切一次
+- 编辑器:长按顶部运行按钮可「运行当前文件」(当前标签为 `.lua` 时展开菜单)
+  - 单击运行按钮行为不变,仍运行项目入口 `main.lua`
+- 崩溃页:新增崩溃现场诊断 `[Diagnostics]`,分区展示
+  - 全线程 dump:标注非 `RUNNABLE` 线程状态,便于交叉定位卡死线程与持锁线程
+  - `LuaState Registry`:`LuaStateFactory.snapshotStates()` 列出所有注册过的 native 指针及 wrapper 是否已关闭
+    - 只读裸指针字段,不调用 `LuaState` 的同步方法,避免在「LuaState monitor 卡死」现场让采集线程自锁
+  - `Running Lua`:列出当前运行中的 Lua 页面及其 `luaDir`
+  - 完整诊断同时落盘 `filesDir/crash_report/`,文件名带毫秒时间戳,供 adb pull 挖掘
+  - 采集上限 300 KB,超限截断,避免 dump 撑爆 Binder Intent
+
+
 ## 1.6.3
 - 新增「网络请求拦截」(设置 → 网络请求拦截,默认关闭)
   - 所有网络请求在真正发出前弹出 MD3 对话框展示方法、主机、完整地址、请求头、请求体与来源,用户允许后才放行
