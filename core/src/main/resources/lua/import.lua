@@ -366,14 +366,21 @@ function _M.printstack()
 end
 
 
+-- 保存原 print(LuaPrint JavaFunction:sendMsg + 调试控制台 bridge.onPrint)。
+-- 覆盖为透传:保证 print 既照常回显,又进入调试控制台(onPrint 逐参类型/原始值)。
+-- 若直接调 activity.sendMsg 会绕过 Java 侧桥,导致控制台收不到任何 print。
+local origPrint = print
+
 if activity then
   function _M.print(...)
+    if origPrint then
+      return origPrint(...)
+    end
     local buf = {}
     for n = 1, select("#", ...) do
       buf[#buf+1]=tostring(select(n, ...))
     end
-    local msg = table.concat(buf, "\t\t")
-    activity.sendMsg(msg)
+    activity.sendMsg(table.concat(buf, "\t\t"))
   end
 end
 

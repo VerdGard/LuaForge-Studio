@@ -98,7 +98,7 @@ class OutputAdapter(
         val ctx = parent.context
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(ctx.dp(12), ctx.dp(8), ctx.dp(12), ctx.dp(2))
+            setPadding(ctx.dp(12), ctx.dp(5), ctx.dp(12), ctx.dp(1))
         }
         val check = MaterialCheckBox(ctx).apply {
             visibility = View.GONE
@@ -177,7 +177,7 @@ class OutputAdapter(
             this.layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 ctx.dp(1)
-            ).apply { setMargins(ctx.dp(12), ctx.dp(6), ctx.dp(12), 0) }
+            ).apply { setMargins(ctx.dp(12), ctx.dp(4), ctx.dp(12), 0) }
         }
         val column = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL

@@ -24,7 +24,7 @@ class SettingsTabView(context: Context) : ScrollView(context) {
     private val settings = ConsoleSettings(context)
     private val content = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(context.dp(12), context.dp(8), context.dp(12), context.dp(8))
+        setPadding(context.dp(10), context.dp(6), context.dp(10), context.dp(6))
     }
     private var depthValue: TextView? = null
     private var toastSwitch: MaterialSwitch? = null

@@ -58,7 +58,7 @@ class OutputTabView(context: Context) : LinearLayout(context), OutputManager.Lis
         titleView.apply {
             textSize = 13f
             setTextColor(ConsoleTheme.onSurfaceVariant)
-            setPadding(context.dp(12), context.dp(6), context.dp(12), context.dp(4))
+            setPadding(context.dp(12), context.dp(4), context.dp(12), context.dp(2))
             setSingleLine(true)
             ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
         }
@@ -68,7 +68,7 @@ class OutputTabView(context: Context) : LinearLayout(context), OutputManager.Lis
         val toolBar = LinearLayout(context).apply {
             orientation = HORIZONTAL
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            setPadding(context.dp(4), context.dp(2), context.dp(12), context.dp(2))
+            setPadding(context.dp(4), context.dp(0), context.dp(12), context.dp(0))
         }
         toolBar.addView(chipFilter())
         toolBar.addView(iconButton(R.drawable.ic_trash_can, "清空") {
@@ -81,7 +81,7 @@ class OutputTabView(context: Context) : LinearLayout(context), OutputManager.Lis
 
         selBar.orientation = HORIZONTAL
         selBar.gravity = Gravity.CENTER_VERTICAL
-        selBar.setPadding(context.dp(12), context.dp(4), context.dp(12), context.dp(4))
+        selBar.setPadding(context.dp(12), context.dp(2), context.dp(12), context.dp(2))
         selBar.visibility = View.GONE
         selCount.textSize = 13f
         selBar.addView(selCount, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -147,7 +147,7 @@ class OutputTabView(context: Context) : LinearLayout(context), OutputManager.Lis
             isChecked = false
             isChipIconVisible = false
             isCheckedIconVisible = false
-            chipMinHeight = context.dp(34).toFloat()
+            chipMinHeight = context.dp(30).toFloat()
             textSize = 13f
             chipStrokeWidth = 0f
             chipCornerRadius = context.dp(17).toFloat()

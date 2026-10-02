@@ -48,9 +48,15 @@ class ConsoleSheet(
         val ctx = context
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            // 底部留白:内容与系统手势区之间留出呼吸空间
-            setPadding(0, 0, 0, ctx.dp(16))
-            setBackgroundColor(ConsoleTheme.surface)
+            // 底部留白:内容与手势区之间留呼吸空间
+            setPadding(0, 0, 0, ctx.dp(10))
+            // 四角圆角:面板呈悬浮卡片,不再贴边铺满
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(ConsoleTheme.surface)
+                cornerRadius = ctx.dp(20).toFloat()
+            }
+            // 裁剪子 view(header/tabs 的矩形底色),避免盖掉圆角
+            clipToOutline = true
         }
 
         val header = ConsoleChrome.header(
@@ -66,10 +72,12 @@ class ConsoleSheet(
         )
         val tabs = ConsoleChrome.tabs(ctx, ConsoleChrome.TAB_TITLES)
 
-        // 内容区固定高度:面板非全屏,且各页签高度一致,切换不跳动
+        // 内容区高度:屏高约 46%,钳制 260–420dp —— 体积小、不铺满;各页签等高,切换不跳动
+        val panelHeight = (ctx.resources.displayMetrics.heightPixels * 0.46f).toInt()
+            .coerceIn(ctx.dp(260), ctx.dp(420))
         container.layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
-            ctx.dp(460)
+            panelHeight
         )
 
         root.addView(header)
@@ -81,9 +89,19 @@ class ConsoleSheet(
         root.addView(container)
         setContentView(root)
 
-        // Material ≥1.14 对宽屏/横屏 BottomSheet 施加 android:maxWidth(默认 640dp),
-        // 使浮窗呈居中窄条、左右留边无法覆盖。放开为容器宽,控制台即全宽铺满;maxWidth 单位为 px。
-        getBehavior()?.setMaxWidth(ctx.resources.displayMetrics.widthPixels)
+        // 宽度收到屏宽 92% 并居中:面板成悬浮卡片,左右露出宿主界面(不再铺满全屏)
+        getBehavior()?.setMaxWidth((ctx.resources.displayMetrics.widthPixels * 0.92f).toInt())
+        // 底部留间距 + 去掉 Material 默认 sheet 背景(不透明、仅上圆角),
+        // 否则会盖住 root 的四角圆角卡片外观。
+        runCatching {
+            findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.let { sheet ->
+                sheet.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                (sheet.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { lp ->
+                    lp.bottomMargin = ctx.dp(12)
+                    sheet.layoutParams = lp
+                }
+            }
+        }
 
         // 禁用 sheet 拖拽手势:页签内滚动(如环境页 ScrollView)与 BottomSheet 下拉关闭冲突,
         // 误触下划会错误收起浮窗;关闭仅通过头部最小化/完全关闭按钮。

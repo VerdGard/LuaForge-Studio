@@ -98,7 +98,7 @@ class LogcatTabView(context: Context) : LinearLayout(context) {
 
     init {
         orientation = VERTICAL
-        setPadding(context.dp(12), context.dp(8), context.dp(12), context.dp(8))
+        setPadding(context.dp(10), context.dp(6), context.dp(10), context.dp(6))
         setBackgroundColor(ConsoleTheme.surface)
 
         // 「日志输出：」标题 + 7 个等级开关同一行，开关居右

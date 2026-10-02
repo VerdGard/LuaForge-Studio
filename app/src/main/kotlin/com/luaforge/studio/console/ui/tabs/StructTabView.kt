@@ -87,7 +87,7 @@ class StructTabView(context: Context) : FrameLayout(context) {
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(context.dp(10 + depth * 16), context.dp(9), context.dp(10), context.dp(9))
+            setPadding(context.dp(10 + depth * 14), context.dp(7), context.dp(10), context.dp(7))
             background = rowBg()
             isSelected = selectedPath == file.path
             tag = file.path
