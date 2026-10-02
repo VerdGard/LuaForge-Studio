@@ -48,6 +48,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.androlua.LuaActivity
 import com.luaforge.studio.ProjectItem
 import com.luaforge.studio.R
+import com.luaforge.studio.build.BuildType
 import com.luaforge.studio.files.FileTree
 import com.luaforge.studio.ui.analyse.AnalyseScreen
 import com.luaforge.studio.ui.attribute.AttributeScreen
@@ -114,6 +115,7 @@ fun CodeEditScreen(
     var showInstallDialog by remember { mutableStateOf(false) }
     var apkFilePath by remember { mutableStateOf<String?>(null) }
     var isBuilding by remember { mutableStateOf(false) }
+    var showBuildTypeDialog by remember { mutableStateOf(false) }
     var isCompilingFile by remember { mutableStateOf(false) }
     var showInitialLoader by remember { mutableStateOf(!viewModel.hasShownInitialLoader) }
     var tabBarRendered by remember { mutableStateOf(false) }
@@ -307,13 +309,15 @@ fun CodeEditScreen(
         }
     }
 
-    // ========== 构建项目 ==========
-    val onBuildProjectAction: () -> Unit = {
+    // 执行构建;构建类型由对话框选择后传入
+    val runBuild: (BuildType) -> Unit = { buildType ->
         scope.launch {
             viewModel.saveAllFilesSilently()
             isBuilding = true
             val result = try {
-                this.async<String>(Dispatchers.IO) { buildProject(context, projectPath) }.await()
+                this.async<String>(Dispatchers.IO) {
+                    buildProject(context, projectPath, buildType)
+                }.await()
             } catch (e: Exception) {
                 LogCatcher.e("CodeEditScreen", "构建协程异常", e)
                 "error: ${context.getString(R.string.code_editor_build_exception, e.message)}"
@@ -326,6 +330,11 @@ fun CodeEditScreen(
             }
             isBuilding = false
         }
+    }
+
+    // 构建项目:先弹出构建类型选择对话框
+    val onBuildProjectAction: () -> Unit = {
+        showBuildTypeDialog = true
     }
 
     // ========== 备份项目 ==========
@@ -687,6 +696,16 @@ fun CodeEditScreen(
                                     }
                                     showInstallDialog = false
                                     apkFilePath = null
+                                }
+                            )
+
+                            // 构建类型选择对话框
+                            BuildTypeDialog(
+                                showBuildTypeDialog = showBuildTypeDialog,
+                                onDismiss = { showBuildTypeDialog = false },
+                                onConfirm = { buildType ->
+                                    showBuildTypeDialog = false
+                                    runBuild(buildType)
                                 }
                             )
 

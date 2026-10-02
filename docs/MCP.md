@@ -11,7 +11,7 @@
 | 监听端口 | 1024–65535,默认 `8787`;修改后服务自动重启 |
 | 需要访问令牌 | 开启后请求须携带 `Authorization: Bearer <令牌>`;开启时若令牌为空会自动生成 |
 
-启用后设置页会显示全部可用地址,例如 `http://192.168.1.5:8787`。
+启用后设置页会显示全部可用地址,每个地址各占一行、等宽字体展示,行尾按钮可**一键复制**,例如 `http://192.168.1.5:8787`。
 
 ## 2. 协议
 
@@ -102,12 +102,16 @@ curl -X POST http://127.0.0.1:8787/ -H 'Content-Type: application/json' \
 | --- | --- | --- |
 | `compile_file` | 编译单个 `.lua`/`.aly`;默认在验证成功后**删除** `.luac`/`.alyc` 产物 | `path`(缺省用活动文件)、`keepOutput`(true 时保留产物) |
 | `clean_compiled` | 清理项目内的编译产物(历史残留) | `path`、`dryRun` |
-| `build_apk` | 构建并签名 APK,返回输出路径 | `path` |
+| `build_apk` | 构建并签名 APK,返回输出路径(等价于编辑器「构建项目」的**默认构建类型**:加密打包) | `path` |
 | `run_project` | 调试运行项目(启动 `LuaActivity` 加载 `main.lua`) | `path` |
 | `install_apk` | 唤起系统安装器安装 APK | `path` **必填** |
 
 > `compile_file` 的产物命名规则:`main.lua` → `main.luac`,`main.aly` → `main.alyc`。
 > 需求是“只验证能否编译”时保持默认即可;需要产物时显式传 `keepOutput=true`。
+
+编辑器里「构建项目」会先弹出构建类型选择对话框(未加密版 / Debug 版 / Release 版,详见 [README](../README.md) 的 1.6.4 条目)。
+`build_apk` 走的是 `BuildType.PROJECT_DEFAULT`,即加密打包且调试模式沿用项目设置,与对话框中三个选项均不相同;
+需要指定构建类型时请在编辑器界面构建。
 
 ### 运行时界面检查
 

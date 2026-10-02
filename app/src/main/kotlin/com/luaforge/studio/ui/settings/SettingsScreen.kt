@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.ColorLens
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DataArray
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -72,7 +73,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -90,7 +93,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.res.ResourcesCompat
@@ -1176,13 +1181,30 @@ SettingsListItem(
                                 else MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
-                            if (mcpStatus.running) {
-                                mcpStatus.addresses.forEach { address ->
-                                    Text(
-                                        text = address,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                            if (mcpStatus.running && mcpStatus.addresses.isNotEmpty()) {
+                                Text(
+                                    text = stringResource(R.string.settings_mcp_endpoints),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    mcpStatus.addresses.forEach { address ->
+                                        EndpointRow(
+                                            address = address,
+                                            onCopy = {
+                                                copyToClipboard(context, "MCP Endpoint", address)
+                                                toast.showToast(
+                                                    context.getString(
+                                                        R.string.settings_mcp_address_copied
+                                                    )
+                                                )
+                                            }
+                                        )
+                                    }
                                 }
                             }
 
@@ -1245,86 +1267,70 @@ SettingsListItem(
                         )
 
                         if (currentSettingsState.networkInterceptEnabled) {
-                            Text(
-                                text = stringResource(R.string.settings_network_allowed) +
-                                    " (${currentSettingsState.networkAllowedHosts.size})",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = stringResource(R.string.settings_network_allowed_desc),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-
-                            if (currentSettingsState.networkAllowedHosts.isNotEmpty()) {
-                                currentSettingsState.networkAllowedHosts.sorted().forEach { hostName ->
-                                    Text(
-                                        text = hostName,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-
-                            Text(
-                                text = stringResource(R.string.settings_network_blocked) +
-                                    " (${currentSettingsState.networkBlockedHosts.size})",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = stringResource(R.string.settings_network_blocked_desc),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-
-                            if (currentSettingsState.networkBlockedHosts.isNotEmpty()) {
-                                currentSettingsState.networkBlockedHosts.sorted().forEach { hostName ->
-                                    Text(
-                                        text = hostName,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-
-                            if (currentSettingsState.networkAllowedHosts.isNotEmpty() ||
-                                currentSettingsState.networkBlockedHosts.isNotEmpty()
-                            ) {
-                                Button(
-                                    onClick = {
-                                        updateSettingsWithSave(
-                                            currentSettingsState.copy(
-                                                networkAllowedHosts = emptySet(),
-                                                networkBlockedHosts = emptySet()
-                                            )
+                            HostRecordSection(
+                                title = stringResource(R.string.settings_network_allowed),
+                                description = stringResource(R.string.settings_network_allowed_desc),
+                                hosts = currentSettingsState.networkAllowedHosts,
+                                emptyText = stringResource(R.string.settings_network_allowed_empty),
+                                clearText = stringResource(R.string.settings_network_clear_all),
+                                accent = MaterialTheme.colorScheme.primary,
+                                onDelete = { host ->
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(
+                                            networkAllowedHosts =
+                                                currentSettingsState.networkAllowedHosts - host
                                         )
-                                        toast.showToast(
-                                            context.getString(R.string.settings_network_cleared)
+                                    )
+                                    toast.showToast(
+                                        context.getString(
+                                            R.string.settings_network_record_deleted,
+                                            host
                                         )
-                                    },
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                                     )
-                                ) {
-                                    Icon(
-                                        Icons.Filled.Clear,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
+                                },
+                                onClearAll = {
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(
+                                            networkAllowedHosts = emptySet()
+                                        )
                                     )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(stringResource(R.string.settings_network_clear))
+                                    toast.showToast(
+                                        context.getString(R.string.settings_network_cleared_allowed)
+                                    )
                                 }
-                            }
+                            )
 
-                            HorizontalDivider(
-                                modifier = Modifier.padding(vertical = 4.dp),
-                                thickness = 0.5.dp,
-                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.05f)
+                            HostRecordSection(
+                                title = stringResource(R.string.settings_network_blocked),
+                                description = stringResource(R.string.settings_network_blocked_desc),
+                                hosts = currentSettingsState.networkBlockedHosts,
+                                emptyText = stringResource(R.string.settings_network_blocked_empty),
+                                clearText = stringResource(R.string.settings_network_clear_all),
+                                accent = MaterialTheme.colorScheme.error,
+                                onDelete = { host ->
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(
+                                            networkBlockedHosts =
+                                                currentSettingsState.networkBlockedHosts - host
+                                        )
+                                    )
+                                    toast.showToast(
+                                        context.getString(
+                                            R.string.settings_network_record_deleted,
+                                            host
+                                        )
+                                    )
+                                },
+                                onClearAll = {
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(
+                                            networkBlockedHosts = emptySet()
+                                        )
+                                    )
+                                    toast.showToast(
+                                        context.getString(R.string.settings_network_cleared_blocked)
+                                    )
+                                }
                             )
 
                             Text(
@@ -2170,3 +2176,203 @@ fun DarkModeOption(
         }
     }
 }
+
+// ======================================================================
+// 设置页新增辅助组件(MCP 地址复制 / 网络拦截记录管理)
+// ======================================================================
+
+/** 记录条数超过该值时默认折叠,避免列表过长。 */
+private const val HOST_COLLAPSE_THRESHOLD = 5
+
+/** 复制文本到系统剪贴板;系统服务不可用时静默忽略。 */
+private fun copyToClipboard(context: Context, label: String, text: String) {
+    try {
+        val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText(label, text))
+    } catch (_: Exception) {
+        // 剪贴板不可用时不阻塞界面
+    }
+}
+
+/**
+ * MCP 服务地址行:等宽字体展示地址,尾部提供一键复制按钮。
+ */
+@Composable
+fun EndpointRow(
+    address: String,
+    onCopy: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = address,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(vertical = 10.dp)
+            )
+            IconButton(onClick = onCopy) {
+                Icon(
+                    imageVector = Icons.Filled.ContentCopy,
+                    contentDescription = stringResource(R.string.settings_mcp_copy_address),
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 单条主机记录:左侧色点标识类别,右侧删除按钮。
+ */
+@Composable
+private fun HostRecordRow(
+    host: String,
+    accent: Color,
+    onDelete: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(accent)
+                )
+                Text(
+                    text = host,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(vertical = 10.dp)
+                )
+            }
+            IconButton(onClick = onDelete) {
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = stringResource(R.string.settings_network_delete_record),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 一组网络拦截主机记录:标题 + 计数 + 清空全部,记录过多时折叠。
+ */
+@Composable
+fun HostRecordSection(
+    title: String,
+    description: String,
+    hosts: Set<String>,
+    emptyText: String,
+    clearText: String,
+    accent: Color,
+    onDelete: (String) -> Unit,
+    onClearAll: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val sorted = remember(hosts) { hosts.sorted() }
+    val collapsible = sorted.size > HOST_COLLAPSE_THRESHOLD
+    val visible = if (collapsible && !expanded) sorted.take(HOST_COLLAPSE_THRESHOLD) else sorted
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "$title (${sorted.size})",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (sorted.isNotEmpty()) {
+                TextButton(onClick = onClearAll) {
+                    Icon(
+                        imageVector = Icons.Filled.Clear,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = clearText, style = MaterialTheme.typography.labelLarge)
+                }
+            }
+        }
+
+        Text(
+            text = description,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        if (sorted.isEmpty()) {
+            Text(
+                text = emptyText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
+        } else {
+            visible.forEach { host ->
+                HostRecordRow(
+                    host = host,
+                    accent = accent,
+                    onDelete = { onDelete(host) }
+                )
+            }
+            if (collapsible) {
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(
+                        text = if (expanded) {
+                            stringResource(R.string.settings_network_show_less)
+                        } else {
+                            stringResource(R.string.settings_network_show_all, sorted.size)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+

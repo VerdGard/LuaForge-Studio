@@ -603,8 +603,6 @@
     <string name="settings_network_allowed_desc">Requests to these hosts are allowed without asking</string>
     <string name="settings_network_blocked">Blocked Hosts</string>
     <string name="settings_network_blocked_desc">Requests to these hosts are denied without asking</string>
-    <string name="settings_network_clear">Clear Records</string>
-    <string name="settings_network_cleared">Allowed and blocked records cleared</string>
     <string name="settings_network_hint">Interception covers the editor\'s own network requests and requests made by user projects through http and okhttp. Image loading and WebView requests are not intercepted. Packaged APKs do not contain the interception logic, so they are not intercepted.</string>
     <string name="settings_network_dialog_title">Confirm Network Request</string>
     <string name="settings_network_dialog_allow">Allow</string>
@@ -614,5 +612,26 @@
     <string name="settings_network_headers">Headers</string>
     <string name="settings_network_body">Body</string>
     <string name="settings_network_source">Source</string>
+    <string name="settings_mcp_endpoints">Endpoints</string>
+    <string name="settings_mcp_copy_address">Copy address</string>
+    <string name="settings_mcp_address_copied">Address copied</string>
+    <string name="settings_network_allowed_empty">No allowed records</string>
+    <string name="settings_network_blocked_empty">No blocked records</string>
+    <string name="settings_network_clear_all">Clear All</string>
+    <string name="settings_network_cleared_allowed">Allowed records cleared</string>
+    <string name="settings_network_cleared_blocked">Blocked records cleared</string>
+    <string name="settings_network_delete_record">Delete record</string>
+    <string name="settings_network_record_deleted">Record deleted: %1$s</string>
+    <string name="settings_network_show_all">Show all (%1$d)</string>
+    <string name="settings_network_show_less">Show less</string>
+    <string name="code_editor_build_dialog_title">Build Project</string>
+    <string name="code_editor_build_type">Build type</string>
+    <string name="code_editor_build_type_unencrypted">Unencrypted</string>
+    <string name="code_editor_build_type_unencrypted_desc">Package Lua sources as plain scripts without encryption</string>
+    <string name="code_editor_build_type_debug">Debug</string>
+    <string name="code_editor_build_type_debug_desc">Enable debug mode</string>
+    <string name="code_editor_build_type_release">Release</string>
+    <string name="code_editor_build_type_release_desc">Disable debug mode</string>
+    <string name="code_editor_build_start">Start build</string>
 
 </resources>

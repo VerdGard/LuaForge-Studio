@@ -604,8 +604,6 @@
     <string name="settings_network_allowed_desc">这些主机的请求不再询问,直接放行</string>
     <string name="settings_network_blocked">已拒绝的主机</string>
     <string name="settings_network_blocked_desc">这些主机的请求不再询问,直接拒绝</string>
-    <string name="settings_network_clear">清空记录</string>
-    <string name="settings_network_cleared">已清空允许与拒绝记录</string>
     <string name="settings_network_hint">拦截范围包含编辑器自身的网络请求,以及用户项目通过 http、okhttp 发起的请求。图片加载与 WebView 请求不拦截。项目打包成 APK 后不包含拦截逻辑,因此打包后不会被拦截。</string>
     <string name="settings_network_dialog_title">网络请求确认</string>
     <string name="settings_network_dialog_allow">允许</string>
@@ -615,5 +613,26 @@
     <string name="settings_network_headers">请求头</string>
     <string name="settings_network_body">请求体</string>
     <string name="settings_network_source">来源</string>
+    <string name="settings_mcp_endpoints">访问地址</string>
+    <string name="settings_mcp_copy_address">复制地址</string>
+    <string name="settings_mcp_address_copied">地址已复制</string>
+    <string name="settings_network_allowed_empty">暂无允许记录</string>
+    <string name="settings_network_blocked_empty">暂无拒绝记录</string>
+    <string name="settings_network_clear_all">清空所有记录</string>
+    <string name="settings_network_cleared_allowed">已清空允许记录</string>
+    <string name="settings_network_cleared_blocked">已清空拒绝记录</string>
+    <string name="settings_network_delete_record">删除该记录</string>
+    <string name="settings_network_record_deleted">已删除记录:%1$s</string>
+    <string name="settings_network_show_all">展开全部(%1$d)</string>
+    <string name="settings_network_show_less">收起</string>
+    <string name="code_editor_build_dialog_title">构建项目</string>
+    <string name="code_editor_build_type">构建类型</string>
+    <string name="code_editor_build_type_unencrypted">未加密版</string>
+    <string name="code_editor_build_type_unencrypted_desc">Lua 源码不做加密处理,直接打包为明文脚本</string>
+    <string name="code_editor_build_type_debug">Debug 版</string>
+    <string name="code_editor_build_type_debug_desc">开启调试模式</string>
+    <string name="code_editor_build_type_release">Release 版</string>
+    <string name="code_editor_build_type_release_desc">关闭调试模式</string>
+    <string name="code_editor_build_start">开始构建</string>
 
 </resources>

@@ -9,6 +9,7 @@ import android.os.Build
 import androidx.core.content.FileProvider
 import com.luaforge.studio.R
 import com.luaforge.studio.build.ApkBuilder
+import com.luaforge.studio.build.BuildType
 import com.luaforge.studio.ui.editor.viewmodel.EditorViewModel
 import com.luaforge.studio.utils.ConsoleUtil
 import com.luaforge.studio.utils.JsonUtil
@@ -129,9 +130,14 @@ suspend fun compileCurrentFile(
 /**
  * 构建项目核心逻辑
  */
-suspend fun buildProject(context: Context, projectPath: String): String =
+suspend fun buildProject(
+    context: Context,
+    projectPath: String,
+    buildType: BuildType = BuildType.PROJECT_DEFAULT
+): String =
     withContext(Dispatchers.IO) {
         LogCatcher.i("CodeEditScreen", "开始构建项目，路径: $projectPath")
+        LogCatcher.i("CodeEditScreen", "构建类型: $buildType")
 
         // 在构建前清理内存
         System.gc()
@@ -283,7 +289,8 @@ val mavenDependencies = try {
                 externalApkPath,             // outputPath
                 minSdkVersion,               // minSdkVersion
                 targetSdkVersion,             // targetSdkVersion
-                mavenDependencies
+                mavenDependencies,
+                buildType                    // 构建类型(未加密 / Debug / Release)
             )
 
             // 构建后再次检查内存

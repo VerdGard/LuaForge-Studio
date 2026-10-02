@@ -1,8 +1,10 @@
 package com.luaforge.studio.build
 
 import android.content.Context
+import org.json.JSONObject
 import com.luaforge.studio.build.maven.*
 import com.luaforge.studio.utils.ConsoleUtil
+import com.luaforge.studio.utils.JsonUtil
 import com.luaforge.studio.utils.LogCatcher
 import com.luajava.LuaState
 import com.luajava.LuaStateFactory
@@ -16,6 +18,37 @@ import java.util.zip.*
 import org.eclipse.jdt.internal.compiler.batch.Main as EcjMain
 import com.android.tools.r8.D8
 import kotlinx.coroutines.runBlocking
+
+/**
+ * APK 构建类型。
+ *
+ * 每个类型只决定两件正交的事:是否对 Lua/ALY 源码做加密编译、是否覆盖
+ * `settings.json` 里的 `debugmode`。运行时的"调试模式"即该字段
+ * (`LuaActivity.initENV` 读取后赋给 `mDebug`),与本枚举无关地持续存在。
+ */
+enum class BuildType(
+    /** 是否把 Lua/ALY 源码编译加密后打包;false 表示以明文打包。 */
+    val encryptLua: Boolean,
+    /** 是否覆盖打包内 `settings.json` 的 `debugmode`;null 表示沿用项目设置。 */
+    val debugOverride: Boolean?
+) {
+    /** 内部默认:保持历史行为(加密打包,调试模式沿用项目设置)。 */
+    PROJECT_DEFAULT(true, null),
+
+    /** 未加密版:Lua 源码不做加密处理。 */
+    UNENCRYPTED(false, null),
+
+    /** Debug 版:调试模式开启。 */
+    DEBUG(true, true),
+
+    /** Release 版:调试模式关闭。 */
+    RELEASE(true, false);
+
+    companion object {
+        /** 供构建对话框展示的可选类型(不含内部默认值)。 */
+        val selectable: List<BuildType> = listOf(UNENCRYPTED, DEBUG, RELEASE)
+    }
+}
 
 class ApkBuilder {
 
@@ -89,7 +122,8 @@ class ApkBuilder {
             outputPath: String,
             minSdkVersion: Int,
             targetSdkVersion: Int,
-            mavenDependencies: List<String> = emptyList()
+            mavenDependencies: List<String> = emptyList(),
+            buildType: BuildType = BuildType.PROJECT_DEFAULT
         ): String {
             LogCatcher.i("ApkBuilder", "开始构建APK")
             LogCatcher.i("ApkBuilder", "项目路径: $projectPath")
@@ -103,6 +137,7 @@ class ApkBuilder {
             LogCatcher.i("ApkBuilder", "调试模式: $isDebug")
             LogCatcher.i("ApkBuilder", "权限数量: ${permissions?.size ?: 0}")
             LogCatcher.i("ApkBuilder", "Maven依赖数量: ${mavenDependencies.size}")
+            LogCatcher.i("ApkBuilder", "构建类型: $buildType")
 
             var unsignedApkPath: String? = null
 
@@ -159,7 +194,8 @@ class ApkBuilder {
                     tempApkPath,
                     projectPath,
                     unsignedApkPath,
-                    mavenJars
+                    mavenJars,
+                    buildType
                 )
 
                 if (unsignedApkPath == null) {
@@ -710,7 +746,8 @@ class ApkBuilder {
             tempApkPath: String,
             projectPath: String,
             outputPath: String,
-            mavenJars: List<File> = emptyList()
+            mavenJars: List<File> = emptyList(),
+            buildType: BuildType = BuildType.PROJECT_DEFAULT
         ): String? {
             val L = getSharedLuaState()
 
@@ -734,8 +771,12 @@ class ApkBuilder {
                 // 4. 清理未引用的库文件
                 cleanUnusedLibraries(workDir, referencedModules, projectPath)
 
-                // 5. 加密core.apk中引用的库文件
-                encryptCoreLibraries(L, workDir, referencedModules)
+                // 5. 加密core.apk中引用的库文件(未加密版跳过,保持明文)
+                if (buildType.encryptLua) {
+                    encryptCoreLibraries(L, workDir, referencedModules)
+                } else {
+                    LogCatcher.i("ApkBuilder", "未加密版:跳过 core 库文件加密")
+                }
 
                 // 6. 创建assets目录
                 val assetsDir = File(workDir, "assets")
@@ -746,8 +787,15 @@ class ApkBuilder {
                 // 7. 复制项目文件到assets
                 copyProjectToAssets(projectPath, assetsDir.absolutePath)
 
-                // 8. 加密项目文件
-                encryptProjectFiles(L, assetsDir)
+                // 8. 按构建类型覆盖 settings.json 的调试模式
+                applyBuildSettingsOverrides(assetsDir, buildType.debugOverride)
+
+                // 9. 加密项目文件(未加密版跳过,保持明文)
+                if (buildType.encryptLua) {
+                    encryptProjectFiles(L, assetsDir)
+                } else {
+                    LogCatcher.i("ApkBuilder", "未加密版:跳过项目文件加密")
+                }
 
                 // ------------------ Java 编译与 DEX 生成 ------------------
                 val androidJarPath = extractAndroidJarToCache(context)
@@ -778,16 +826,16 @@ class ApkBuilder {
                 }
                 // ---------------------------------------------------------
 
-                // 9. 删除已存在的输出文件
+                // 10. 删除已存在的输出文件
                 val outputFile = File(outputPath)
                 if (outputFile.exists()) {
                     outputFile.delete()
                 }
 
-                // 10. 重新打包成最终APK
+                // 11. 重新打包成最终APK
                 compressDirectoryToZip(workDir.absolutePath, outputPath)
 
-                // 11. 验证APK文件
+                // 12. 验证APK文件
                 if (!outputFile.exists()) {
                     LogCatcher.e("ApkBuilder", "APK文件未创建成功: $outputPath")
                     deleteDirectory(workDir)
@@ -797,7 +845,7 @@ class ApkBuilder {
                 val fileSize = outputFile.length()
                 LogCatcher.i("ApkBuilder", "APK文件创建成功: $outputPath, 大小: $fileSize 字节")
 
-                // 12. 清理工作目录
+                // 13. 清理工作目录
                 deleteDirectory(workDir)
 
                 return outputPath
@@ -848,6 +896,40 @@ class ApkBuilder {
                 "ApkBuilder",
                 "core.apk库文件加密完成: 成功 $encryptedCount 个, 失败 $failedCount 个"
             )
+        }
+
+        /**
+         * 按构建类型覆盖打包进 assets 的 `settings.json` 的 `debugmode`。
+         *
+         * 该字段是运行时"调试模式"的唯一来源:core 的 `LuaActivity.initENV`
+         * 读取 `application.debugmode` 赋给 `mDebug`,`mDebug` 为 true 时
+         * 运行日志同时以 toast 弹出(`LuaActivity.java:1642`)。
+         *
+         * @param debugOverride null 表示沿用项目自身设置,不做修改
+         */
+        private fun applyBuildSettingsOverrides(assetsDir: File, debugOverride: Boolean?) {
+            if (debugOverride == null) return
+
+            val settingsFile = File(assetsDir, "settings.json")
+            if (!settingsFile.exists()) {
+                LogCatcher.w("ApkBuilder", "assets 中未找到 settings.json,跳过调试模式覆盖")
+                return
+            }
+
+            try {
+                val parsed = JsonUtil.parseObject(settingsFile.readText())
+                val jsonMap = parsed.toMutableMap()
+                val application = (jsonMap["application"] as? Map<String, Any?>)
+                    ?.toMutableMap() ?: mutableMapOf()
+                application["debugmode"] = debugOverride
+                jsonMap["application"] = application
+
+                settingsFile.writeText(JSONObject(jsonMap).toString(4))
+                LogCatcher.i("ApkBuilder", "已覆盖 settings.json 调试模式: $debugOverride")
+            } catch (e: Exception) {
+                // 不做静默降级:调试模式错误会让用户拿到与预期不符的包
+                throw RuntimeException("覆盖 settings.json 调试模式失败: ${e.message}", e)
+            }
         }
 
         // 加密项目文件
