@@ -644,6 +644,7 @@ fun CodeEditScreen(
                                             .padding(innerPadding)
                                     ) {
                                         EditorContent(
+                                            projectPath = projectPath,
                                             modifier = Modifier.fillMaxSize(),
                                             showInitialLoader = showInitialLoader,
                                             isBuilding = isBuilding,
@@ -951,7 +952,9 @@ fun EditorContent(
     symbolBarScrollState: ScrollState,
     // 新增参数
     quickBarVisible: Boolean,
-    onSwipe: (SwipeDirection) -> Unit
+    onSwipe: (SwipeDirection) -> Unit,
+    // 所属项目路径(用于按项目解析编辑器设置)
+    projectPath: String = ""
 ) {
     val scope = rememberCoroutineScope()
     val hasOpenFiles = viewModel.openFiles.isNotEmpty()
