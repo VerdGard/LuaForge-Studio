@@ -45,7 +45,6 @@ local classNames = {
   "androidx.recyclerview.widget.RecyclerView",
   "androidx.swiperefreshlayout.widget.SwipeRefreshLayout",
   "androidx.slidingpanelayout.widget.SlidingPaneLayout",
-  "androidx.viewpager.widget.ViewPager",
   "androidx.viewpager2.widget.ViewPager2",
   "androidx.core.widget.NestedScrollView",
   "androidx.fragment.app.FragmentContainerView",

@@ -43,7 +43,7 @@ local ArrayListAdapter = bindClass "android.widget.ArrayListAdapter"
 local TruncateAt = bindClass "android.text.TextUtils$TruncateAt"
 local ContextThemeWrapper = bindClass "androidx.appcompat.view.ContextThemeWrapper"
 local TooltipCompat = bindClass "androidx.appcompat.widget.TooltipCompat"
-local PagerAdapter = bindClass "androidx.viewpager.widget.PagerAdapter"
+local LuaPagerAdapter = bindClass "github.daisukiKaffuChino.LuaPagerAdapter"
 local MaterialColors = bindClass "com.google.android.material.color.MaterialColors"
 local MaterialR = bindClass "com.google.android.material.R"
 local NineBitmapDrawable = bindClass "com.androlua.NineBitmapDrawable"
@@ -606,31 +606,15 @@ local function parseValues(value)
   return tableUnpack(value)
 end
 
---- 用于ViewPager
+--- 用于ViewPager2
 ---@param pageViews table
 ---@param pageTitles table
----@return PagerAdapter
-local function LuaPagerAdapter(pageViews, pageTitles)
-  return override(PagerAdapter, {
-    getCount = function(super)
-      return int(#pageViews)
-    end,
-    instantiateItem = function(super, container, position)
-      local pageView = pageViews[position + 1]
-      container.addView(pageView)
-      return pageView
-    end,
-    destroyItem = function(super, container, position, object)
-      local pageView = pageViews[position + 1]
-      container.removeView(pageView)
-    end,
-    isViewFromObject = function(super, view, object)
-      return view == object
-    end,
-    getPageTitle = pageTitles and function(super, position)
-      return pageTitles[position + 1]
-    end or nil
-  })
+---@return RecyclerView.Adapter
+local function LuaPagerAdapter2(pageViews, pageTitles)
+  if pageTitles then
+    return LuaPagerAdapter(pageViews, pageTitles)
+  end
+  return LuaPagerAdapter(pageViews)
 end
 
 -- 存储设置属性方法的表
@@ -651,7 +635,7 @@ local attributeSetterMap = {
       pages[k] = (vType == "string" or vType == "table") and
       loadlayout(v, views) or v
     end
-    view.setAdapter(LuaPagerAdapter(pages))
+    view.setAdapter(LuaPagerAdapter2(pages))
   end,
   pagesWithTitle = function(view, value, valueType, layoutParams, views)
     local pages = {}
@@ -660,7 +644,7 @@ local attributeSetterMap = {
       pages[k] = (vType == "string" or vType == "table") and
       loadlayout(v, views) or v
     end
-    view.setAdapter(LuaPagerAdapter(pages, value[2]))
+    view.setAdapter(LuaPagerAdapter2(pages, value[2]))
   end,
   background = function(view, value, valueType)
     if valueType == "string" then
