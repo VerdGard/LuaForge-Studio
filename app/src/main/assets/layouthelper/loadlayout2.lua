@@ -52,6 +52,26 @@ local Glide = bindClass "com.bumptech.glide.Glide"
 local DiskCacheStrategy = bindClass "com.bumptech.glide.load.engine.DiskCacheStrategy"
 local RequestOptions = bindClass "com.bumptech.glide.request.RequestOptions"
 
+-- 三方控件支持白名单(仅置 _G.THIRD_PARTY_WIDGET_SUPPORT == false 时生效)
+local builtinWidgetPrefixes = {
+  "android.widget.", "android.view.", "android.text.", "android.graphics.",
+  "android.app.", "androidx.appcompat.widget.", "androidx.recyclerview.widget.",
+  "androidx.coordinatorlayout.widget.",
+  "androidx.viewpager2.widget.", "androidx.cardview.widget.",
+  "androidx.constraintlayout.widget.", "androidx.drawerlayout.widget.",
+  "androidx.swiperefreshlayout.widget.", "androidx.core.widget.",
+  "androidx.fragment.app.", "androidx.preference.",
+  "com.google.android.material.", "com.androlua."
+}
+local function widgetClassAllowed(cls)
+  local lower = string.lower(cls or "")
+  for _, prefix in ipairs(builtinWidgetPrefixes) do
+    if string.find(lower, prefix, 1, true) == 1 then
+      return true
+    end
+  end
+  return false
+end
 local loadlayout
 local scaleTypeEnum = ScaleType.values()
 local metrics = activity.getResources().getDisplayMetrics()
@@ -1037,7 +1057,18 @@ local function createView(layout, views, parentViewClass)
     viewClass = view.class
   elseif type(view) == "string" then
     -- 如果是字符串，尝试绑定类
-    local success, result = pcall(bindClass, view)
+    if _G.THIRD_PARTY_WIDGET_SUPPORT == false and not widgetClassAllowed(view) then
+      error("三方控件未启用: " .. view, 2)
+    end
+    -- 三方类解析：覆盖宿主 classpath + 项目 libs dex 装载器链
+    local success, result = pcall(function()
+      if _G.__luaforgeResolveClass then
+        local c = _G.__luaforgeResolveClass(view)
+        if c then return c end
+        error("Class not found: " .. tostring(view), 0)
+      end
+      return bindClass(view)
+    end)
     if success then
       viewClass = result
       view = style and

@@ -176,6 +176,8 @@
     <string name="settings_completion_case_sensitive_desc">Whether code completion is case-sensitive.</string>
     <string name="settings_per_project_word_wrap">Per-project word wrap</string>
     <string name="settings_per_project_word_wrap_desc">Keep an independent word wrapping state for each project; when disabled, all projects share one global setting.</string>
+    <string name="settings_third_party_widget">Third-party widgets</string>
+    <string name="settings_third_party_widget_desc">Allow custom widgets from dex/jar files in the project libs folder; when disabled, only system and official widgets are allowed.</string>
     <string name="settings_smart_sorting">Smart sorting</string>
     <string name="settings_smart_sorting_desc">Automatically sort quick actions and symbol bar based on usage frequency.</string>
     <string name="settings_hex_color_highlight">Hex Color Highlight</string>

@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DataArray
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FormatQuote
@@ -933,6 +934,41 @@ Column(
                         },
                         onClick = {
                             updateSettingsWithSave(currentSettingsState.copy(smartSortingEnabled = !currentSettingsState.smartSortingEnabled))
+                        }
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                    )
+
+                    SettingsListItem(
+                        title = stringResource(R.string.settings_third_party_widget),
+                        subtitle = stringResource(R.string.settings_third_party_widget_desc),
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Extension,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = currentSettingsState.thirdPartyWidgetSupport,
+                                onCheckedChange = {
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(thirdPartyWidgetSupport = it)
+                                    )
+                                }
+                            )
+                        },
+                        onClick = {
+                            updateSettingsWithSave(
+                                currentSettingsState.copy(
+                                    thirdPartyWidgetSupport = !currentSettingsState.thirdPartyWidgetSupport
+                                )
+                            )
                         }
                     )
                     

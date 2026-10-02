@@ -455,6 +455,11 @@ fun CodeEditScreen(
             data = Uri.fromFile(layoutHelperFile)
             putExtra("layout_content", content)
             putExtra("luapath", currentFile.absolutePath)
+            // 三方控件支持开关传给布局助手(它以 _G.THIRD_PARTY_WIDGET_SUPPORT 门控类解析)
+            putExtra(
+                "third_party_widget_support",
+                SettingsManager.currentSettings.thirdPartyWidgetSupport
+            )
         }
 
         layoutHelperLauncher.launch(intent)

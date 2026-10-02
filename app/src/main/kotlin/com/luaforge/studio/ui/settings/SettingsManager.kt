@@ -76,6 +76,8 @@ private object PreferencesKeys {
     val TOAST_BORDER_ENABLED = booleanPreferencesKey("toast_border_enabled")
 
     val EDITOR_WORD_WRAP = booleanPreferencesKey("editor_word_wrap")
+    // 三方控件支持:允许项目 libs/*.dex 里的自定义控件
+    val THIRD_PARTY_WIDGET_SUPPORT = booleanPreferencesKey("third_party_widget_support")
     // 项目间自动换行独立:开=每项目独立换行状态;关=全局共享
     val EDITOR_WORD_WRAP_INDEPENDENT = booleanPreferencesKey("editor_word_wrap_independent")
     val EDITOR_WORD_WRAP_PROJECTS = stringPreferencesKey("editor_word_wrap_projects")
@@ -231,6 +233,7 @@ object SettingsManager {
         val toastBorderEnabled = preferences[PreferencesKeys.TOAST_BORDER_ENABLED] ?: false
 
         val editorWordWrap = preferences[PreferencesKeys.EDITOR_WORD_WRAP] ?: false
+        val thirdPartyWidgetSupport = preferences[PreferencesKeys.THIRD_PARTY_WIDGET_SUPPORT] ?: true
         val perProjectWordWrap = preferences[PreferencesKeys.EDITOR_WORD_WRAP_INDEPENDENT] ?: true
         val editorWordWrapByProject: Map<String, Boolean> = try {
             val type = object : TypeToken<Map<String, Boolean>>() {}.type
@@ -298,6 +301,7 @@ object SettingsManager {
                 toastPosition = toastPosition,
                 toastBorderEnabled = toastBorderEnabled,
                 editorWordWrap = editorWordWrap,
+                thirdPartyWidgetSupport = thirdPartyWidgetSupport,
                 perProjectWordWrap = perProjectWordWrap,
                 editorWordWrapByProject = editorWordWrapByProject,
                 languageTag = languageTag,
@@ -357,6 +361,7 @@ object SettingsManager {
             preferences[PreferencesKeys.TOAST_BORDER_ENABLED] = currentSettings.toastBorderEnabled
 
             preferences[PreferencesKeys.EDITOR_WORD_WRAP] = currentSettings.editorWordWrap
+            preferences[PreferencesKeys.THIRD_PARTY_WIDGET_SUPPORT] = currentSettings.thirdPartyWidgetSupport
             preferences[PreferencesKeys.EDITOR_WORD_WRAP_INDEPENDENT] = currentSettings.perProjectWordWrap
             preferences[PreferencesKeys.EDITOR_WORD_WRAP_PROJECTS] =
                 Gson().toJson(currentSettings.editorWordWrapByProject)
@@ -520,6 +525,8 @@ data class SettingsData(
     val toastPosition: ToastPosition = ToastPosition.BOTTOM,
     val toastBorderEnabled: Boolean = false,
     val editorWordWrap: Boolean = false,
+    /** 三方控件支持:默认开启 */
+    val thirdPartyWidgetSupport: Boolean = true,
     /** 项目间自动换行独立:默认开启(每项目独立换行状态) */
     val perProjectWordWrap: Boolean = true,
     /** 项目路径 → 该项目的自动换行状态(仅当 perProjectWordWrap 为 true 时生效) */
