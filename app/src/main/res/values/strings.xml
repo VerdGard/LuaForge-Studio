@@ -611,6 +611,7 @@
     <string name="settings_mcp_hint">在 MCP 客户端中添加 HTTP 地址即可调用工具。服务随应用进程存活,退出应用即停止。</string>
 
     <string name="settings_network">网络请求拦截</string>
+    <string name="settings_security">安全防护</string>
     <string name="settings_network_enable">拦截网络请求</string>
     <string name="settings_network_enable_desc">请求发出前弹出确认框,用户允许后才放行</string>
     <string name="settings_network_allowed">已允许的主机</string>
@@ -638,6 +639,20 @@
     <string name="settings_network_record_deleted">已删除记录:%1$s</string>
     <string name="settings_network_show_all">展开全部(%1$d)</string>
     <string name="settings_network_show_less">收起</string>
+
+    <!-- 防火墙 -->
+    <string name="settings_firewall">防火墙</string>
+    <string name="settings_firewall_cross_write">越级写入拦截</string>
+    <string name="settings_firewall_cross_write_desc">阻止项目写入/删除/修改其它项目目录,读取不受影响</string>
+    <string name="settings_firewall_self_guard">自我守护</string>
+    <string name="settings_firewall_self_guard_desc">拦截项目删除或移动 LuaForge-Studio 工作目录的行为</string>
+    <string name="settings_firewall_guarded">已守护 %1$d 次</string>
+    <string name="settings_firewall_hint">仅在编辑器中运行项目时生效(需项目设置内开启调试模式)。项目打包成 APK 后不包含防火墙逻辑。</string>
+    <string name="firewall_block_cross_title">越级写入拦截</string>
+    <string name="firewall_block_self_title">自我守护拦截</string>
+    <string name="firewall_block_msg_project">项目「%1$s」正在写入:</string>
+    <string name="firewall_block_msg_cross">已拦截对其它项目目录的写入/删除/修改操作。</string>
+    <string name="firewall_block_msg_self">已拦截对 %1$s 工作目录的操作。</string>
     <string name="code_editor_build_dialog_title">构建项目</string>
     <string name="code_editor_build_type">构建类型</string>
     <string name="code_editor_build_type_unencrypted">未加密版</string>

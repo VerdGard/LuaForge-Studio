@@ -35,6 +35,7 @@ import com.luaforge.studio.ui.crash.CrashManager
 import com.luaforge.studio.ui.editor.persistence.EditorStateUtil
 import com.luaforge.studio.mcp.ActivityTracker
 import com.luaforge.studio.mcp.McpManager
+import com.luaforge.studio.firewall.FirewallHost
 import com.luaforge.studio.network.NetworkApprovalManager
 import com.luaforge.studio.ui.editor.viewmodel.CompletionDataManager
 import com.luaforge.studio.ui.settings.SettingsManager
@@ -124,6 +125,13 @@ class SplashWelcome : ComponentActivity() {
             )
         } catch (e: Exception) {
             LogCatcher.e("SplashWelcome", "初始化网络拦截失败", e)
+        }
+
+        // 防火墙:安装会话钩子(运行项目时注入 firewall.lua 并预热网关)
+        try {
+            FirewallHost.install(this@SplashWelcome)
+        } catch (e: Exception) {
+            LogCatcher.e("SplashWelcome", "初始化防火墙失败", e)
         }
 
         // 语言处理：仅在已持久化用户设置语言时应用；不匹配时不阻塞启动流程

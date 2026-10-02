@@ -610,6 +610,7 @@
     <string name="settings_mcp_hint">Add the HTTP endpoint in your MCP client to call tools. The service lives with the app process and stops when the app exits.</string>
 
     <string name="settings_network">Network Request Interception</string>
+    <string name="settings_security">Security</string>
     <string name="settings_network_enable">Intercept Network Requests</string>
     <string name="settings_network_enable_desc">Show a confirmation dialog before each request; proceed only if allowed</string>
     <string name="settings_network_allowed">Allowed Hosts</string>
@@ -637,6 +638,20 @@
     <string name="settings_network_record_deleted">Record deleted: %1$s</string>
     <string name="settings_network_show_all">Show all (%1$d)</string>
     <string name="settings_network_show_less">Show less</string>
+
+    <!-- Firewall -->
+    <string name="settings_firewall">Firewall</string>
+    <string name="settings_firewall_cross_write">Cross-project write guard</string>
+    <string name="settings_firewall_cross_write_desc">Blocks writing, deleting or modifying other project directories; reading is unaffected</string>
+    <string name="settings_firewall_self_guard">Self guard</string>
+    <string name="settings_firewall_self_guard_desc">Blocks projects from deleting or moving the LuaForge-Studio work directory</string>
+    <string name="settings_firewall_guarded">Guarded %1$d time(s)</string>
+    <string name="settings_firewall_hint">Only applies while running a project inside the editor (projects must enable debug mode in their settings). Packaged APKs do not contain the firewall logic.</string>
+    <string name="firewall_block_cross_title">Cross-project write blocked</string>
+    <string name="firewall_block_self_title">Self-guard blocked</string>
+    <string name="firewall_block_msg_project">Project \"%1$s\" is writing to:</string>
+    <string name="firewall_block_msg_cross">A write, delete or modify operation on another project directory was blocked.</string>
+    <string name="firewall_block_msg_self">An operation on the %1$s work directory was blocked.</string>
     <string name="code_editor_build_dialog_title">Build Project</string>
     <string name="code_editor_build_type">Build type</string>
     <string name="code_editor_build_type_unencrypted">Unencrypted</string>

@@ -128,6 +128,17 @@ public class LuaActivity extends AppCompatActivity
       new HashMap<String, LuaActivity>();
   private LuaObject mOnKeyShortcut;
 
+  /**
+   * IDE 调试会话钩子。core 定义、IDE(app 模块)安装；
+   * 打包产物不安装 -> 为 null，入口零开销。
+   */
+  private static volatile LuaSessionHook sSessionHook;
+
+  /** 由 IDE 在启动时安装（传 null 卸载）。 */
+  public static void setSessionHook(LuaSessionHook hook) {
+    sSessionHook = hook;
+  }
+
   private static byte[] readAll(InputStream input) throws IOException {
     ByteArrayOutputStream output = new ByteArrayOutputStream(4096);
     byte[] buffer = new byte[4096];
@@ -222,6 +233,18 @@ public class LuaActivity extends AppCompatActivity
 
       mLuaDexLoader = new LuaDexLoader(this);
       mLuaDexLoader.loadLibs();
+
+      // IDE 会话钩子：注入防火墙脚本并预热判定网关。
+      // 放在 loadLibs() 之后：确保 libs/*.dex、原生库（如 lfs）已就位后再包装写入入口。
+      // 产物未安装钩子 -> 直接跳过，零开销。
+      LuaSessionHook hook = sSessionHook;
+      if (hook != null) {
+        try {
+          hook.onSessionStart(L, luaDir, luaPath, mDebug);
+        } catch (Throwable ignored) {
+          // 钩子异常不能阻断页面启动
+        }
+      }
       synchronized (sLuaActivityMap) {
         sLuaActivityMap.put(pageName, this);
       }

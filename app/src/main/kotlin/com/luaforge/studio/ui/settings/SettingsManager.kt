@@ -101,7 +101,16 @@ private object PreferencesKeys {
     val NETWORK_INTERCEPT_ENABLED = booleanPreferencesKey("network_intercept_enabled")
     val NETWORK_ALLOWED_HOSTS = stringPreferencesKey("network_allowed_hosts")
     val NETWORK_BLOCKED_HOSTS = stringPreferencesKey("network_blocked_hosts")
+
+    // 【新增】防火墙（越级写入 + 自我守护）
+    val CROSS_PROJECT_WRITE_GUARD = booleanPreferencesKey("cross_project_write_guard")
+    val SELF_GUARD = booleanPreferencesKey("self_guard")
+    val CROSS_WRITE_COUNTS = stringPreferencesKey("cross_write_counts")
+    val SELF_GUARD_COUNTS = stringPreferencesKey("self_guard_counts")
 }
+
+/** 防火墙拦截类型（分计）。 */
+enum class FirewallKind { CROSS_WRITE, SELF_GUARD }
 
 // 排序方式枚举
 enum class SortOrder {
@@ -273,6 +282,22 @@ object SettingsManager {
             emptySet()
         }
 
+        // 【新增】加载防火墙设置
+        val crossProjectWriteGuard = preferences[PreferencesKeys.CROSS_PROJECT_WRITE_GUARD] ?: true
+        val selfGuard = preferences[PreferencesKeys.SELF_GUARD] ?: true
+        val crossWriteCounts: Map<String, Int> = try {
+            val type = object : TypeToken<Map<String, Int>>() {}.type
+            Gson().fromJson(preferences[PreferencesKeys.CROSS_WRITE_COUNTS] ?: "{}", type) ?: emptyMap()
+        } catch (e: Exception) {
+            emptyMap()
+        }
+        val selfGuardCounts: Map<String, Int> = try {
+            val type = object : TypeToken<Map<String, Int>>() {}.type
+            Gson().fromJson(preferences[PreferencesKeys.SELF_GUARD_COUNTS] ?: "{}", type) ?: emptyMap()
+        } catch (e: Exception) {
+            emptyMap()
+        }
+
         updateSettings(
             SettingsData(
                 themeType = themeType,
@@ -313,7 +338,11 @@ object SettingsManager {
                 mcpToken = mcpToken,                      // 【新增】
                 networkInterceptEnabled = networkInterceptEnabled,  // 【新增】
                 networkAllowedHosts = networkAllowedHosts,          // 【新增】
-                networkBlockedHosts = networkBlockedHosts           // 【新增】
+                networkBlockedHosts = networkBlockedHosts,          // 【新增】
+                crossProjectWriteGuard = crossProjectWriteGuard,    // 【新增】
+                selfGuard = selfGuard,                              // 【新增】
+                crossWriteCounts = crossWriteCounts,                // 【新增】
+                selfGuardCounts = selfGuardCounts                   // 【新增】
             )
         )
     }
@@ -386,6 +415,12 @@ object SettingsManager {
             preferences[PreferencesKeys.NETWORK_INTERCEPT_ENABLED] = currentSettings.networkInterceptEnabled
             preferences[PreferencesKeys.NETWORK_ALLOWED_HOSTS] = Gson().toJson(currentSettings.networkAllowedHosts)
             preferences[PreferencesKeys.NETWORK_BLOCKED_HOSTS] = Gson().toJson(currentSettings.networkBlockedHosts)
+
+            // 【新增】保存防火墙设置
+            preferences[PreferencesKeys.CROSS_PROJECT_WRITE_GUARD] = currentSettings.crossProjectWriteGuard
+            preferences[PreferencesKeys.SELF_GUARD] = currentSettings.selfGuard
+            preferences[PreferencesKeys.CROSS_WRITE_COUNTS] = Gson().toJson(currentSettings.crossWriteCounts)
+            preferences[PreferencesKeys.SELF_GUARD_COUNTS] = Gson().toJson(currentSettings.selfGuardCounts)
         }
         notifyListeners()
     }
@@ -396,6 +431,28 @@ object SettingsManager {
             saveSettingsAsync(context)
         }
     }
+
+    /** 记录一次防火墙拦截（按项目名分计），立即更新内存态并异步持久化。 */
+    fun recordFirewallGuard(kind: FirewallKind, projectName: String, context: Context) {
+        currentSettings = when (kind) {
+            FirewallKind.CROSS_WRITE -> {
+                val m = currentSettings.crossWriteCounts.toMutableMap()
+                m[projectName] = (m[projectName] ?: 0) + 1
+                currentSettings.copy(crossWriteCounts = m)
+            }
+            FirewallKind.SELF_GUARD -> {
+                val m = currentSettings.selfGuardCounts.toMutableMap()
+                m[projectName] = (m[projectName] ?: 0) + 1
+                currentSettings.copy(selfGuardCounts = m)
+            }
+        }
+        notifyListeners()
+        saveSettings(context)
+    }
+
+    /** 防火墙拦截全局累计（两开关合计）。 */
+    fun firewallGuardTotal(): Int =
+        currentSettings.crossWriteCounts.values.sum() + currentSettings.selfGuardCounts.values.sum()
 
     /** 每项目换行状态的规范化键(去掉结尾分隔符,避免同一路径出现两种写法)。 */
     private fun normalizeProjectPath(projectPath: String): String =
@@ -541,4 +598,12 @@ data class SettingsData(
     val networkInterceptEnabled: Boolean = false,    // 【新增】网络请求拦截开关(默认关闭)
     val networkAllowedHosts: Set<String> = emptySet(), // 【新增】已允许的请求主机
     val networkBlockedHosts: Set<String> = emptySet(), // 【新增】已拒绝的请求主机
+    /** 防火墙：越级写入拦截（默认开启） */
+    val crossProjectWriteGuard: Boolean = true,
+    /** 防火墙：自我守护（默认开启） */
+    val selfGuard: Boolean = true,
+    /** 项目名 → 越级写入拦截次数 */
+    val crossWriteCounts: Map<String, Int> = emptyMap(),
+    /** 项目名 → 自我守护拦截次数 */
+    val selfGuardCounts: Map<String, Int> = emptyMap(),
 )

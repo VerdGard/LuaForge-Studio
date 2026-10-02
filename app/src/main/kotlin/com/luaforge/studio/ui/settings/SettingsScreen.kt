@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Swipe
 import androidx.compose.material3.Button
@@ -224,7 +225,8 @@ fun SettingsScreen(
     var mcpExpanded by remember { mutableStateOf(false) }
     var mcpPortText by remember { mutableStateOf(currentSettingsState.mcpPort.toString()) }
     var mcpTokenText by remember { mutableStateOf(currentSettingsState.mcpToken) }
-    var networkExpanded by remember { mutableStateOf(false) }
+    // 安全防护卡片(网络拦截 + 防火墙合并)展开态
+    var securityExpanded by remember { mutableStateOf(false) }
 
     var fontMenuExpanded by remember { mutableStateOf(false) }
     var editorFontMenuExpanded by remember { mutableStateOf(false) }
@@ -1294,15 +1296,24 @@ SettingsListItem(
 
             item {
                 SettingsCardGroup(
-                    title = stringResource(R.string.settings_network),
-                    icon = Icons.Filled.Security,
-                    initiallyExpanded = networkExpanded,
-                    onExpandedChange = { networkExpanded = it }
+                    title = stringResource(R.string.settings_security),
+                    icon = Icons.Filled.Shield,
+                    initiallyExpanded = securityExpanded,
+                    onExpandedChange = { securityExpanded = it }
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        Text(
+                            text = stringResource(R.string.settings_network),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                        )
+
                         SettingsListItem(
                             title = stringResource(R.string.settings_network_enable),
                             subtitle = stringResource(R.string.settings_network_enable_desc),
@@ -1404,6 +1415,110 @@ SettingsListItem(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                        )
+
+                        Text(
+                            text = stringResource(R.string.settings_firewall),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                        )
+
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                        SettingsListItem(
+                            title = stringResource(R.string.settings_firewall_cross_write),
+                            subtitle = stringResource(R.string.settings_firewall_cross_write_desc),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Shield,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = currentSettingsState.crossProjectWriteGuard,
+                                    onCheckedChange = { checked ->
+                                        updateSettingsWithSave(
+                                            currentSettingsState.copy(crossProjectWriteGuard = checked)
+                                        )
+                                    }
+                                )
+                            },
+                            onClick = {
+                                updateSettingsWithSave(
+                                    currentSettingsState.copy(
+                                        crossProjectWriteGuard =
+                                            !currentSettingsState.crossProjectWriteGuard
+                                    )
+                                )
+                            }
+                        )
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                        )
+
+                        SettingsListItem(
+                            title = stringResource(R.string.settings_firewall_self_guard),
+                            subtitle = stringResource(R.string.settings_firewall_self_guard_desc),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Lock,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = currentSettingsState.selfGuard,
+                                    onCheckedChange = { checked ->
+                                        updateSettingsWithSave(
+                                            currentSettingsState.copy(selfGuard = checked)
+                                        )
+                                    }
+                                )
+                            },
+                            onClick = {
+                                updateSettingsWithSave(
+                                    currentSettingsState.copy(
+                                        selfGuard = !currentSettingsState.selfGuard
+                                    )
+                                )
+                            }
+                        )
+
+                        Text(
+                            text = stringResource(
+                                R.string.settings_firewall_guarded,
+                                settingsManager.firewallGuardTotal()
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 10.dp)
+                        )
+
+                        Text(
+                            text = stringResource(R.string.settings_firewall_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                        )
                         }
                     }
                 }
