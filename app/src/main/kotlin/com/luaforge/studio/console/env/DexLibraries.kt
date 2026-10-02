@@ -4,10 +4,19 @@ import dalvik.system.DexFile
 import dalvik.system.PathClassLoader
 import java.io.File
 
-/** Java 类库:仅扫描项目根目录 libs/ 下的 .dex 文件(dex 内类名 + 反射方法签名)。 */
+/**
+ * Java 类库:仅扫描项目根目录 libs/ 下的 .dex 文件(dex 内类名 + 反射方法签名)。
+ *
+ * 结果按目录缓存:一次扫描要走 PathClassLoader + 逐类反射全部方法,开销在百毫秒级,
+ * 而「环境」页每次切回都会重扫。缓存以每个 dex 的大小与修改时间为指纹,文件一变即失效。
+ */
 object DexLibraries {
 
     data class DexLib(val dexFile: String, val classes: List<ModuleTracker.JavaLib>)
+
+    private class CachedScan(val fingerprint: String, val libs: List<DexLib>)
+
+    private val cache = HashMap<String, CachedScan>()
 
     /** 扫项目 luaDir/libs 目录下的 dex 文件,返回每个 dex 的类列表(类名 → 方法签名)。 */
     fun scan(luaDir: String?): List<DexLib> {
@@ -15,8 +24,16 @@ object DexLibraries {
         val dir = File(luaDir, "libs")
         if (!dir.isDirectory) return emptyList()
         val dexFiles = dir.listFiles { f -> f.isFile && f.extension.equals("dex", true) }
-            ?: return emptyList()
-        return dexFiles.sortedBy { it.name }.mapNotNull { f -> scanDex(f) }
+            ?.sortedBy { it.name } ?: return emptyList()
+
+        val fingerprint = dexFiles.joinToString("|") { "${it.name}:${it.length()}:${it.lastModified()}" }
+        synchronized(cache) {
+            cache[dir.absolutePath]?.let { if (it.fingerprint == fingerprint) return it.libs }
+        }
+
+        val libs = dexFiles.mapNotNull { scanDex(it) }
+        synchronized(cache) { cache[dir.absolutePath] = CachedScan(fingerprint, libs) }
+        return libs
     }
 
     private fun scanDex(f: File): DexLib? {

@@ -27,7 +27,7 @@ import com.luaforge.studio.console.output.TypeResolver
 import com.luaforge.studio.console.persist.ConsolePaths
 import com.luaforge.studio.console.persist.CrashCapture
 import com.luaforge.studio.console.persist.SessionArchiver
-import com.luaforge.studio.console.ui.ConsoleSheet
+import com.luaforge.studio.console.ui.ConsolePanelView
 import com.luaforge.studio.console.ui.OverlayController
 import com.luaforge.studio.utils.JsonUtil
 import com.luajava.LuaState
@@ -57,7 +57,13 @@ class ConsoleBridgeImpl(private val context: Context) : ConsoleBridge {
     /** 未读 Lua 错误计数 → 浮球右上角角标;打开面板 / 清空当前缓冲时清零。 */
     private val errorUnread = AtomicInteger(0)
 
-    /** 弹窗采集:make 登记实例→文本;show() 配对即时输出;当前 lua 文件切换时 dump 残留。 */
+    /**
+     * 弹窗采集:make 登记实例→文本;show() 配对即时输出;当前 lua 文件切换时 dump 残留。
+     *
+     * 回调来自 Lua 线程(不同页面/LuaState 可为不同线程),dump 锚点又在 onMethodCall 中触发,
+     * 故全部访问经 [popupLock] 串行化:裸 WeakHashMap 并发读写会致结构损坏或迭代死循环。
+     */
+    private val popupLock = Any()
     private val pendingPopups = WeakHashMap<Any, PopupInfo>()
     private var lastDumpFile: String? = null
 
@@ -201,7 +207,7 @@ class ConsoleBridgeImpl(private val context: Context) : ConsoleBridge {
         active = false
         EventTracker.clear()
         ModuleTracker.clear()
-        ConsoleSheet.persistedTab = 0
+        ConsolePanelView.persistedTab = 0
         SessionManager.end()
     }
 
@@ -283,25 +289,32 @@ class ConsoleBridgeImpl(private val context: Context) : ConsoleBridge {
 
     override fun onPopupCaptured(instance: Any, text: String?, snackbar: Boolean) {
         if (!active) return
-        pendingPopups[instance] = PopupInfo(text ?: "", snackbar)
+        synchronized(popupLock) { pendingPopups[instance] = PopupInfo(text ?: "", snackbar) }
     }
 
     override fun onPopupShown(instance: Any) {
         if (!active) return
-        pendingPopups.remove(instance)?.let { info ->
-            outputPopup(info)
-        }
+        val info = synchronized(popupLock) { pendingPopups.remove(instance) }
+        if (info != null) outputPopup(info)
     }
 
     /** 当前 lua 文件切换锚点触发:残留「从未 show」的弹窗一次性落缓冲。 */
     private fun dumpPendingPopups() {
-        if (pendingPopups.isEmpty()) return
-        val it = pendingPopups.entries.iterator()
-        while (it.hasNext()) {
-            val (_, info) = it.next()
-            it.remove()
-            outputPopup(info)
+        // 锁内只做搬运,输出放锁外:outputPopup 会读设置并写输出缓冲,不宜持锁调用
+        val drained: List<PopupInfo> = synchronized(popupLock) {
+            if (pendingPopups.isEmpty()) {
+                emptyList()
+            } else {
+                val out = ArrayList<PopupInfo>(pendingPopups.size)
+                val it = pendingPopups.entries.iterator()
+                while (it.hasNext()) {
+                    out.add(it.next().value)
+                    it.remove()
+                }
+                out
+            }
         }
+        for (info in drained) outputPopup(info)
     }
 
     /** 弹窗输出:按类型开关门控(不标注是否调用 show,仅捕获内容)。 */

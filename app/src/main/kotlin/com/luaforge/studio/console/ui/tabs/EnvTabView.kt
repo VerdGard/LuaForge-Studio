@@ -35,8 +35,10 @@ class EnvTabView(context: Context) : ScrollView(context) {
     fun refresh() {
         content.removeAllViews()
         val file = OutputManager.currentFile
-        val luaMods = ModuleTracker.luaLibs(file).filter { !it.native }
-        val natives = ModuleTracker.luaLibs(file).filter { it.native }
+        // 一次取全部再分组:原先调两次 luaLibs 会各自复制一遍列表
+        val libs = ModuleTracker.luaLibs(file)
+        val luaMods = libs.filter { !it.native }
+        val natives = libs.filter { it.native }
         val dexLibs = DexLibraries.scan(SessionManager.current?.luaDir)
 
         // 1. 环境信息（键值对折叠卡，默认展开）

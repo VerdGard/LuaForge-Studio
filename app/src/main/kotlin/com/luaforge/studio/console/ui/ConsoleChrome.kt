@@ -10,16 +10,14 @@ import android.view.Gravity
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.google.android.material.tabs.TabLayout
 
 /**
- * 控制台浮窗公共外观:头部(标题+当前文件副标题+图标按钮)与页签栏。
+ * 控制台浮窗公共外观:头部(标题 + 当前文件副标题 + 图标按钮)。
  * 竖屏 BottomSheet 与横屏侧栏共用,保证两形态视觉一致。
+ *
+ * 原顶部页签栏已移除:页签改由左侧竖排导航 [ConsoleNavColumn] 承担。
  */
 object ConsoleChrome {
-
-    /** 页签标题:输出 / 结构 / 环境 / Logcat / 调试 / 设置。顺序与 buildTab 索引一一对应。 */
-    val TAB_TITLES = listOf("输出", "结构", "环境", "Logcat", "调试", "设置")
 
     /**
      * 头部:主色竖条 + 标题(+ 副标题)+ 右侧图标按钮组。
@@ -91,29 +89,7 @@ object ConsoleChrome {
         return row
     }
 
-    /** 页签栏:等分单行,圆角短指示器贴文字,主色选中。 */
-    fun tabs(ctx: Context, titles: List<String>): TabLayout =
-        TabLayout(ctx).apply {
-            titles.forEach { addTab(newTab().setText(it)) }
-            tabMode = TabLayout.MODE_FIXED
-            tabGravity = TabLayout.GRAVITY_FILL
-            setBackgroundColor(ConsoleTheme.surface)
-            setTabTextColors(ConsoleTheme.onSurfaceVariant, ConsoleTheme.primary)
-            // 圆角短指示器:贴合文字宽度更精致(默认全宽粗条偏生硬)
-            setTabIndicatorFullWidth(false)
-            setSelectedTabIndicator(
-                GradientDrawable().apply {
-                    setColor(ConsoleTheme.primary)
-                    cornerRadius = ctx.dp(2).toFloat()
-                }
-            )
-            setSelectedTabIndicatorHeight(ctx.dp(3))
-            setTabRippleColor(
-                ColorStateList.valueOf(ConsoleTheme.primary and 0x00FFFFFF or 0x1F000000)
-            )
-        }
-
-    /** 页签与内容区之间的细分隔线:低调分界,提升层次感。 */
+    /** 头部/导航与内容之间的细分隔线:低调分界,提升层次感。 */
     fun divider(ctx: Context): android.view.View =
         android.view.View(ctx).apply {
             setBackgroundColor(

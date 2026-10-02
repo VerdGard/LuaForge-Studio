@@ -1,9 +1,5 @@
 package com.luaforge.studio.console.output
 
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-
 /**
  * 单条输出条目。
  *
@@ -26,14 +22,10 @@ class OutputEntry(
     /** 完整内容(不截断,供复制选项弹窗预览;primary 为列表展示截断版)。 */
     val fullText: String? = null
 ) {
-    val shortTime: String get() = TIME_SHORT.format(Date(timestampMs))
-    val fullTime: String get() = TIME_FULL.format(Date(timestampMs))
+    val fullTime: String get() = TimeFormat.full(timestampMs)
     val threadLabel: String get() = if (isMainThread) "主" else "子"
 
     companion object {
-        private val TIME_SHORT = SimpleDateFormat("MM-dd HH:mm:ss", Locale.US)
-        private val TIME_FULL = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US)
-
         /** 输出级别标识常量(label 取值)。 */
         const val LABEL_PRINT = "print"
         const val LABEL_ERROR = "error"

@@ -1,8 +1,8 @@
 package com.luaforge.studio.console.ui
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
+import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.os.Bundle
 import android.os.Handler
@@ -10,22 +10,15 @@ import android.os.Looper
 import android.view.Display
 import android.view.Surface
 import android.view.View
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.luaforge.studio.R
-import com.luaforge.studio.console.core.FileStateTracker
-import com.luaforge.studio.console.ui.tabs.DebugTabView
-import com.luaforge.studio.console.ui.tabs.EnvTabView
-import com.luaforge.studio.console.ui.tabs.LogcatTabView
-import com.luaforge.studio.console.ui.tabs.OutputTabView
-import com.luaforge.studio.console.ui.tabs.SettingsTabView
-import com.luaforge.studio.console.ui.tabs.StructTabView
 
 /**
- * 控制台面板(竖屏):BottomSheet + 页签(输出/结构/环境/Logcat/调试/设置)+ 关闭/最小化。
- * 面板不占满全屏:内容区固定高度,四周留出宿主界面。
- * 外观与横屏 [SidePanelDialog] 共用 [ConsoleChrome],两形态视觉一致。
+ * 控制台面板(竖屏):BottomSheet 承载 [ConsolePanelView](头部 + 左侧竖排导航 + 右侧内容)。
+ *
+ * 面板不占满全屏:内容区固定高度,四周留出宿主界面。外观与横屏 [SidePanelDialog] 共用
+ * [ConsolePanelView]/[ConsoleChrome],两形态视觉与页签行为一致。
  */
 class ConsoleSheet(
     activity: Activity,
@@ -33,60 +26,37 @@ class ConsoleSheet(
     private val onDismissed: () -> Unit
 ) : BottomSheetDialog(activity) {
 
-    companion object {
-        /** 上次选中的页签位:面板关闭/重开后保留,退出本次调试(onSessionEnd)时重置为 0。 */
-        @Volatile
-        var persistedTab = 0
-    }
-
-    private val cachedTabs = HashMap<Int, View>()
-    private var lastShownPos = -1
-    private val container by lazy { FrameLayout(context).apply { id = View.generateViewId() } }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val ctx = context
-        val root = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            // 底部留白:内容与手势区之间留呼吸空间
-            setPadding(0, 0, 0, ctx.dp(10))
-            // 四角圆角:面板呈悬浮卡片,不再贴边铺满
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(ConsoleTheme.surface)
-                cornerRadius = ctx.dp(20).toFloat()
-            }
-            // 裁剪子 view(header/tabs 的矩形底色),避免盖掉圆角
-            clipToOutline = true
-        }
 
-        val header = ConsoleChrome.header(
-            ctx = ctx,
-            title = "调试控制台",
-            subtitle = currentFileLabel(),
-            actions = listOf(
+        // 内容区高度:屏高约 46%,钳制 260–420dp —— 体积小、不铺满;各页签等高,切换不跳动
+        val panelHeight = (ctx.resources.displayMetrics.heightPixels * 0.46f).toInt()
+            .coerceIn(ctx.dp(260), ctx.dp(420))
+
+        val panel = ConsolePanelView(
+            ctx,
+            listOf(
                 // 最小化:收起面板回浮球
                 R.drawable.ic_console_minimize to { dismiss() },
                 // 完全关闭(叉号):直接关闭,无二次确认
                 R.drawable.ic_console_close to { onFullyClosed() }
             )
-        )
-        val tabs = ConsoleChrome.tabs(ctx, ConsoleChrome.TAB_TITLES)
+        ).apply {
+            // 四角圆角:面板呈悬浮卡片,不再贴边铺满;裁剪子 view 矩形底色以保留圆角
+            background = GradientDrawable().apply {
+                setColor(ConsoleTheme.surface)
+                cornerRadius = ctx.dp(20).toFloat()
+            }
+            clipToOutline = true
+        }
 
-        // 内容区高度:屏高约 46%,钳制 260–420dp —— 体积小、不铺满;各页签等高,切换不跳动
-        val panelHeight = (ctx.resources.displayMetrics.heightPixels * 0.46f).toInt()
-            .coerceIn(ctx.dp(260), ctx.dp(420))
-        container.layoutParams = LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT,
-            panelHeight
-        )
-
-        root.addView(header)
-        root.addView(tabs)
-        root.addView(
-            ConsoleChrome.divider(ctx),
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, ctx.dp(1))
-        )
-        root.addView(container)
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            // 底部留白:内容与手势区之间留呼吸空间
+            setPadding(0, 0, 0, ctx.dp(10))
+        }
+        root.addView(panel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, panelHeight))
         setContentView(root)
 
         // 宽度收到屏宽 92% 并居中:面板成悬浮卡片,左右露出宿主界面(不再铺满全屏)
@@ -107,19 +77,8 @@ class ConsoleSheet(
         // 误触下划会错误收起浮窗;关闭仅通过头部最小化/完全关闭按钮。
         getBehavior().setDraggable(false)
 
-        tabs.addOnTabSelectedListener(object : com.google.android.material.tabs.TabLayout.OnTabSelectedListener {
-            override fun onTabSelected(tab: com.google.android.material.tabs.TabLayout.Tab) {
-                persistedTab = tab.position
-                showTab(tab.position)
-            }
-
-            override fun onTabUnselected(tab: com.google.android.material.tabs.TabLayout.Tab) {}
-            override fun onTabReselected(tab: com.google.android.material.tabs.TabLayout.Tab) {}
-        })
         // 恢复上次页签:面板关闭/重开后保留切换状态(退出调试时由 onSessionEnd 重置为 0)
-        val restore = persistedTab.coerceIn(0, tabs.tabCount - 1)
-        tabs.getTabAt(restore)?.select()
-        if (lastShownPos != restore) showTab(restore)
+        panel.restore()
 
         // 旋转关闭:BottomSheetDialog 无配置回调,用 DisplayListener 监听;本面板仅竖屏创建,旋到横屏即收。
         val displayManager = ctx.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
@@ -129,9 +88,7 @@ class ConsoleSheet(
             override fun onDisplayChanged(displayId: Int) {
                 val rotation = displayManager.getDisplay(Display.DEFAULT_DISPLAY)?.rotation
                     ?: return
-                val nowLandscape =
-                    rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270
-                if (nowLandscape) dismiss()
+                if (rotation == Surface.ROTATION_90 || rotation == Surface.ROTATION_270) dismiss()
             }
         }
         displayManager.registerDisplayListener(orientationCloser, Handler(Looper.getMainLooper()))
@@ -139,40 +96,5 @@ class ConsoleSheet(
             displayManager.unregisterDisplayListener(orientationCloser)
             onDismissed()
         }
-    }
-
-    /** 副标题:当前文件项目相对路径(未知则空,头部只显标题)。 */
-    private fun currentFileLabel(): String? {
-        val p = FileStateTracker.relativePath
-        return p.ifBlank { null }
-    }
-
-    @SuppressLint("Recycle")
-    private fun showTab(pos: Int) {
-        (cachedTabs[lastShownPos] as? LogcatTabView)?.stopPolling()
-        lastShownPos = pos
-        val view = cachedTabs.getOrPut(pos) { buildTab(pos) }
-        container.removeAllViews()
-        container.addView(
-            view,
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
-        )
-        (view as? StructTabView)?.refresh()
-        (view as? EnvTabView)?.refresh()
-        (view as? DebugTabView)?.refresh()
-        (view as? SettingsTabView)?.refresh()
-        (view as? LogcatTabView)?.apply {
-            refresh()
-            startPolling()
-        }
-    }
-
-    private fun buildTab(pos: Int): View = when (pos) {
-        0 -> OutputTabView(context)
-        1 -> StructTabView(context)
-        2 -> EnvTabView(context)
-        3 -> LogcatTabView(context)
-        4 -> DebugTabView(context)
-        else -> SettingsTabView(context)
     }
 }

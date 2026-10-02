@@ -590,6 +590,7 @@ object McpTools {
     private suspend fun listFiles(context: Context, args: JSONObject): JSONObject {
         val base = resolveProject(context, args.optString("path", ""))
         if (!base.exists()) return errorResult("路径不存在: ${base.absolutePath}")
+        if (!isAllowed(context, base)) return errorResult("路径不在允许范围内: ${base.absolutePath}")
 
         val recursive = args.optBoolean("recursive", true)
         val maxEntries = args.optInt("maxEntries", 500).coerceIn(1, 5000)
@@ -639,6 +640,7 @@ object McpTools {
         if (raw.isBlank()) return errorResult("缺少参数 path")
         val file = resolveProject(context, raw)
         if (!file.exists() || !file.isFile) return errorResult("文件不存在: ${file.absolutePath}")
+        if (!isAllowed(context, file)) return errorResult("路径不在允许范围内: ${file.absolutePath}")
         if (file.length() > MAX_READ_BYTES) {
             return errorResult("文件过大(${file.length()} 字节),超过 2MB 限制")
         }
@@ -731,6 +733,7 @@ object McpTools {
     private suspend fun getProjectInfo(context: Context, args: JSONObject): JSONObject {
         val project = resolveProjectPath(context, args.optString("path", ""))
             ?: return errorResult("无法确定项目路径,请先在前台打开项目或传入 path")
+        if (!isAllowed(context, File(project))) return errorResult("路径不在允许范围内: $project")
         val info = ProjectUtil.getProjectInfo(project)
 
         // 注意:getProjectInfo 返回的 Map 里含 java.util.Date,JSONObject 无法直接序列化,
@@ -791,6 +794,7 @@ object McpTools {
         val raw = args.optString("path", "")
         if (raw.isBlank()) return errorResult("缺少参数 path")
         val file = resolveProject(context, raw)
+        if (!isAllowed(context, file)) return errorResult("路径不在允许范围内: ${file.absolutePath}")
         if (!file.exists() || !file.isFile) return errorResult("文件不存在: ${file.absolutePath}")
 
         withContext(Dispatchers.Main) {
@@ -938,6 +942,7 @@ object McpTools {
         }
 
         val target = resolveProject(context, raw)
+        if (!isAllowed(context, target)) return errorResult("路径不在允许范围内: ${target.absolutePath}")
         val ok = withContext(Dispatchers.Main) {
             runCatching { vm.refreshEditorFromDisk(target.absolutePath) }.getOrDefault(false)
         }
@@ -973,6 +978,7 @@ object McpTools {
             activeFile != null -> activeFile.file
             else -> return errorResult("缺少参数 path 且编辑器没有活动文件")
         }
+        if (!isAllowed(context, file)) return errorResult("路径不在允许范围内: ${file.absolutePath}")
         if (!file.exists()) return errorResult("文件不存在: ${file.absolutePath}")
 
         val extension = file.extension.lowercase()
@@ -1051,6 +1057,7 @@ object McpTools {
     private suspend fun cleanCompiled(context: Context, args: JSONObject): JSONObject {
         val project = resolveProjectPath(context, args.optString("path", ""))
             ?: return errorResult("无法确定项目路径,请先在前台打开项目或传入 path")
+        if (!isAllowed(context, File(project))) return errorResult("路径不在允许范围内: $project")
         val dryRun = args.optBoolean("dryRun", false)
 
         val deleted = withContext(Dispatchers.IO) {
@@ -1079,6 +1086,7 @@ object McpTools {
     private suspend fun buildApk(context: Context, args: JSONObject): JSONObject {
         val project = resolveProjectPath(context, args.optString("path", ""))
             ?: return errorResult("无法确定项目路径,请先在前台打开项目或传入 path")
+        if (!isAllowed(context, File(project))) return errorResult("路径不在允许范围内: $project")
         if (!File(project, "main.lua").exists()) {
             return errorResult("项目缺少 main.lua: $project")
         }
@@ -1105,6 +1113,7 @@ object McpTools {
     private suspend fun runProject(context: Context, args: JSONObject): JSONObject {
         val project = resolveProjectPath(context, args.optString("path", ""))
             ?: return errorResult("无法确定项目路径,请先在前台打开项目或传入 path")
+        if (!isAllowed(context, File(project))) return errorResult("路径不在允许范围内: $project")
         val mainLua = File(project, "main.lua")
         if (!mainLua.exists()) return errorResult("项目缺少 main.lua: ${mainLua.absolutePath}")
 
@@ -1136,6 +1145,7 @@ object McpTools {
         val raw = args.optString("path", "")
         if (raw.isBlank()) return errorResult("缺少参数 path")
         val file = resolveProject(context, raw)
+        if (!isAllowed(context, file)) return errorResult("路径不在允许范围内: ${file.absolutePath}")
         if (!file.exists() || !file.isFile) return errorResult("APK 不存在: ${file.absolutePath}")
 
         return withContext(Dispatchers.Main) {
@@ -1173,6 +1183,7 @@ object McpTools {
     private suspend fun backupProjectTool(context: Context, args: JSONObject): JSONObject {
         val project = resolveProjectPath(context, args.optString("path", ""))
             ?: return errorResult("无法确定项目路径,请先在前台打开项目或传入 path")
+        if (!isAllowed(context, File(project))) return errorResult("路径不在允许范围内: $project")
         val result = withContext(Dispatchers.IO) { backupProject(context, project) }
         return if (result.startsWith("error")) {
             errorResult(result)
@@ -1228,6 +1239,28 @@ object McpTools {
         )
     }
 
+    /**
+     * 读取文本文件末尾至多 maxBytes 字节。
+     *
+     * 用 RandomAccessFile.seek 精确定位:InputStream.skip 允许返回小于请求值(甚至 0),
+     * 原实现不校验返回值,大文件下会从错误偏移开始读,导致返回内容错位。
+     */
+    private fun readTailText(file: File, maxBytes: Int): String {
+        val len = file.length()
+        if (len <= maxBytes) return file.readText(Charsets.UTF_8)
+        java.io.RandomAccessFile(file, "r").use { raf ->
+            raf.seek(len - maxBytes)
+            val buf = ByteArray(maxBytes)
+            var offset = 0
+            while (offset < maxBytes) {
+                val n = raf.read(buf, offset, maxBytes - offset)
+                if (n <= 0) break
+                offset += n
+            }
+            return String(buf, 0, offset, Charsets.UTF_8)
+        }
+    }
+
     private suspend fun getLogs(args: JSONObject): JSONObject {
         val lines = args.optInt("lines", 200).coerceIn(1, 5000)
         val file = File(LOG_FILE_PATH)
@@ -1236,14 +1269,7 @@ object McpTools {
         val content = withContext(Dispatchers.IO) {
             // 大文件只读取末尾部分,避免占用内存
             val maxBytes = 256 * 1024
-            if (file.length() <= maxBytes) {
-                file.readText(Charsets.UTF_8)
-            } else {
-                file.inputStream().use { stream ->
-                    stream.skip(file.length() - maxBytes)
-                    String(stream.readBytes(), Charsets.UTF_8)
-                }
-            }
+            readTailText(file, maxBytes)
         }
         val all = content.lines()
         val tail = if (all.size > lines) all.subList(all.size - lines, all.size) else all
@@ -1325,14 +1351,7 @@ object McpTools {
 
         val content = withContext(Dispatchers.IO) {
             val maxBytes = 512 * 1024
-            if (file.length() <= maxBytes) {
-                file.readText(Charsets.UTF_8)
-            } else {
-                file.inputStream().use { stream ->
-                    stream.skip(file.length() - maxBytes)
-                    String(stream.readBytes(), Charsets.UTF_8)
-                }
-            }
+            readTailText(file, maxBytes)
         }
         val matched = content.lines().filter { line ->
             line.contains("[ERROR]") || line.contains("[WARN]") ||
@@ -1486,6 +1505,7 @@ object McpTools {
         if (query.isBlank()) return errorResult("缺少参数 query")
         val root = resolveProject(context, args.optString("path", ""))
         if (!root.exists()) return errorResult("路径不存在: ${root.absolutePath}")
+        if (!isAllowed(context, root)) return errorResult("路径不在允许范围内: ${root.absolutePath}")
 
         val useRegex = args.optBoolean("regex", false)
         val ignoreCase = args.optBoolean("ignoreCase", true)
@@ -1557,6 +1577,7 @@ object McpTools {
             val file = resolveProject(context, raw)
             val item = JSONObject().put("requested", raw).put("path", file.absolutePath)
             when {
+                !isAllowed(context, file) -> item.put("error", "路径不在允许范围内")
                 !file.exists() || !file.isFile -> item.put("error", "文件不存在")
                 file.length() > MAX_READ_BYTES -> item.put("error", "文件过大(${file.length()} 字节)")
                 else -> {
@@ -1821,6 +1842,7 @@ object McpTools {
         if (raw.isBlank()) return errorResult("缺少参数 path")
         val file = resolveProject(context, raw)
         if (!file.exists()) return errorResult("路径不存在: ${file.absolutePath}")
+        if (!isAllowed(context, file)) return errorResult("路径不在允许范围内: ${file.absolutePath}")
 
         return withContext(Dispatchers.IO) {
             val json = JSONObject()
@@ -1871,6 +1893,7 @@ object McpTools {
             raw.isNotBlank() -> {
                 val file = resolveProject(context, raw)
                 if (!file.exists() || !file.isFile) return errorResult("文件不存在: ${file.absolutePath}")
+                if (!isAllowed(context, file)) return errorResult("路径不在允许范围内: ${file.absolutePath}")
                 withContext(Dispatchers.IO) { runCatching { file.readText(Charsets.UTF_8) }.getOrNull() }
                     ?: return errorResult("读取失败: ${file.absolutePath}")
             }
@@ -2210,6 +2233,7 @@ object McpTools {
     private suspend fun listGlobalUtils(context: Context, args: JSONObject): JSONObject {
         val project = resolveProjectPath(context, args.optString("path", ""))
             ?: return errorResult("无法确定项目路径,请先在前台打开项目或传入 path")
+        if (!isAllowed(context, File(project))) return errorResult("路径不在允许范围内: $project")
         val settingsFile = File(project, "settings.json")
         if (!settingsFile.exists()) {
             return errorResult("项目缺少 settings.json: ${settingsFile.absolutePath}")

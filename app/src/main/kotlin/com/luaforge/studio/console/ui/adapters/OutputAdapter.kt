@@ -54,10 +54,23 @@ class OutputAdapter(
 
     @SuppressLint("NotifyDataSetChanged")
     fun submit(list: List<OutputEntry>) {
+        // 列表以旧列表为前缀(仅追加)时只通知插入区间:此前每来一条输出都整表重绑
+        val oldSize = items.size
+        var common = 0
+        val limit = minOf(oldSize, list.size)
+        while (common < limit && items[common].id == list[common].id) common++
+
         items.clear()
         items.addAll(list)
-        selected.retainAll(items.map { it.id })
-        notifyDataSetChanged()
+        val live = HashSet<Long>(items.size)
+        for (item in items) live.add(item.id)
+        selected.retainAll(live)
+
+        when {
+            common != oldSize -> notifyDataSetChanged()
+            list.size > oldSize -> notifyItemRangeInserted(oldSize, list.size - oldSize)
+            else -> Unit // 前缀全同且数量未增:无需刷新
+        }
     }
 
     fun setSelectionMode(on: Boolean) {
@@ -239,13 +252,21 @@ class OutputAdapter(
         holder.leftPath.text = e.relFile
         holder.typeRight.text = typeLine
 
-        // 重建 chips：标签 · 一级 lua 类型 · 线程（保留尾部 spacer + 时间）
-        holder.chipRow.removeViews(0, holder.chipRow.childCount - 2.coerceAtMost(holder.chipRow.childCount))
-        addChip(holder.chipRow, labelText(e.label))
-        if (e.luaTypes.isNotEmpty()) {
-            addChip(holder.chipRow, e.luaTypes.joinToString(" "))
+        // chips:标签 · 一级 lua 类型 · 线程(尾部 spacer + 时间固定不拆)
+        // 复用池只改文本:此前每次 bind 都新建 TextView + GradientDrawable,滚动时持续分配
+        val pool = holder.chipPool
+        holder.chipRow.removeViews(0, holder.chipRow.childCount - 2)
+        var slot = 0
+        fun chip(text: String) {
+            while (pool.size <= slot) pool.add(newChip(holder.chipRow))
+            val v = pool[slot]
+            v.text = text
+            holder.chipRow.addView(v, slot)
+            slot++
         }
-        addChip(holder.chipRow, if (e.isMainThread) "主线程" else "子线程")
+        chip(labelText(e.label))
+        if (e.luaTypes.isNotEmpty()) chip(e.luaTypes.joinToString(" "))
+        chip(if (e.isMainThread) "主线程" else "子线程")
         holder.time.text = e.fullTime
 
         val isSel = e.id in selected
@@ -270,11 +291,13 @@ class OutputAdapter(
         }
     }
 
-    /** 药丸形小 chip：primary 淡底全圆角，仿 Material Chip 但尺寸收敛。 */
-    private fun addChip(row: LinearLayout, text: String) {
+    /**
+     * 造一个药丸形小 chip(primary 淡底全圆角,仿 Material Chip 但尺寸收敛)。
+     * 仅创建实例、不挂载:由 VH.chipPool 复用,绑定期只改文本,避免滚动时重复分配。
+     */
+    private fun newChip(row: LinearLayout): TextView {
         val ctx = row.context
         val chip = TextView(ctx).apply {
-            this.text = text
             textSize = 10f
             setTextColor(ConsoleTheme.primary)
             setPadding(ctx.dp(6), ctx.dp(1), ctx.dp(6), ctx.dp(1))
@@ -287,7 +310,7 @@ class OutputAdapter(
             LinearLayout.LayoutParams.WRAP_CONTENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { rightMargin = ctx.dp(6) }
-        row.addView(chip, row.childCount - 2)
+        return chip
     }
 
     private fun toggleSelect(id: Long) {
@@ -311,5 +334,8 @@ class OutputAdapter(
         val divider: View,
         val back: GradientDrawable,
         val rippleForeground: android.graphics.drawable.Drawable?
-    ) : RecyclerView.ViewHolder(itemView)
+    ) : RecyclerView.ViewHolder(itemView) {
+        /** chip 复用池:绑定期只改文本,避免滚动时重复分配。 */
+        val chipPool = ArrayList<TextView>(3)
+    }
 }

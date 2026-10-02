@@ -1,9 +1,7 @@
 package com.luaforge.studio.console.core
 
 import com.luaforge.studio.console.intercept.ArgDumper
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import com.luaforge.studio.console.output.TimeFormat
 
 /**
  * 事件页模型:仅记录 Lua 侧显式定义且实际触发的 runFunc 条目
@@ -18,7 +16,7 @@ object EventTracker {
         val fileLabel: String,
         val isMainThread: Boolean
     ) {
-        fun timeLabel(): String = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US).format(Date(timeMs))
+        fun timeLabel(): String = TimeFormat.full(timeMs)
     }
 
     private const val MAX_EVENTS = 500

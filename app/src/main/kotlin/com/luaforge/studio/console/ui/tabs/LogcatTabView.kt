@@ -197,6 +197,19 @@ class LogcatTabView(context: Context) : LinearLayout(context) {
         workerHandler.removeCallbacks(pollRunnable)
     }
 
+    /**
+     * 释放本页:停止轮询并退出后台 HandlerThread。
+     *
+     * HandlerThread 在构造时启动且不会自行结束;面板每次打开都会新建本视图,
+     * 若只 removeCallbacks 而不 quit,每开一次面板即泄漏一条常驻线程。
+     * 本视图随面板一同丢弃,因此退出线程是安全的(不可再复用本实例)。
+     */
+    fun release() {
+        attached = false
+        workerHandler.removeCallbacksAndMessages(null)
+        worker.quitSafely()
+    }
+
     /** 主线程：追加后台读到的新块，仅插入可见行，避免整表刷新。 */
     private fun append(chunk: List<String>) {
         if (chunk.isEmpty()) {
@@ -206,7 +219,8 @@ class LogcatTabView(context: Context) : LinearLayout(context) {
         lines.addAll(chunk)
         if (lines.size > MAX_LINES) {
             // 超上限：整段重建（低频，仅超限点触发）
-            repeat(lines.size - MAX_LINES) { lines.removeAt(0) }
+            // 一次性清掉头部超量:逐个 removeAt(0) 是 O(n2),日志突发时会卡住主线程
+            lines.subList(0, lines.size - MAX_LINES).clear()
             rebuildAll()
         } else {
             val start = visible.size
