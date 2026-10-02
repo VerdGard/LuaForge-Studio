@@ -7,7 +7,7 @@ import android.os.Looper
 import com.androlua.FirewallGate
 import com.androlua.LuaActivity
 import com.androlua.LuaSessionHook
-import com.androlua.LuaState
+import com.luajava.LuaState
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.luaforge.studio.R
 import com.luaforge.studio.mcp.ActivityTracker

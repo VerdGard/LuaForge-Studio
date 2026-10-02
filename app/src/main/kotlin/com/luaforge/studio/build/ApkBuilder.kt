@@ -129,7 +129,7 @@ class ApkBuilder {
             buildType: BuildType = BuildType.PROJECT_DEFAULT,
             /** 项目 settings.json 的 encrypt：PROJECT_DEFAULT 构建类型下生效。 */
             encryptEnabled: Boolean = true,
-            /** 项目 settings.json 的 mergeDex：是否合并 libs/*.dex 至 classes*.dex。 */
+            /** 项目 settings.json 的 mergeDex：是否将 libs 目录下的 dex 合并至 classes 根。 */
             mergeDexEnabled: Boolean = true
         ): String {
             LogCatcher.i("ApkBuilder", "开始构建APK")
