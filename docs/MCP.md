@@ -49,7 +49,7 @@ curl -X POST http://127.0.0.1:8787/ -H 'Content-Type: application/json' \
 { "headers": { "Authorization": "Bearer <你的令牌>" } }
 ```
 
-## 4. 工具清单(44 个)
+## 4. 工具清单(50 个)
 
 参数均为可选,除非标 **必填**。带 `array` 的参数可传 JSON 数组,也可传换行/逗号分隔的字符串。
 
@@ -123,6 +123,32 @@ curl -X POST http://127.0.0.1:8787/ -H 'Content-Type: application/json' \
 | `get_runtime_errors` | 读取日志中的运行时错误 | `lines`(默认 50) |
 | `clear_logs` | 清空 `luaforge.log` | — |
 | `get_logs` | 读取应用日志末尾内容 | `lines`(默认 200) |
+
+### 调试控制台
+
+调试控制台(浮球 + 非全屏浮窗)在**调试运行(debugmode 项目)**期间捕获的运行现场,
+这里以只读工具暴露给 MCP:读到的是控制台浮窗展示的**同一份结构化数据**。
+
+| 工具 | 说明 | 参数 |
+| --- | --- | --- |
+| `console_status` | 控制台状态:会话(项目 / 文件 / 调试模式 / 已运行时长)、面板(浮球 / 浮窗 / 状态机)、当前文件与布局判定、捕获开关、缓冲与错误计数 | — |
+| `console_outputs` | 读取控制台「输出」缓冲:print / Lua 报错 / Toast / Snackbar 条目(含逐参 Lua 类型与真实类型),按文件缓冲分组 | `file`、`label`(print/error/toast/snackbar)、`limit`(默认 100)、`includeTypes`(默认 true) |
+| `console_events` | 读取控制台事件条目:Lua 侧显式定义且被实际调用的函数(生命周期 / 事件回调),含时间、参数摘要、所在文件 | `limit`(默认 100)、`func` |
+| `console_modules` | 读取控制台「环境」信息:Lua 版本 / 是否 JIT、按文件跟踪的 require 模块(Lua / 原生库,含函数签名)、bindClass 的 Java 类、`libs/*.dex` 的类与反射方法签名 | `file`(缺省用当前会话游标文件) |
+| `console_logcat` | 读取本调试会话的 logcat(与控制台「Logcat」页同源,`--pid` 限定本进程) | `lines`(默认 200)、`level`(V/D/I/W/E/F/S) |
+| `console_clear` | 清空控制台输出缓冲(不动 `luaforge.log`) | `scope`(`current` / `all`,默认 `all`) |
+
+与既有工具的**分工**区别于数据来源:
+
+- `get_logs` / `get_runtime_errors` 读 `luaforge.log` 的**文本尾部**
+- `console_outputs` / `console_events` / `console_modules` / `console_logcat` 读控制台的**结构化缓冲与捕获文件**
+
+注意事项:
+
+- 控制台仅在**调试运行**时激活:非 debugmode 项目、或用 `console_disable` 抑制的工具型启动(布局助手)**不产生**捕获数据
+- `console_outputs` 的 `file` 是**绝对路径**(缓冲键),可用 `console_status` 的 `currentFile` 取值
+- `console_*` 为只读 + 清空,不会改变控制台设置,也不驱动浮球 / 浮窗 UI(面板仍由使用者手动打开)
+- 无会话 / 无捕获时返回明确空态或错误,不抛异常
 
 ### 全局工具类(global_utils)
 

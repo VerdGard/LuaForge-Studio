@@ -19,6 +19,15 @@
     - 与项目自身调用**同一条路径**(运行实例主线程执行),`dp2px`、`statusBarHeight()` 这类需要真实 `Context` 的 UI 函数也生效(首个 `Context` / `Activity` 形参由框架自动注入)
     - 参数支持 JSON 数组或分隔字符串(自动推断 number / boolean / null),并按形参类型做个数与类型校验
     - 需要控件 / Java 对象 / Lua 回调的函数(如 `GlideUtil.loadImage` 需 `ImageView`、网络请求、Recycler 适配器)会明确拒绝并说明原因
+- MCP:适配调试控制台,新增 6 个只读工具,工具总数 44 → 50
+  - `console_status`:控制台状态(会话 / 面板 / 当前文件与布局 / 捕获开关 / 缓冲与错误计数)
+  - `console_outputs`:控制台「输出」缓冲(print / 报错 / Toast / Snackbar,含逐参 Lua 类型与真实类型)
+  - `console_events`:控制台事件条目(Lua 侧被实际调用的函数及参数摘要)
+  - `console_modules`:控制台「环境」信息(require 模块 / bindClass 类 / `libs/*.dex` 方法签名)
+  - `console_logcat`:本调试会话 logcat(与控制台「Logcat」页同源)
+  - `console_clear`:清空控制台输出缓冲(与 `clear_logs` 清 `luaforge.log` 互补)
+  - 与 MCP 既有 `get_logs` / `get_runtime_errors`(读 `luaforge.log` 文本)不同,这批工具读的是控制台的**结构化缓冲**,与浮窗展示同源
+  - 仅在**调试运行(debugmode 项目)**时产生数据;详见 [docs/MCP.md](docs/MCP.md)
 - 修复 `global_utils` 注册函数的小数入参调用失败
   - 之前 `LuaState.toJavaObject` 得到的 `Double` 直接传给 `Float` / `Int` 形参会抛 `argument type mismatch`(如 `dp2px(16.5)`)
   - 现在按形参类型做数值收窄,不再依赖 Java 的自动转换

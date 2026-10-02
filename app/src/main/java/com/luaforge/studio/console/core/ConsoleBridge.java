@@ -65,4 +65,10 @@ public interface ConsoleBridge {
 
     /** Lua 侧 bindClass 绑定 Java 类。 */
     default void onBindClass(String className, Class<?> clazz) {}
+
+    /** 浮球当前是否真实挂在窗口上(供 MCP 状态查询;非 UI 意图)。 */
+    default boolean isBallShowing() { return false; }
+
+    /** 浮窗面板当前是否真实显示。 */
+    default boolean isPanelShowing() { return false; }
 }

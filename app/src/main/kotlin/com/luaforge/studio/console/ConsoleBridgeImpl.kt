@@ -373,6 +373,12 @@ class ConsoleBridgeImpl(private val context: Context) : ConsoleBridge {
         ModuleTracker.recordBindClass(OutputManager.currentFile, className, clazz)
     }
 
+    /** 浮球真实显示态(OverlayController 持有窗口引用)。 */
+    override fun isBallShowing(): Boolean = overlay.isBallShowing()
+
+    /** 浮窗面板真实显示态。 */
+    override fun isPanelShowing(): Boolean = overlay.isSheetShowing()
+
     private fun appendEntry(
         label: String,
         primary: String,

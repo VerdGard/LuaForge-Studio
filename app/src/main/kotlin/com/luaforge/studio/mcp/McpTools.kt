@@ -491,6 +491,9 @@ object McpTools {
             )
         )
 
+        // 调试控制台适配层(只读 + 清空):与控制台浮窗同源的结构化现场
+        ConsoleTools.appendToolList(tools)
+
         return tools
     }
 
@@ -501,6 +504,8 @@ object McpTools {
     suspend fun call(context: Context, name: String, args: JSONObject): JSONObject {
         LogCatcher.i(TAG, "调用工具: $name")
         return try {
+            // 控制台适配层优先:命中 console_* 直接返回(未命中返回 null 继续下方判定)
+            ConsoleTools.call(context, name, args)?.let { return it }
             when (name) {
                 "list_projects" -> listProjects(context)
                 "list_files" -> listFiles(context, args)
