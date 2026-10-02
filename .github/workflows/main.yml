@@ -1,53 +1,42 @@
-name: Build APK
+name: Auto Build APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   workflow_dispatch:
-
-# softprops/action-gh-release 需要写入 contents 才能创建 Release;
-# 不声明时 GITHUB_TOKEN 默认为只读,该步骤会以 403 失败。
-permissions:
-  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
+
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
         cache: gradle
-        
+
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
-      
-    - name: Build with Gradle
-      run: ./gradlew assembleRelease
-      
-    - name: Upload APK to Artifacts
+
+    - name: Decode keystore
+      run: echo "${{ secrets.SIGNING_KEY_BASE64 }}" | base64 -d > ${{ runner.temp }}/star.jks
+
+    - name: Build Signed Release APK
+      run: |
+        ./gradlew assembleRelease \
+          -Pandroid.injected.signing.store.file=${{ runner.temp }}/star.jks \
+          -Pandroid.injected.signing.store.password=${{ secrets.SIGNING_STORE_PASSWORD }} \
+          -Pandroid.injected.signing.key.alias=${{ secrets.SIGNING_KEY_ALIAS }} \
+          -Pandroid.injected.signing.key.password=${{ secrets.SIGNING_KEY_PASSWORD }}
+
+    - name: Upload Signed APK
       uses: actions/upload-artifact@v4
       with:
-        name: release-apk
+        name: signed-apk
         path: app/build/outputs/apk/release/*.apk
-        
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      with:
-        files: app/build/outputs/apk/release/*.apk
-        tag_name: v${{ github.run_number }}
-        name: LuaForge Studio Build ${{ github.run_number }}
-        body: |
-          **Build**: #${{ github.run_number }}
-          **Commit**: ${{ github.event.head_commit.message }}
-          **Author**: @${{ github.event.head_commit.author.username }}
-        generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        retention-days: 1
