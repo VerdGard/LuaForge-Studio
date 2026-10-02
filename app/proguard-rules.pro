@@ -159,3 +159,10 @@
 -keepattributes Exceptions
 -keepattributes InnerClasses
 -keepattributes EnclosingMethod
+# 调试控制台:core(产物) 经 ConsoleBridgeRef 反射这些 IDE 侧类的
+# 类名/方法/字段名,必须保留名称与成员(否则 release 混淆后反射失败、控制台静默失效)。
+-keep class com.luaforge.studio.console.core.ConsoleRegistry { *; }
+-keep class com.luaforge.studio.console.core.ConsoleBridge { *; }
+-keep class com.luaforge.studio.console.core.SessionInfo { *; }
+-keep class com.luaforge.studio.console.core.MethodCallResult { *; }
+-keepclassmembers enum com.luaforge.studio.console.core.MethodCallResult$Status { *; }

@@ -235,6 +235,12 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- 调试控制台:启动期注册桥实现(早于 Application.onCreate) -->
+        <provider
+            android:name="com.luaforge.studio.console.ConsoleInitializer"
+            android:authorities="${applicationId}.consoleinit"
+            android:exported="false" />
+
         <receiver
             android:name="androidx.profileinstaller.ProfileInstallReceiver"
             android:permission="android.permission.DUMP"

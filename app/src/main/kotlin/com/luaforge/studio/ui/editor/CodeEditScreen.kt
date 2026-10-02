@@ -460,6 +460,8 @@ fun CodeEditScreen(
                 "third_party_widget_support",
                 SettingsManager.currentSettings.thirdPartyWidgetSupport
             )
+            // 工具型启动:布局助手不进调试控制台会话(否则浮球/Logcat 打断布局预览)
+            putExtra("console_disable", true)
         }
 
         layoutHelperLauncher.launch(intent)

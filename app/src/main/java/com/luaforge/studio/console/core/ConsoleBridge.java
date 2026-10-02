@@ -1,0 +1,68 @@
+package com.luaforge.studio.console.core;
+
+import android.view.KeyEvent;
+
+import java.util.Map;
+
+/**
+ * 调试控制台桥接口(IDE 侧实现)。
+ *
+ * <p>core 侧仅在存在已注册实现时转发事件;打包产物(core-apk)不含实现,
+ * 所有钩点在 {@link ConsoleRegistry#get()} 为 null 时短路,零行为变化。
+ *
+ * <p>全部方法为 default:实现方可只覆写关心的回调。
+ */
+public interface ConsoleBridge {
+
+    /** 调试会话开始(debugmode 项目 initLua 之后、doFile 之前)。 */
+    default void onSessionStart(SessionInfo info) {}
+
+    /** 调试会话中某个页面(Activity)销毁。 */
+    default void onSessionEnd(SessionInfo info) {}
+
+    /** Lua 侧 print 输出(含每个参数的一级 Lua 类型与原始值)。 */
+    default void onPrint(String text, int[] luaTypes, Object[] rawArgs) {}
+
+    /**
+     * Lua 侧调用 Toast.makeText / Snackbar.make 且已返回实例(luajava 调用层观察)。
+     * 仅为捕获登记,不阻断原显示;是否真正 show() 由 onPopupShown 配对后标注。
+     *
+     * @param snackbar true = Snackbar,false = Toast
+     */
+    default void onPopupCaptured(Object instance, String text, boolean snackbar) {}
+
+    /** Lua 侧对已登记的 Toast/Snackbar 实例调用 show()(仅标注,不阻断原显示)。 */
+    default void onPopupShown(Object instance) {}
+
+    /** Lua 脚本报错(LuaActivity.sendError)。 */
+    default void onError(String title, String message) {}
+
+    /**
+     * Lua 侧调用 Java 对象方法的拦截点(newActivity / setContentView / runFunc /
+     * Toast.makeText / Snackbar.make 等)。
+     *
+     * @return ALLOW 放行;VETO 阻断(Lua 侧得到 nil);REPLACE 以 replaceValue 替代返回值
+     */
+    default MethodCallResult onMethodCall(Object receiver, String methodName, Object[] args,
+                                          long luaState) {
+        return MethodCallResult.ALLOW;
+    }
+
+    /** 音量键等按键事件;返回 true 表示消费。 */
+    default boolean onKeyDown(int keyCode, KeyEvent event) {
+        return false;
+    }
+
+    /** Lua 侧显式定义的函数实际被调用(事件/生命周期回调)。 */
+    default void onEvent(String funcName, Object[] args) {}
+
+    /**
+     * Lua 侧 require 模块(模块加载后,附 C/Lua 库函数名 -> debug.getinfo 参数个数)。
+     *
+     * @param nativeModule true = 全部函数来自 [C](原生库);false = 含 Lua 函数(自定义 lua 模块)
+     */
+    default void onRequire(String moduleName, Map<String, Integer> funcParams, boolean nativeModule) {}
+
+    /** Lua 侧 bindClass 绑定 Java 类。 */
+    default void onBindClass(String className, Class<?> clazz) {}
+}
