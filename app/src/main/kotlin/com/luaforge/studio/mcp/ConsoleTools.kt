@@ -230,7 +230,7 @@ object ConsoleTools {
         for (b in OutputManager.buffers()) {
             if (fileFilter != null && b.fileKey != fileFilter) continue
             val all = b.all().filter { labels.isEmpty() || it.label in labels }
-            total += all.size()
+            total += all.size
             val tail = if (all.size > limit) all.subList(all.size - limit, all.size) else all
             returned += tail.size
             val entries = JSONArray()
@@ -239,7 +239,7 @@ object ConsoleTools {
                 JSONObject()
                     .put("file", b.fileKey)
                     .put("returned", tail.size)
-                    .put("total", all.size())
+                    .put("total", all.size)
                     .put("entries", entries)
             )
         }
