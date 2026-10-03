@@ -10,6 +10,7 @@ import android.os.Looper
 import android.view.Display
 import android.view.Surface
 import android.view.View
+import android.view.WindowManager
 import android.widget.LinearLayout
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.luaforge.studio.R
@@ -60,6 +61,9 @@ class ConsoleSheet(
         setContentView(root)
 
         // 宽度收到屏宽 92% 并居中:面板成悬浮卡片,左右露出宿主界面(不再铺满全屏)
+        // 去掉窗口遮罩:悬浮卡片背后的黑色半透明背景消失,宿主界面保持原亮度
+        window?.setDimAmount(0f)
+        window?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         getBehavior()?.setMaxWidth((ctx.resources.displayMetrics.widthPixels * 0.92f).toInt())
         // 底部留间距 + 去掉 Material 默认 sheet 背景(不透明、仅上圆角),
         // 否则会盖住 root 的四角圆角卡片外观。

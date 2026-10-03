@@ -38,7 +38,7 @@ import com.luaforge.studio.console.core.ConsoleRegistry
 import java.io.File
 import java.io.FileOutputStream
 
-/** 输出页：当前文件缓冲列表 + 多选复制/导出/清空 + 元数据开关。 */
+/** 输出页：缓冲列表 + 多选复制/导出/清空 + 元数据开关(「当前文件」行已上移至面板标题下方)。 */
 class OutputTabView(context: Context) : LinearLayout(context), OutputManager.Listener {
 
     private val settings = ConsoleSettings(context)
@@ -46,23 +46,12 @@ class OutputTabView(context: Context) : LinearLayout(context), OutputManager.Lis
     /** 仅事件模式：列表只显示 runFunc 事件流（原「事件」页合并入输出页）。 */
     private var onlyEvents = false
 
-    private val titleView = TextView(context)
     private val selBar = LinearLayout(context)
     private val selCount = TextView(context)
 
     init {
         orientation = VERTICAL
         setBackgroundColor(ConsoleTheme.surface)
-
-        // 当前文件标题：置顶固定，路径过长时中间省略（保留前缀与文件名尾部）
-        titleView.apply {
-            textSize = 13f
-            setTextColor(ConsoleTheme.onSurfaceVariant)
-            setPadding(context.dp(12), context.dp(4), context.dp(12), context.dp(2))
-            setSingleLine(true)
-            ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
-        }
-        addView(titleView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
         // 常规操作栏（置顶居左）：仅事件（可选中 chip）+ 清空（trash-can 图标）；无文本开关
         val toolBar = LinearLayout(context).apply {
@@ -189,7 +178,6 @@ class OutputTabView(context: Context) : LinearLayout(context), OutputManager.Lis
 
     @SuppressLint("NotifyDataSetChanged")
     private fun refresh() {
-        titleView.text = "当前文件：${OutputManager.currentFile.ifBlank { "(无)" }}"
         adapter.submit(
             if (onlyEvents) {
                 // 事件流：runFunc 触发记录转输出条目（label=event → chip「事件」；funcName 独立药丸 chip + 「事件监听触发」正文）

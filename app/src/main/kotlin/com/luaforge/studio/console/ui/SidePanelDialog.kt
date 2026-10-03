@@ -15,6 +15,7 @@ import android.view.Display
 import android.view.Gravity
 import android.view.Surface
 import android.view.ViewGroup
+import android.view.WindowManager
 import com.luaforge.studio.R
 
 /**
@@ -55,7 +56,9 @@ class SidePanelDialog(
         window?.setLayout(targetWidthPx, ViewGroup.LayoutParams.MATCH_PARENT)
         window?.setGravity(Gravity.RIGHT or Gravity.TOP)
         window?.setWindowAnimations(R.style.SidePanelDialogAnim)
-        window?.setDimAmount(0.3f)
+        // 去掉窗口遮罩:与竖屏悬浮卡片一致,面板背后不再压黑
+        window?.setDimAmount(0f)
+        window?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         // 普通 Dialog 主题默认背景带圆角+描边+系统 inset 会在右/上/下留缝,
         // 改为透明背景、不避让系统窗口(全高贴缘),surface+圆角完全交给面板自绘。
         window?.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))

@@ -118,7 +118,7 @@ class SettingsTabView(context: Context) : ScrollView(context) {
         snackbarCaptureSwitch?.isChecked = settings.captureSnackbar
     }
 
-    /** 折叠卡内设置项行：左侧文本 + 右侧开关。 */
+    /** 折叠卡内设置项行:上行 label + 右开关,下行整宽描述(描述换行不再挤压开关)。 */
     private fun switchRow(
         label: String,
         desc: String,
@@ -131,32 +131,42 @@ class SettingsTabView(context: Context) : ScrollView(context) {
             setOnCheckedChangeListener { _, checked -> onChange(checked) }
         }
         val row = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(context.dp(8), context.dp(10), context.dp(8), context.dp(10))
+            orientation = LinearLayout.VERTICAL
+            setPadding(context.dp(12), context.dp(10), context.dp(12), context.dp(10))
             setOnClickListener { toggle.toggle() } // 点行等价于点开关
             addView(
                 LinearLayout(context).apply {
-                    orientation = LinearLayout.VERTICAL
-                    addView(TextView(context).apply {
-                        text = label
-                        textSize = 14f
-                        setTextColor(ConsoleTheme.onSurface)
-                    })
-                    addView(TextView(context).apply {
-                        text = desc
-                        textSize = 11f
-                        setTextColor(ConsoleTheme.onSurfaceVariant)
-                    })
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(
+                        labelView(label),
+                        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    )
+                    addView(
+                        toggle,
+                        LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { marginStart = context.dp(12) }
+                    )
                 },
-                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
             )
-            addView(toggle)
+            addView(
+                descView(desc),
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
         }
-        return row to toggle // 行由调用方 addBody 进卡片，开关随行带回显
+        return row to toggle // 行由调用方 addBody 进卡片,开关随行带回显
     }
 
-    /** 折叠卡内设置项行：左侧文本 + 右侧文本值（点击切换）。返回 (row, valueView)。 */
+    /** 折叠卡内设置项行:上行 label + 右文本值(点击切换),下行整宽描述。返回 (row, valueView)。 */
     private fun actionRow(
         label: String,
         desc: String,
@@ -168,30 +178,63 @@ class SettingsTabView(context: Context) : ScrollView(context) {
             gravity = Gravity.CENTER_VERTICAL
         }
         val row = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(context.dp(8), context.dp(10), context.dp(8), context.dp(10))
+            orientation = LinearLayout.VERTICAL
+            setPadding(context.dp(12), context.dp(10), context.dp(12), context.dp(10))
             setOnClickListener { onToggle() }
             addView(
                 LinearLayout(context).apply {
-                    orientation = LinearLayout.VERTICAL
-                    addView(TextView(context).apply {
-                        text = label
-                        textSize = 14f
-                        setTextColor(ConsoleTheme.onSurface)
-                    })
-                    addView(TextView(context).apply {
-                        text = desc
-                        textSize = 11f
-                        setTextColor(ConsoleTheme.onSurfaceVariant)
-                    })
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    addView(
+                        labelView(label),
+                        LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    )
+                    addView(
+                        value,
+                        LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        ).apply { marginStart = context.dp(12) }
+                    )
                 },
-                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
             )
-            addView(value)
+            addView(
+                descView(desc),
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
         }
         return row to value
     }
+
+    /** 行首 label:单行,过长省略号截断,不与右侧控件抢宽度。 */
+    private fun labelView(text: String): TextView =
+        TextView(context).apply {
+            this.text = text
+            textSize = 14f
+            setTextColor(ConsoleTheme.onSurface)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+
+    /** 行下描述:整宽换行,最多 3 行,行距略放宽避免拥挤。 */
+    private fun descView(text: String): TextView =
+        TextView(context).apply {
+            this.text = text
+            textSize = 11.5f
+            setTextColor(ConsoleTheme.onSurfaceVariant)
+            maxLines = 3
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            lineSpacingMultiplier = 1.15f
+            setPadding(0, context.dp(2), 0, 0)
+        }
+
 
     private fun divider(): View = View(context).apply {
         setBackgroundColor(ConsoleTheme.onSurfaceVariant and 0x00FFFFFF or 0x1F000000)

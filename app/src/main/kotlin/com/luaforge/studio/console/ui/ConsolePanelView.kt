@@ -3,10 +3,13 @@ package com.luaforge.studio.console.ui
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
+import android.text.TextUtils
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.TextView
 import com.luaforge.studio.console.core.FileStateTracker
+import com.luaforge.studio.console.output.OutputManager
 import com.luaforge.studio.console.ui.tabs.DebugTabView
 import com.luaforge.studio.console.ui.tabs.EnvTabView
 import com.luaforge.studio.console.ui.tabs.LogcatTabView
@@ -15,7 +18,7 @@ import com.luaforge.studio.console.ui.tabs.SettingsTabView
 import com.luaforge.studio.console.ui.tabs.StructTabView
 
 /**
- * 控制台面板的公共内容:头部(标题/副标题/图标按钮)+ 左侧竖排导航 + 右侧内容区。
+ * 控制台面板的公共内容:头部(标题 + 图标按钮) + 当前文件行 + 左侧竖排导航 + 右侧内容区。
  *
  * 竖屏 [ConsoleSheet](BottomSheet)与横屏 [SidePanelDialog](右侧栏)共用本视图,
  * 两形态布局与页签生命周期完全一致,不再各自维护一份 cachedTabs/showTab/buildTab。
@@ -29,6 +32,7 @@ class ConsolePanelView(
     private val contentHost = FrameLayout(context)
     private val cachedTabs = HashMap<Int, View>()
     private var lastShownPos = -1
+    private val fileView = TextView(context)
 
     private val nav = ConsoleNavColumn(context, TITLES) { showTab(it) }
 
@@ -40,16 +44,33 @@ class ConsolePanelView(
             ConsoleChrome.header(
                 ctx = context,
                 title = "调试控制台",
-                subtitle = FileStateTracker.relativePath.ifBlank { null },
                 actions = actions
             )
         )
 
-        // 分隔线:头部与「导航+内容」之间
+        // 分隔线:头部与「当前文件」行之间
         addView(
             ConsoleChrome.divider(context),
             LayoutParams(LayoutParams.MATCH_PARENT, context.dp(1))
         )
+
+        // 当前文件:原在面板副标题/输出页顶部,现统一置于标题下方单行展示
+        fileView.apply {
+            textSize = 12f
+            setTextColor(ConsoleTheme.onSurfaceVariant)
+            setPadding(context.dp(14), context.dp(5), context.dp(14), context.dp(5))
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.MIDDLE
+        }
+        addView(fileView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
+        // 分隔线:「当前文件」行与「导航+内容」之间
+        addView(
+            ConsoleChrome.divider(context),
+            LayoutParams(LayoutParams.MATCH_PARENT, context.dp(1))
+        )
+
+        refreshCurrentFile()
 
         val body = LinearLayout(context).apply { orientation = HORIZONTAL }
         body.addView(nav, LayoutParams(context.dp(ConsoleNavColumn.WIDTH_DP), LayoutParams.MATCH_PARENT))
@@ -60,6 +81,13 @@ class ConsolePanelView(
         )
         body.addView(contentHost, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
         addView(body, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+    }
+
+    /** 刷新「当前文件」行:相对路径优先,缺失回退绝对路径,再缺失显示 (无)。 */
+    private fun refreshCurrentFile() {
+        val rel = FileStateTracker.relativePath
+        val shown = rel.ifBlank { OutputManager.currentFile }
+        fileView.text = "当前文件：" + shown.ifBlank { "(无)" }
     }
 
     /**
@@ -86,6 +114,7 @@ class ConsolePanelView(
     private fun showTab(pos: Int) {
         if (pos !in TITLES.indices) return
         persistedTab = pos
+        refreshCurrentFile()
         (cachedTabs[lastShownPos] as? LogcatTabView)?.stopPolling()
         val changed = lastShownPos != pos
         lastShownPos = pos

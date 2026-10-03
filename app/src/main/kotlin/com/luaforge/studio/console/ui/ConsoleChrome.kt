@@ -12,7 +12,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
- * 控制台浮窗公共外观:头部(标题 + 当前文件副标题 + 图标按钮)。
+ * 控制台浮窗公共外观:头部(主色竖条 + 标题 + 图标按钮组)。
  * 竖屏 BottomSheet 与横屏侧栏共用,保证两形态视觉一致。
  *
  * 原顶部页签栏已移除:页签改由左侧竖排导航 [ConsoleNavColumn] 承担。
@@ -20,13 +20,12 @@ import android.widget.TextView
 object ConsoleChrome {
 
     /**
-     * 头部:主色竖条 + 标题(+ 副标题)+ 右侧图标按钮组。
-     * @param subtitle 副标题(当前文件相对路径),空则只显标题。
+     * 头部:主色竖条 + 标题 + 右侧图标按钮组。
+     * 当前文件改由 ConsolePanelView 在头部下方单行展示,不再占用头部副标题位置。
      */
     fun header(
         ctx: Context,
         title: String,
-        subtitle: String?,
         actions: List<Pair<Int, () -> Unit>>
     ): LinearLayout {
         val row = LinearLayout(ctx).apply {
@@ -46,35 +45,14 @@ object ConsoleChrome {
             LinearLayout.LayoutParams(ctx.dp(3), ctx.dp(20)).apply { marginEnd = ctx.dp(10) }
         )
 
-        val texts = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        texts.addView(
+        row.addView(
             TextView(ctx).apply {
                 text = title
                 textSize = 17f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(ConsoleTheme.onSurface)
                 maxLines = 1
-            }
-        )
-        if (!subtitle.isNullOrBlank()) {
-            texts.addView(
-                TextView(ctx).apply {
-                    text = subtitle
-                    textSize = 11f
-                    setTextColor(ConsoleTheme.onSurfaceVariant)
-                    maxLines = 1
-                    ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
-                },
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = ctx.dp(2) }
-            )
-        }
-        row.addView(
-            texts,
+            },
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         )
         for ((iconRes, action) in actions) {

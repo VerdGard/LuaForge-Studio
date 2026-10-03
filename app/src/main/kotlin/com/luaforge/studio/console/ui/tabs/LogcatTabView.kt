@@ -1,13 +1,17 @@
 package com.luaforge.studio.console.ui.tabs
 
 import android.content.Context
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.RippleDrawable
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -17,18 +21,21 @@ import com.luaforge.studio.console.ui.ConsoleTheme
 import com.luaforge.studio.console.ui.dp
 
 /**
- * Logcat 页：7 种日志等级（V/D/I/W/E/F/S）各自横向开关过滤 + RecyclerView 虚拟化渲染。
- * 文件分块懒加载读取移至后台线程（readChunk 是逐字节 RandomAccessFile IO），
- * 读到增量后主线程只 append 可见行，避免整表 notifyDataSetChanged → 消除打开/轮询卡顿。
+ * Logcat 页:日志等级(V/D/I/W/E/F/S)改用 Tab 标签,选中即过滤;RecyclerView 虚拟化渲染。
+ *
+ * 手机适配:「日志输出」标题独占一行,等级 Tab 置于下一行并放进隐藏滑条的横向滚动容器,
+ * 窄屏可横滑看全等级;日志区隐藏纵横滑条。日志文件分块懒加载读取移至后台线程,
+ * 读到增量后主线程只 append 可见行,避免整表 notifyDataSetChanged 造成卡顿。
  */
 class LogcatTabView(context: Context) : LinearLayout(context) {
 
     private val lines = ArrayList<String>()
     private val visible = ArrayList<String>()
-    /** Android Log 等级按序 V D I W E F S，index 对应；true=显示（默认全开）。 */
+    /** Android Log 等级按序 V D I W E F S,index 对应;true=显示(默认全开)。 */
     private val levelEnabled = BooleanArray(LEVELS.size) { true }
 
-    private val toggles = ArrayList<TextView>(LEVELS.size)
+    private val tabLabels = ArrayList<TextView>(LEVELS.size)
+    private val tabBars = ArrayList<View>(LEVELS.size)
 
     private val worker = HandlerThread("logcat-poll").apply { start() }
     private val workerHandler = Handler(worker.looper)
@@ -40,7 +47,7 @@ class LogcatTabView(context: Context) : LinearLayout(context) {
 
     private val pollRunnable = object : Runnable {
         override fun run() {
-            if (!attached) return // 页已离屏：停止轮询
+            if (!attached) return // 页已离屏:停止轮询
             val store = LogcatManager.store
             if (store == null) {
                 mainHandler.post { updateStatus("(未记录)") }
@@ -69,9 +76,9 @@ class LogcatTabView(context: Context) : LinearLayout(context) {
                 setTextColor(ConsoleTheme.onSurfaceVariant)
                 setLineSpacing(0f, 1.05f)
                 isClickable = true
-                // 行波纹：主题 onSurface 低透明 ripple，随主题色
-                background = android.graphics.drawable.RippleDrawable(
-                    android.content.res.ColorStateList.valueOf(
+                // 行波纹:主题 onSurface 低透明 ripple,随主题色
+                background = RippleDrawable(
+                    ColorStateList.valueOf(
                         ConsoleTheme.onSurface and 0x00FFFFFF or 0x1AFFFFFF
                     ),
                     null,
@@ -94,49 +101,61 @@ class LogcatTabView(context: Context) : LinearLayout(context) {
     private val recycler = RecyclerView(context).apply {
         layoutManager = LinearLayoutManager(context)
         adapter = this@LogcatTabView.adapter
+        // 隐藏纵向滑条:内容区更干净,仍可滚动
+        isVerticalScrollBarEnabled = false
     }
 
     init {
         orientation = VERTICAL
-        setPadding(context.dp(10), context.dp(6), context.dp(10), context.dp(6))
+        setPadding(context.dp(10), context.dp(8), context.dp(10), context.dp(6))
         setBackgroundColor(ConsoleTheme.surface)
 
-        // 「日志输出：」标题 + 7 个等级开关同一行，开关居右
-        val headerRow = LinearLayout(context).apply {
-            orientation = HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, context.dp(4))
-        }
-        headerRow.addView(
+        // 「日志输出」标题独占一行(原先与等级开关挤同一行,窄屏布局混乱)
+        addView(
             TextView(context).apply {
-                text = "日志输出："
-                textSize = 13f
-                setTextColor(ConsoleTheme.onSurface)
-            },
-            LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
-        )
-        for (i in LEVELS.indices) {
-            val tb = TextView(context).apply {
-                text = LEVELS[i].toString()
-                textSize = 11f
+                text = "日志输出"
+                textSize = 12f
                 typeface = Typeface.DEFAULT_BOLD
-                gravity = Gravity.CENTER
-                textAlignment = View.TEXT_ALIGNMENT_CENTER
-                setOnClickListener { onToggle(i) }
+                setTextColor(ConsoleTheme.onSurfaceVariant)
+                setPadding(0, 0, 0, context.dp(6))
             }
-            // 固定正方形容器，格间 4dp
-            headerRow.addView(
-                tb, LayoutParams(context.dp(26), context.dp(26)).apply { marginStart = context.dp(4) }
+        )
+
+        // 等级 Tab:V/D/I/W/E/F/S 横向排布,宽于容器时横滑;滑条隐藏
+        val strip = LinearLayout(context).apply { orientation = HORIZONTAL }
+        for (i in LEVELS.indices) {
+            strip.addView(
+                buildTab(i),
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.MATCH_PARENT
+                )
             )
-            styleToggle(tb, i)
-            toggles.add(tb)
         }
-        addView(headerRow)
+        val tabScroll = HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(
+                strip,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+        }
+        addView(tabScroll, LayoutParams(LayoutParams.MATCH_PARENT, context.dp(TAB_HEIGHT_DP)))
+
+        // Tab 区与日志区之间的 1dp 分界
+        addView(
+            View(context).apply { setBackgroundColor(dividerColor()) },
+            LayoutParams(LayoutParams.MATCH_PARENT, context.dp(1))
+        )
 
         status.apply {
             textSize = 11f
             setTextColor(ConsoleTheme.onSurfaceVariant)
-            setPadding(0, context.dp(2), 0, context.dp(6))
+            setPadding(0, context.dp(6), 0, context.dp(4))
         }
         addView(status)
 
@@ -163,22 +182,50 @@ class LogcatTabView(context: Context) : LinearLayout(context) {
         super.onDetachedFromWindow()
     }
 
-    /** 等级开关点击：翻转 + 重跑过滤。 */
+    /** 单个等级 Tab:文字(上) + 2dp 指示条(下);点击切换该等级过滤。 */
+    private fun buildTab(i: Int): LinearLayout {
+        val label = TextView(context).apply {
+            text = LEVELS[i].toString()
+            textSize = 13f
+            gravity = Gravity.CENTER
+            textAlignment = View.TEXT_ALIGNMENT_CENTER
+            setPadding(context.dp(18), 0, context.dp(18), 0)
+        }
+        val bar = View(context)
+        val tab = LinearLayout(context).apply {
+            orientation = VERTICAL
+            isClickable = true
+            isFocusable = true
+            // 波纹用 foreground:background 留空,避免 styleTab 改背景时冲掉波纹
+            foreground = RippleDrawable(
+                ColorStateList.valueOf(ConsoleTheme.primary and 0x00FFFFFF or 0x1F000000),
+                null,
+                null
+            )
+            setOnClickListener { onToggle(i) }
+            addView(label, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(bar, LayoutParams(LayoutParams.MATCH_PARENT, context.dp(2)))
+        }
+        tabLabels.add(label)
+        tabBars.add(bar)
+        styleTab(i)
+        return tab
+    }
+
+    /** 等级开关点击:翻转 + 重跑过滤。 */
     private fun onToggle(i: Int) {
         levelEnabled[i] = !levelEnabled[i]
-        styleToggle(toggles[i], i)
+        styleTab(i)
         rebuildAll()
         if (!recycler.canScrollVertically(1)) recycler.scrollToPosition(adapter.itemCount - 1)
     }
 
-    /** 开关外观：选中 accentContainer 底 + onSurface 字；未选 surfaceContainer 底 + onSurfaceVariant 字。 */
-    private fun styleToggle(tb: TextView, i: Int) {
+    /** Tab 外观:选中 primary 加粗 + 指示条显色;未选 onSurfaceVariant + 指示条透明。 */
+    private fun styleTab(i: Int) {
         val on = levelEnabled[i]
-        tb.background = android.graphics.drawable.GradientDrawable().apply {
-            setColor(if (on) ConsoleTheme.accentContainer else ConsoleTheme.surfaceContainer)
-            cornerRadius = ConsoleTheme.cornerRadiusPx
-        }
-        tb.setTextColor(if (on) ConsoleTheme.onSurface else ConsoleTheme.onSurfaceVariant)
+        tabLabels[i].setTextColor(if (on) ConsoleTheme.primary else ConsoleTheme.onSurfaceVariant)
+        tabLabels[i].typeface = if (on) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+        tabBars[i].setBackgroundColor(if (on) ConsoleTheme.primary else Color.TRANSPARENT)
     }
 
     /** 页签展示时刷新并启动轮询。 */
@@ -210,7 +257,7 @@ class LogcatTabView(context: Context) : LinearLayout(context) {
         worker.quitSafely()
     }
 
-    /** 主线程：追加后台读到的新块，仅插入可见行，避免整表刷新。 */
+    /** 主线程:追加后台读到的新块,仅插入可见行,避免整表刷新。 */
     private fun append(chunk: List<String>) {
         if (chunk.isEmpty()) {
             updateStatus(null)
@@ -218,7 +265,7 @@ class LogcatTabView(context: Context) : LinearLayout(context) {
         }
         lines.addAll(chunk)
         if (lines.size > MAX_LINES) {
-            // 超上限：整段重建（低频，仅超限点触发）
+            // 超上限:整段重建(低频,仅超限点触发)
             // 一次性清掉头部超量:逐个 removeAt(0) 是 O(n2),日志突发时会卡住主线程
             lines.subList(0, lines.size - MAX_LINES).clear()
             rebuildAll()
@@ -233,10 +280,10 @@ class LogcatTabView(context: Context) : LinearLayout(context) {
         updateStatus(null)
     }
 
-    /** 行点击仅触发波纹反馈，暂不承载具体动作。 */
+    /** 行点击仅触发波纹反馈,暂不承载具体动作。 */
     private fun onRowClick(row: TextView) = Unit
 
-    /** 等级过滤变化：全量重建可见集。 */
+    /** 等级过滤变化:全量重建可见集。 */
     private fun rebuildAll() {
         visible.clear()
         for (l in lines) if (passes(l)) visible.add(l)
@@ -244,9 +291,9 @@ class LogcatTabView(context: Context) : LinearLayout(context) {
         emptyHint.visibility = if (visible.isEmpty()) View.VISIBLE else View.GONE
     }
 
-    /** 等级过滤：threadtime 格式 `time pid tid 级 标签: 消息`，取 pid/tid 后的单字母等级。 */
+    /** 等级过滤:threadtime 格式 `time pid tid 级 标签: 消息`,取 pid/tid 后的单字母等级。 */
     private fun passes(line: String): Boolean {
-        val m = levelRegex.find(line) ?: return true // 非标准行（如二进制流碎片）恒显示
+        val m = levelRegex.find(line) ?: return true // 非标准行(如二进制流碎片)恒显示
         val idx = LEVELS.indexOf(m.groupValues[1][0])
         return idx < 0 || levelEnabled[idx]
     }
@@ -256,11 +303,17 @@ class LogcatTabView(context: Context) : LinearLayout(context) {
         emptyHint.visibility = if (visible.isEmpty()) View.VISIBLE else View.GONE
     }
 
+    /** Tab 区/日志区的细分隔线颜色。 */
+    private fun dividerColor(): Int =
+        ConsoleTheme.onSurface and 0x00FFFFFF or 0x1A000000
+
     companion object {
-        /** Android Log 优先级字母：V=Verbose, D=Debug, I=Info, W=Warn, E=Error, F=Fatal, S=Silent。 */
+        /** Android Log 优先级字母:V=Verbose, D=Debug, I=Info, W=Warn, E=Error, F=Fatal, S=Silent。 */
         private val LEVELS = charArrayOf('V', 'D', 'I', 'W', 'E', 'F', 'S')
         private const val POLL_MS = 1000L
         private const val CHUNK_LINES = 300
         private const val MAX_LINES = 5000
+        /** Tab 行高度(dp):文字 + 2dp 指示条。 */
+        private const val TAB_HEIGHT_DP = 40
     }
 }
