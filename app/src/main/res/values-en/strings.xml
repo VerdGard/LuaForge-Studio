@@ -476,6 +476,7 @@
     <string name="global_util_ui">UiUtil</string>
     <string name="global_util_recycler">RecyclerAdapterUtil</string>
     <string name="global_util_theme">ThemeUtil</string>
+    <string name="global_util_mem">MemUtil</string>
 
     <!-- SDK version descriptions -->
     <string name="sdk_21">API 21 (Lollipop, Android 5.0)</string>
