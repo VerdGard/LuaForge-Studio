@@ -15,7 +15,8 @@ import kotlin.math.abs
 
 /**
  * 悬浮按钮:自适应长方形胶囊——高度固定,宽度随文字与未读计数芯片伸缩(WRAP_CONTENT 自测量)。
- * 颜色遵循 LuaForge-Studio 主题(ConsoleTheme.primary);崩溃转红,未读 Lua 错误以内嵌计数芯片呈现。
+ * 颜色遵循 LuaForge-Studio 主题(正常 primary / 崩溃 error),前景取 onPrimary/onError;
+ * 未读 Lua 错误以内嵌计数芯片呈现。全部随「主题与外观」自适配,无硬编码色。
  * 支持拖动与点击(位移阈值内视为点击)。
  */
 @SuppressLint("ViewConstructor")
@@ -88,15 +89,17 @@ class ConsoleBallView(context: Context, private val onTap: () -> Unit) : View(co
 
     /** 主题/状态取色:胶囊竖向渐变 + 文字/圆点/芯片配色。 */
     private fun applyColors() {
-        val base = if (crashed) COLOR_CRASH else ConsoleTheme.primary
+        val base = if (crashed) ConsoleTheme.error else ConsoleTheme.primary
+        // 前景随底色:浅色主色配 onPrimary(深色字),深色主色配 onPrimary(浅色字),不再恒用白字
+        val fg = if (crashed) ConsoleTheme.onError else ConsoleTheme.onPrimary
         val h = (if (height > 0) height else capsuleHeight).toFloat()
         capsule.shader = LinearGradient(
             0f, 0f, 0f, h,
             lighten(base, 0.16f), darken(base, 0.10f), Shader.TileMode.CLAMP
         )
-        textPaint.color = Color.WHITE
-        border.color = withAlpha(Color.WHITE, if (crashed) 0.26f else 0.20f)
-        dotPaint.color = withAlpha(Color.WHITE, 0.62f)
+        textPaint.color = fg
+        border.color = withAlpha(fg, if (crashed) 0.26f else 0.20f)
+        dotPaint.color = withAlpha(fg, 0.62f)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -161,9 +164,9 @@ class ConsoleBallView(context: Context, private val onTap: () -> Unit) : View(co
             val left = x + chipGap
             val top = cy - ch / 2f
             chipRect.set(left, top, left + cw, top + ch)
-            chipPaint.color = if (crashed) Color.WHITE else COLOR_CRASH
+            chipPaint.color = if (crashed) ConsoleTheme.onError else ConsoleTheme.error
             canvas.drawRoundRect(chipRect, ch / 2f, ch / 2f, chipPaint)
-            chipText.color = if (crashed) COLOR_CRASH else Color.WHITE
+            chipText.color = if (crashed) ConsoleTheme.error else ConsoleTheme.onError
             val cty = cy - (chipText.descent() + chipText.ascent()) / 2f
             canvas.drawText(cLabel, left + cw / 2f, cty, chipText)
         }
@@ -199,8 +202,6 @@ class ConsoleBallView(context: Context, private val onTap: () -> Unit) : View(co
     }
 
     companion object {
-        private val COLOR_CRASH = 0xFFE53935.toInt()
-
         private fun withAlpha(c: Int, a: Float): Int =
             Color.argb((255f * a).toInt(), Color.red(c), Color.green(c), Color.blue(c))
 

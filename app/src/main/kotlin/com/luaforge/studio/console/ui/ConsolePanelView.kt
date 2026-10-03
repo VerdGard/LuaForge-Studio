@@ -38,7 +38,8 @@ class ConsolePanelView(
 
     init {
         orientation = VERTICAL
-        setBackgroundColor(ConsoleTheme.surface)
+        // 底色由外层(竖屏 sheet / 横屏侧栏)的圆角 GradientDrawable 统一提供,
+        // 这里不再铺一层不透明色,避免「卡片 + 中间层」两层底色叠出硬边。
 
         addView(
             ConsoleChrome.header(

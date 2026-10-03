@@ -9,6 +9,24 @@ import androidx.compose.ui.graphics.toArgb
 import com.luaforge.studio.ui.settings.DarkMode
 import com.luaforge.studio.ui.settings.SettingsManager
 import com.luaforge.studio.ui.theme.ThemeType
+import com.luaforge.studio.ui.theme.errorDarkBlue
+import com.luaforge.studio.ui.theme.errorDarkGreen
+import com.luaforge.studio.ui.theme.errorDarkPink
+import com.luaforge.studio.ui.theme.errorLightBlue
+import com.luaforge.studio.ui.theme.errorLightGreen
+import com.luaforge.studio.ui.theme.errorLightPink
+import com.luaforge.studio.ui.theme.onErrorDarkBlue
+import com.luaforge.studio.ui.theme.onErrorDarkGreen
+import com.luaforge.studio.ui.theme.onErrorDarkPink
+import com.luaforge.studio.ui.theme.onErrorLightBlue
+import com.luaforge.studio.ui.theme.onErrorLightGreen
+import com.luaforge.studio.ui.theme.onErrorLightPink
+import com.luaforge.studio.ui.theme.onPrimaryDarkBlue
+import com.luaforge.studio.ui.theme.onPrimaryDarkGreen
+import com.luaforge.studio.ui.theme.onPrimaryDarkPink
+import com.luaforge.studio.ui.theme.onPrimaryLightBlue
+import com.luaforge.studio.ui.theme.onPrimaryLightGreen
+import com.luaforge.studio.ui.theme.onPrimaryLightPink
 import com.luaforge.studio.ui.theme.onSurfaceDarkBlue
 import com.luaforge.studio.ui.theme.onSurfaceDarkGreen
 import com.luaforge.studio.ui.theme.onSurfaceDarkPink
@@ -56,6 +74,7 @@ object ConsoleTheme {
 
     var primary: Int = 0xFF3D5AFE.toInt()
         private set
+    /** 主色之上的前景色:静态色板下按 light/dark 分别取值,不再恒为白。 */
     var onPrimary: Int = Color.WHITE
         private set
     var surface: Int = Color.WHITE
@@ -63,6 +82,12 @@ object ConsoleTheme {
     var onSurface: Int = 0xFF222222.toInt()
         private set
     var onSurfaceVariant: Int = 0xFF777777.toInt()
+        private set
+    /** 错误/警示色:危险文案、未读错误计数芯片底色。 */
+    var error: Int = 0xFFB3261E.toInt()
+        private set
+    /** [error] 之上的前景色。 */
+    var onError: Int = Color.WHITE
         private set
     /** 强调浅底:选中行 / 操作按钮背景。 */
     var accentContainer: Int = 0xFFE3EDFF.toInt()
@@ -104,6 +129,8 @@ object ConsoleTheme {
                 onSurface = scheme.onSurface.toArgb()
                 onSurfaceVariant = scheme.onSurfaceVariant.toArgb()
                 accentContainer = scheme.primaryContainer.toArgb()
+                error = scheme.error.toArgb()
+                onError = scheme.onError.toArgb()
                 surfaceContainer = scheme.surfaceContainer.toArgb()
                 return
             } catch (_: Exception) {
@@ -116,33 +143,45 @@ object ConsoleTheme {
                 primary = primaryDarkGreen.toArgb(); surface = surfaceDarkGreen.toArgb()
                 onSurface = onSurfaceDarkGreen.toArgb(); onSurfaceVariant = onSurfaceVariantDarkGreen.toArgb()
                 accentContainer = primaryContainerDarkGreen.toArgb()
+                error = errorDarkGreen.toArgb(); onError = onErrorDarkGreen.toArgb()
+                onPrimary = onPrimaryDarkGreen.toArgb()
                 surfaceContainer = surfaceContainerDarkGreen.toArgb()
             } else {
                 primary = primaryLightGreen.toArgb(); surface = surfaceLightGreen.toArgb()
                 onSurface = onSurfaceLightGreen.toArgb(); onSurfaceVariant = onSurfaceVariantLightGreen.toArgb()
                 accentContainer = primaryContainerLightGreen.toArgb()
+                error = errorLightGreen.toArgb(); onError = onErrorLightGreen.toArgb()
+                onPrimary = onPrimaryLightGreen.toArgb()
                 surfaceContainer = surfaceContainerLightGreen.toArgb()
             }
             ThemeType.PINK -> if (dark) {
                 primary = primaryDarkPink.toArgb(); surface = surfaceDarkPink.toArgb()
                 onSurface = onSurfaceDarkPink.toArgb(); onSurfaceVariant = onSurfaceVariantDarkPink.toArgb()
                 accentContainer = primaryContainerDarkPink.toArgb()
+                error = errorDarkPink.toArgb(); onError = onErrorDarkPink.toArgb()
+                onPrimary = onPrimaryDarkPink.toArgb()
                 surfaceContainer = surfaceContainerDarkPink.toArgb()
             } else {
                 primary = primaryLightPink.toArgb(); surface = surfaceLightPink.toArgb()
                 onSurface = onSurfaceLightPink.toArgb(); onSurfaceVariant = onSurfaceVariantLightPink.toArgb()
                 accentContainer = primaryContainerLightPink.toArgb()
+                error = errorLightPink.toArgb(); onError = onErrorLightPink.toArgb()
+                onPrimary = onPrimaryLightPink.toArgb()
                 surfaceContainer = surfaceContainerLightPink.toArgb()
             }
             ThemeType.BLUE -> if (dark) {
                 primary = primaryDarkBlue.toArgb(); surface = surfaceDarkBlue.toArgb()
                 onSurface = onSurfaceDarkBlue.toArgb(); onSurfaceVariant = onSurfaceVariantDarkBlue.toArgb()
                 accentContainer = primaryContainerDarkBlue.toArgb()
+                error = errorDarkBlue.toArgb(); onError = onErrorDarkBlue.toArgb()
+                onPrimary = onPrimaryDarkBlue.toArgb()
                 surfaceContainer = surfaceContainerDarkBlue.toArgb()
             } else {
                 primary = primaryLightBlue.toArgb(); surface = surfaceLightBlue.toArgb()
                 onSurface = onSurfaceLightBlue.toArgb(); onSurfaceVariant = onSurfaceVariantLightBlue.toArgb()
                 accentContainer = primaryContainerLightBlue.toArgb()
+                error = errorLightBlue.toArgb(); onError = onErrorLightBlue.toArgb()
+                onPrimary = onPrimaryLightBlue.toArgb()
                 surfaceContainer = surfaceContainerLightBlue.toArgb()
             }
         }

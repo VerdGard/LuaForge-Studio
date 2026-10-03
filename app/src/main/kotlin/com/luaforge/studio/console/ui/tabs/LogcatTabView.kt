@@ -79,7 +79,7 @@ class LogcatTabView(context: Context) : LinearLayout(context) {
                 // 行波纹:主题 onSurface 低透明 ripple,随主题色
                 background = RippleDrawable(
                     ColorStateList.valueOf(
-                        ConsoleTheme.onSurface and 0x00FFFFFF or 0x1AFFFFFF
+                        ConsoleTheme.onSurface and 0x00FFFFFF or 0x1A000000
                     ),
                     null,
                     null

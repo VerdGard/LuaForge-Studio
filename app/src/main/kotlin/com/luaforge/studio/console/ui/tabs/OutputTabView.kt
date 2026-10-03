@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.content.Context
 import android.content.res.ColorStateList
-import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.SpannableString
@@ -210,7 +209,7 @@ class OutputTabView(context: Context) : LinearLayout(context), OutputManager.Lis
     /** 清空确认：MD3 弹窗（主题取色跟随 Luafabric 莫奈），左「全部删除」/中「取消」/右「仅当前文件」。 */
     private fun confirmClear() {
         val message = SpannableString("此操作不可撤销，请谨慎操作").apply {
-            setSpan(ForegroundColorSpan(Color.RED), 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            setSpan(ForegroundColorSpan(ConsoleTheme.error), 0, length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
         try {
             val dlg = MaterialAlertDialogBuilder(context)

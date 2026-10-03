@@ -45,7 +45,7 @@ class ExpandableCard(context: Context, title: String) : LinearLayout(context) {
             setOnClickListener { toggle() }
             // 点击波纹:以 12dp 圆角为掩码,贴合标题圆角
             foreground = RippleDrawable(
-                ColorStateList.valueOf(0x22000000),
+                ColorStateList.valueOf(ConsoleTheme.onSurface and 0x00FFFFFF or 0x1F000000),
                 null,
                 GradientDrawable().apply {
                     setColor(Color.TRANSPARENT)

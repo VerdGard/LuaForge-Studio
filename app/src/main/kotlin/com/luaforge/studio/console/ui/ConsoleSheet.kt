@@ -2,6 +2,7 @@ package com.luaforge.studio.console.ui
 
 import android.app.Activity
 import android.content.Context
+import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.os.Bundle
@@ -10,8 +11,9 @@ import android.os.Looper
 import android.view.Display
 import android.view.Surface
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.LinearLayout
+import android.widget.FrameLayout
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.luaforge.studio.R
 
@@ -50,30 +52,26 @@ class ConsoleSheet(
                 cornerRadius = ctx.dp(20).toFloat()
             }
             clipToOutline = true
+            // 面板即悬浮卡片:直接作为 sheet 内容,高度由自身 LayoutParams 决定
+            // (原先外套一层 LinearLayout 只为垫底部留白,留白已由 sheet 的 bottomMargin 承担)
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, panelHeight)
         }
-
-        val root = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            // 底部留白:内容与手势区之间留呼吸空间
-            setPadding(0, 0, 0, ctx.dp(10))
-        }
-        root.addView(panel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, panelHeight))
-        setContentView(root)
+        setContentView(panel)
 
         // 宽度收到屏宽 92% 并居中:面板成悬浮卡片,左右露出宿主界面(不再铺满全屏)
         // 去掉窗口遮罩:悬浮卡片背后的黑色半透明背景消失,宿主界面保持原亮度
         window?.setDimAmount(0f)
         window?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         getBehavior()?.setMaxWidth((ctx.resources.displayMetrics.widthPixels * 0.92f).toInt())
-        // 底部留间距 + 去掉 Material 默认 sheet 背景(不透明、仅上圆角),
-        // 否则会盖住 root 的四角圆角卡片外观。
-        runCatching {
-            findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.let { sheet ->
-                sheet.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                (sheet.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { lp ->
-                    lp.bottomMargin = ctx.dp(12)
-                    sheet.layoutParams = lp
-                }
+        // 底部留间距 + 去掉 Material 默认 sheet 容器底色(不透明、仅上圆角),
+        // 否则会盖住面板的四角圆角卡片外观。此处不再包 runCatching:取不到容器属异常,
+        // 静默失败会让整块矩形底色悄悄露出来(排查困难),应显式暴露。
+        findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.let { sheet ->
+            sheet.setBackgroundColor(Color.TRANSPARENT)
+            (sheet.layoutParams as? ViewGroup.MarginLayoutParams)?.let { lp ->
+                // 12dp 悬浮边距 + 原 root 层承担的 10dp 呼吸空间(去中间层后并入此处,视觉不变)
+                lp.bottomMargin = ctx.dp(22)
+                sheet.layoutParams = lp
             }
         }
 
