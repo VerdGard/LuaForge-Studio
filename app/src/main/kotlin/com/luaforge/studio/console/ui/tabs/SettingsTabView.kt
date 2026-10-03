@@ -231,10 +231,9 @@ class SettingsTabView(context: Context) : ScrollView(context) {
             setTextColor(ConsoleTheme.onSurfaceVariant)
             maxLines = 3
             ellipsize = android.text.TextUtils.TruncateAt.END
-            lineSpacingMultiplier = 1.15f
+            setLineSpacing(0f, 1.15f) // 只读属性:须用 setLineSpacing(extra, mult)
             setPadding(0, context.dp(2), 0, 0)
         }
-
 
     private fun divider(): View = View(context).apply {
         setBackgroundColor(ConsoleTheme.onSurfaceVariant and 0x00FFFFFF or 0x1F000000)

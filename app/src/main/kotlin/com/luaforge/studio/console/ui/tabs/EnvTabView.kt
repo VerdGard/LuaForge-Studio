@@ -127,7 +127,7 @@ class EnvTabView(context: Context) : ScrollView(context) {
                     setTextColor(ConsoleTheme.onSurface)
                     maxLines = 3
                     ellipsize = TextUtils.TruncateAt.END
-                    lineSpacingMultiplier = 1.1f
+                    setLineSpacing(0f, 1.1f) // 只读属性:须用 setLineSpacing(extra, mult)
                     setPadding(0, context.dp(1), 0, 0)
                 }
             )
