@@ -416,20 +416,22 @@ JNIEXPORT jstring JNICALL
 Java_com_luaforge_studio_utils_PythonUtil_nPyRun(JNIEnv *env, jobject thiz,
                                                  jstring code, jstring cwd) {
     (void) thiz;
-    if (!g_py.initialized) return throw_state(env, "Python 未初始化,请先调用 pythonInit()");
-
     const char *c = code ? (*env)->GetStringUTFChars(env, code, NULL) : "";
     const char *w = (cwd && (*env)->GetStringLength(env, cwd) > 0)
                     ? (*env)->GetStringUTFChars(env, cwd, NULL) : NULL;
 
+    /* initialized 必须与 run 在同一临界区内判断:否则 finalize 可能插在两者之间,
+     * 让已释放的运行时被使用。 */
     pthread_mutex_lock(&g_lock);
+    int inited = g_py.initialized;
     int ok = 0;
-    char *out = run_locked(c, NULL, NULL, 0, w, &ok);
+    char *out = inited ? run_locked(c, NULL, NULL, 0, w, &ok) : NULL;
     pthread_mutex_unlock(&g_lock);
 
     if (cwd && w) (*env)->ReleaseStringUTFChars(env, cwd, w);
     if (code)     (*env)->ReleaseStringUTFChars(env, code, c);
 
+    if (!inited) return throw_state(env, "Python 未初始化,请先调用 pythonInit()");
     if (!ok) {
         char buf[8192];
         snprintf(buf, sizeof buf, "Python 执行失败:\n%s", out ? out : "");
@@ -443,8 +445,6 @@ JNIEXPORT jstring JNICALL
 Java_com_luaforge_studio_utils_PythonUtil_nPyRunFile(JNIEnv *env, jobject thiz,
                                                      jstring path, jobjectArray argv, jstring cwd) {
     (void) thiz;
-    if (!g_py.initialized) return throw_state(env, "Python 未初始化,请先调用 pythonInit()");
-
     const char *p = path ? (*env)->GetStringUTFChars(env, path, NULL) : NULL;
     if (!p || !p[0]) {
         if (path) (*env)->ReleaseStringUTFChars(env, path, p);
@@ -461,9 +461,11 @@ Java_com_luaforge_studio_utils_PythonUtil_nPyRunFile(JNIEnv *env, jobject thiz,
     const char *w = (cwd && (*env)->GetStringLength(env, cwd) > 0)
                     ? (*env)->GetStringUTFChars(env, cwd, NULL) : NULL;
 
+    /* 同 nPyRun: initialized 与 run 必须同临界区 */
     pthread_mutex_lock(&g_lock);
+    int inited = g_py.initialized;
     int ok = 0;
-    char *out = run_locked(NULL, p, cargv, (size_t) argc, w, &ok);
+    char *out = inited ? run_locked(NULL, p, cargv, (size_t) argc, w, &ok) : NULL;
     pthread_mutex_unlock(&g_lock);
 
     for (jsize i = 0; i < argc; i++) {
@@ -474,6 +476,7 @@ Java_com_luaforge_studio_utils_PythonUtil_nPyRunFile(JNIEnv *env, jobject thiz,
     if (w) (*env)->ReleaseStringUTFChars(env, cwd, w);
     (*env)->ReleaseStringUTFChars(env, path, p);
 
+    if (!inited) return throw_state(env, "Python 未初始化,请先调用 pythonInit()");
     if (!ok) {
         char buf[8192];
         snprintf(buf, sizeof buf, "Python 脚本失败:\n%s", out ? out : "");
@@ -542,19 +545,22 @@ static int l_py_run(lua_State *L) {
     size_t n = 0;
     const char *code = luaL_checklstring(L, 1, &n);
     const char *cwd  = luaL_optstring(L, 2, NULL);
-    if (!g_py.initialized) return luaL_error(L, "python 未初始化,请先调用 python.init(home)");
 
+    /* 同 JNI:同临界区判断 + 执行。
+     * luaL_error 会 longjmp,绝不能在持锁时调用,故错误在解锁后再抛。 */
     pthread_mutex_lock(&g_lock);
+    int inited = g_py.initialized;
     int ok = 0;
-    char *out = run_locked(code, NULL, NULL, 0, cwd, &ok);
+    char *out = inited ? run_locked(code, NULL, NULL, 0, cwd, &ok) : NULL;
     pthread_mutex_unlock(&g_lock);
+
+    if (!inited) return luaL_error(L, "python 未初始化,请先调用 python.init(home)");
     return l_push_run_result(L, out, ok);
 }
 
 static int l_py_run_file(lua_State *L) {
     const char *path = luaL_checkstring(L, 1);
     const char *cwd  = luaL_optstring(L, 2, NULL);
-    if (!g_py.initialized) return luaL_error(L, "python 未初始化,请先调用 python.init(home)");
 
     int argc = lua_gettop(L) - 2;
     const char **argv = NULL;
@@ -564,11 +570,13 @@ static int l_py_run_file(lua_State *L) {
     }
 
     pthread_mutex_lock(&g_lock);
+    int inited = g_py.initialized;
     int ok = 0;
-    char *out = run_locked(NULL, path, argv, (size_t) (argc > 0 ? argc : 0), cwd, &ok);
+    char *out = inited ? run_locked(NULL, path, argv, (size_t) (argc > 0 ? argc : 0), cwd, &ok) : NULL;
     pthread_mutex_unlock(&g_lock);
 
     free(argv);
+    if (!inited) return luaL_error(L, "python 未初始化,请先调用 python.init(home)");
     return l_push_run_result(L, out, ok);
 }
 

@@ -85,7 +85,8 @@ val globalUtilsOptions = listOf(
     GlobalUtilItem(R.string.global_util_ui, "doc/UiUtil.md"),
     GlobalUtilItem(R.string.global_util_recycler, "doc/RecyclerAdapterUtil.md"),
     GlobalUtilItem(R.string.global_util_theme, "doc/ThemeUtil.md"),
-    GlobalUtilItem(R.string.global_util_mem, "doc/MemUtil.md")
+    GlobalUtilItem(R.string.global_util_mem, "doc/MemUtil.md"),
+    GlobalUtilItem(R.string.global_util_python, "doc/PythonUtil.md")
 )
 
 data class TemplateItem(
