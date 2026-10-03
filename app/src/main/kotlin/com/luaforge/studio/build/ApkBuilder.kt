@@ -78,6 +78,41 @@ class ApkBuilder {
             "import\\(\'([a-zA-Z0-9_.]+)\'\\s*,\\s*[^)]+\\)"  // import('aaa', data)
         )
 
+        /**
+         * `global_utils` 里的工具类名 -> 它 `System.loadLibrary` 的原生库。
+         *
+         * 为什么单独建表:这类工具类由 Java 侧加载 `.so`,而 Lua 脚本里**不会**出现
+         * `require "xxx"`,所以按模块引用扫描(`referencedModules`)永远看不到它们。
+         * 不在清理阶段显式保留,症状是:IDE 内运行一切正常,打包出的 APK 里该工具类
+         * 整体失效(调用时才报错)。
+         *
+         * 与 core 的 `LuaFunctionRegistrar.UTIL_CLASS_MAP` 对应:那里管"注册哪些函数",
+         * 这里管"别把它的原生实现删掉"。
+         */
+        private val UTIL_NATIVE_LIBS = mapOf(
+            "MemUtil" to "libmemkit.so"
+        )
+
+        /**
+         * 读取项目 `settings.json` 的 `global_utils`,与运行时 `LuaActivity.initENV` 同源。
+         *
+         * 读不出来按"未选择"处理:一次配置解析失败不该拦住整个打包。
+         */
+        private fun readGlobalUtils(projectDir: File): List<String> {
+            val settingsFile = File(projectDir, "settings.json")
+            if (!settingsFile.isFile) return emptyList()
+            return try {
+                val raw = JsonUtil.parseObject(settingsFile.readText())["global_utils"] as? List<*>
+                raw?.mapNotNull { it?.toString()?.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+            } catch (e: Exception) {
+                LogCatcher.w(
+                    "ApkBuilder",
+                    "读取 global_utils 失败,按未选择处理: ${settingsFile.absolutePath} - ${e.message}"
+                )
+                emptyList()
+            }
+        }
+
         // LuaState 单例实例
         private var sharedLuaState: LuaState? = null
 
@@ -1233,6 +1268,15 @@ class ApkBuilder {
                 val usesLuaParserUtil = checkProjectForLuaParserUtil(projectDir)
                 if (usesLuaParserUtil) {
                     mustKeepFiles.add("libluaparser.so")
+                }
+
+                // global_utils 选中的工具类只在 Java 侧 loadLibrary,Lua 侧没有 require,
+                // 模块引用扫描看不到 => 必须按配置保留,否则打包产物里这些工具类整体失效。
+                for (utilName in readGlobalUtils(projectDir)) {
+                    UTIL_NATIVE_LIBS[utilName]?.let { soName ->
+                        mustKeepFiles.add(soName)
+                        LogCatcher.i("ApkBuilder", "global_utils 含 $utilName,保留 $soName")
+                    }
                 }
             }
 
