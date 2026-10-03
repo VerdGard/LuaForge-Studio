@@ -3,6 +3,7 @@ package com.luaforge.studio.console.ui
 import android.app.Activity
 import android.content.Context
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.os.Bundle
@@ -63,16 +64,36 @@ class ConsoleSheet(
         window?.setDimAmount(0f)
         window?.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         getBehavior()?.setMaxWidth((ctx.resources.displayMetrics.widthPixels * 0.92f).toInt())
-        // 底部留间距 + 去掉 Material 默认 sheet 容器底色(不透明、仅上圆角),
-        // 否则会盖住面板的四角圆角卡片外观。此处不再包 runCatching:取不到容器属异常,
-        // 静默失败会让整块矩形底色悄悄露出来(排查困难),应显式暴露。
+        // 窗口背景显式置透明:卡片之外不应有任何底色(主题已设,此处兜底防被系统主题改写)
+        window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        // 底部留间距 + 清除 Material 给 sheet 容器装的底色与投影。
+        // 关键:仅在此处清一次不够 —— BottomSheetBehavior 会在首次 layout 时执行
+        // view.setBackground(materialShapeDrawable)(填充 colorSurfaceContainerLow),
+        // 把这里的透明覆盖掉,暗色主题下表现为卡片背后一块浅色矩形。故再挂一次性
+        // layout 监听,在布局完成后再清一次(清完即摘监听,不产生持续回调)。
+        // 不再包 runCatching:取不到容器属异常,静默失败会让矩形底色悄悄露出。
         findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.let { sheet ->
-            sheet.setBackgroundColor(Color.TRANSPARENT)
+            fun clearSheetChrome(v: View) {
+                v.background = null
+                v.elevation = 0f
+            }
+            clearSheetChrome(sheet)
             (sheet.layoutParams as? ViewGroup.MarginLayoutParams)?.let { lp ->
                 // 12dp 悬浮边距 + 原 root 层承担的 10dp 呼吸空间(去中间层后并入此处,视觉不变)
                 lp.bottomMargin = ctx.dp(22)
                 sheet.layoutParams = lp
             }
+            val clearOnce = object : View.OnLayoutChangeListener {
+                override fun onLayoutChange(
+                    v: View, left: Int, top: Int, right: Int, bottom: Int,
+                    oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int
+                ) {
+                    clearSheetChrome(v)
+                    v.removeOnLayoutChangeListener(this)
+                }
+            }
+            sheet.addOnLayoutChangeListener(clearOnce)
         }
 
         // 禁用 sheet 拖拽手势:页签内滚动(如环境页 ScrollView)与 BottomSheet 下拉关闭冲突,
