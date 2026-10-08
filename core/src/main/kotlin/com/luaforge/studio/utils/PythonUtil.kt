@@ -14,9 +14,12 @@ import java.io.File
  *  - 也可在 Lua 里 `local py = require "python"` 直接用原生接口(可选参数语义更完整)。
  *
  * ## 运行时从哪来
- * 真实解释器是 vendor 来的预编译 CPython 运行时(libpython3.14.so + stdlib + lib-dynload),
- * 由 IDE 在安装后投放到 app 私有目录,不随本模块编译。
- * **未投放时 `pythonAvailable()` 返回 false,所有调用抛 IllegalStateException** —— 不静默降级,
+ * 预编译的 CPython 运行时随包分发(构建期由 `preparePythonRuntime` 从 Chaquopy 制品拉取):
+ *  - 原生库(`libpython3.14.so` 等)-> jniLibs -> `nativeLibraryDir`,系统加载器按 soname 解析
+ *  - 标准库 + 扩展模块 -> assets/python 下的 zip,**首次 [pythonInit] 时解包**到 app 私有目录
+ *
+ * 因此 32 位包(无 arm64 产物)或构建时 `-PpythonRuntime=off` 的产物里没有运行时:
+ * `pythonAvailable()` 返回 false,所有调用抛 IllegalStateException —— 不静默降级,
  * 否则用户会拿到一个"看起来能用但 import 全失败"的环境。
  *
  * ## 与 Lua 并行
@@ -83,8 +86,13 @@ object PythonUtil {
      * 32 位设备上第 1/2 条即不满足,恒为 false。
      */
     @JvmStatic
-    fun pythonAvailable(context: Context): Boolean =
-        bridgeLoaded && nPyAvailable() && File(defaultHome(context)).isDirectory
+    fun pythonAvailable(context: Context): Boolean {
+        if (!bridgeLoaded || !nPyAvailable()) return false
+        val home = File(defaultHome(context))
+        val manifest = PythonRuntimeInstaller.bundledManifest(context) ?: return false
+        // 已解包(指纹一致) 或 包内有运行时待解包 —— 都算可用
+        return home.isDirectory || PythonRuntimeInstaller.isInstalled(home, manifest)
+    }
 
     /**
      * Python 版本号(如 "3.14.0")。运行时缺失时返回带说明的占位串,不抛异常。
@@ -109,17 +117,40 @@ object PythonUtil {
                 "libpython.so 未加载:当前设备不受支持(仅 arm64-v8a 提供 Python 运行时)"
             )
         }
-        val home = optString(opts, 0, null) ?: defaultHome(context)
-        val ok = nPyInit(home, context.applicationInfo.nativeLibraryDir, context.cacheDir.absolutePath)
+        val home = File(optString(opts, 0, null) ?: defaultHome(context))
+
+        // 先确保运行时已就位(幂等:已解包且指纹一致时只读一个文件)
+        if (!ensureRuntime(context, home)) {
+            throw IllegalStateException(
+                "Python 初始化失败:运行时不可用\n" +
+                    "  home     = ${home.absolutePath}\n" +
+                    "  installed = ${PythonRuntimeInstaller.isInstalled(home, PythonRuntimeInstaller.bundledManifest(context) ?: "")}\n" +
+                    "本 APK " + if (PythonRuntimeInstaller.bundledManifest(context) == null)
+                    "未分发 Python 运行时(32 位包,或构建时 -PpythonRuntime=off)"
+                else "的运行时解包失败,详见 luaforge.log"
+            )
+        }
+
+        val ok = nPyInit(home.absolutePath, context.applicationInfo.nativeLibraryDir, context.cacheDir.absolutePath)
         if (!ok) {
             throw IllegalStateException(
-                "Python 初始化失败:运行时不可用或目录不完整\n" +
-                    "  home   = $home\n" +
-                    "  exists = ${File(home).exists()}\n" +
-                    "请确认 IDE 已投放 Python 运行时,且设备为 arm64-v8a。"
+                "Python 初始化失败:解释器未能启动\n" +
+                    "  home   = ${home.absolutePath}\n" +
+                    "  请确认设备为 arm64-v8a,且 nativeLibraryDir 中有 libpython3.14.so。"
             )
         }
         return true
+    }
+
+    /**
+     * 确保 [home] 里的运行时与包内分发的一致。
+     *
+     * 包内没有运行时(32 位包 / 构建时关闭)时**直接返回 false**,由调用方报出可读原因;
+     * 不在这里抛异常,便于 [pythonAvailable] 之类的探测路径复用。
+     */
+    private fun ensureRuntime(context: Context, home: File): Boolean {
+        val manifest = PythonRuntimeInstaller.bundledManifest(context) ?: return false
+        return PythonRuntimeInstaller.ensure(context, home, manifest)
     }
 
     // ---------------- 执行 ----------------
