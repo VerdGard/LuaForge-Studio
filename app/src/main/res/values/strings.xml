@@ -477,7 +477,6 @@
     <string name="global_util_recycler">RecyclerAdapterUtil</string>
     <string name="global_util_theme">ThemeUtil</string>
     <string name="global_util_mem">MemUtil</string>
-    <string name="global_util_python">PythonUtil</string>
 
     <!-- SDK 版本描述 -->
     <string name="sdk_21">API 21 (Lollipop, Android 5.0)</string>

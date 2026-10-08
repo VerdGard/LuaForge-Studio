@@ -90,8 +90,7 @@ class ApkBuilder {
          * 这里管"别把它的原生实现删掉"。
          */
         private val UTIL_NATIVE_LIBS = mapOf(
-            "MemUtil" to "libmemkit.so",
-            "PythonUtil" to "libpython.so"
+            "MemUtil" to "libmemkit.so"
         )
 
         /**
