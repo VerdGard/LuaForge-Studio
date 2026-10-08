@@ -1,5 +1,17 @@
 # 更新日志
 
+## 1.6.5
+- 新增 `MemUtil` 全局工具类与底层 `libmemkit.so`(C 实现,内存**读写 / 搜索**,风格接近 GameGuardian)
+  - 在项目 `settings.json` 的 `global_utils` 加入 `MemUtil` 即注册为 Lua 全局函数;也可 `require "memkit"` 直接用原生接口(可选参数语义更完整)
+  - 能力:root 检测、进程名→pid、`/proc/<pid>/maps` 区域枚举、原始字节 / 整数(按位宽符号扩展)/ 浮点 / C 字符串的读写,以及 GG 式搜索(首扫 + 续扫原地缩小 + 结果遍历 + 批量修改 + 当前值快照刷新);类型覆盖 `byte` / `word` / `dword` / `qword` / `float` / `double` / `utf8`
+  - 权限模型如实反映内核约束:**自身进程**无需 root(走 `process_vm_readv/writev`);跨进程需 `PTRACE_MODE_ATTACH`(root 或同 uid 同签名),Android 10+ SELinux enforcing 下即使 root 也可能被拒 —— 失败时带 errno 抛异常,不静默返回 0
+  - 单点读写失败抛 `IllegalStateException`(含 pid / addr / errno),用 `pcall` 包裹;批量搜索不抛(部分区域不可读属常态)
+  - 函数名统一加 `mem` 前缀(`memScan` / `memReadInt` / ...),避免污染全局命名空间;详见 [app/src/main/assets/doc/MemUtil.md](app/src/main/assets/doc/MemUtil.md)
+- 修复打包时 `global_utils` 工具类的原生库被当「未引用」删除(即 `MemUtil` 打包失效)
+  - 根因:`cleanUnusedLibraries` 只按 Lua 侧 `require` / `import` 扫描出的模块判定 `.so` 去留,而工具类是在 **Java 侧** `System.loadLibrary`,脚本里**不会**出现 `require "xxx"` → 该 `.so` 永远匹配不上,打包时被删
+  - 症状:IDE 内预览正常(用 `nativeLibraryDir` 里的库),打包出的 APK 里该工具类整体失效、直到调用才报错
+  - 现在新增 `UTIL_NATIVE_LIBS`(工具类名 → 其 `loadLibrary` 的原生库)映射,清理阶段显式保留;清理策略仍是「引用才保留」,非工具类项目体积不受影响
+
 ## 1.6.4
 - 构建项目支持选择构建类型(构建时弹出 MD3 对话框)
   - **跟随项目设置**(默认):加密与调试模式均取项目属性里的设置
@@ -19,6 +31,17 @@
     - 与项目自身调用**同一条路径**(运行实例主线程执行),`dp2px`、`statusBarHeight()` 这类需要真实 `Context` 的 UI 函数也生效(首个 `Context` / `Activity` 形参由框架自动注入)
     - 参数支持 JSON 数组或分隔字符串(自动推断 number / boolean / null),并按形参类型做个数与类型校验
     - 需要控件 / Java 对象 / Lua 回调的函数(如 `GlideUtil.loadImage` 需 `ImageView`、网络请求、Recycler 适配器)会明确拒绝并说明原因
+- 新增「调试控制台」(浮球 + 非全屏面板,竖屏 BottomSheet / 横屏侧栏两种形态)
+  - 浮球:自适应长方形胶囊,支持拖动与点击,未读 Lua 错误以内嵌计数芯片呈现;崩溃时转为 error 色
+  - 面板 6 页签:输出 / 结构 / 环境 / Logcat / 调试 / 设置(页签由左侧竖排导航承担)
+    - 输出:print / Lua 报错 / Toast / Snackbar,按文件分组,含逐参 Lua 类型与真实类型
+    - 结构:当前项目文件树(惰性展开),选中 `.lua` 显示悬浮操作栏
+    - 环境:环境信息 / Lua 模块 / 原生库 / Java 类库 四类折叠卡
+    - Logcat:按等级(V / D / I / W / E / F / S)过滤,日志分块懒加载、主线程只增量追加
+    - 调试:重启项目 / 重建当前文件
+    - 设置:输出 / 拦截 / 报错 分组开关(默认全折叠)
+  - 面板不占满全屏(内容区固定高度),关闭重开保留上次页签
+  - 仅在**调试运行(debugmode 项目)**时激活捕获;从隐藏 / 关闭状态按音量下键可唤回浮球
 - MCP:适配调试控制台,新增 6 个只读工具,工具总数 44 → 50
   - `console_status`:控制台状态(会话 / 面板 / 当前文件与布局 / 捕获开关 / 缓冲与错误计数)
   - `console_outputs`:控制台「输出」缓冲(print / 报错 / Toast / Snackbar,含逐参 Lua 类型与真实类型)
