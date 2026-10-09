@@ -250,21 +250,24 @@ local Debugger = SimpleClass {
     local radiusPx = CORNER_RADIUS_DP * density
 
     local floatLayout = MaterialCardView(self.context)
-    floatLayout.setRadius(radiusPx)
-    floatLayout.cardElevation = 4 * density
-    floatLayout.strokeWidth = 0
+    -- 一律用 setter 方法(而非字段赋值),避免 luajava "... is not a field" 抛错
+    pcall(function () floatLayout.setRadius(radiusPx) end)
+    pcall(function () floatLayout.setCardElevation(4 * density) end)
+    pcall(function () floatLayout.setStrokeWidth(0) end)
     self.floatLayout = floatLayout
 
     local textView = newInstance("androidx.appcompat.widget.AppCompatTextView", self.context)
-    -- 紧凑胶囊:内边距对齐文字高度,避免浮球远大于文字
-    textView.setPadding(
-      math.floor(14 * density), math.floor(6 * density),
-      math.floor(14 * density), math.floor(6 * density))
-    textView.textSize = 12
-    textView.isSingleLine = true
-    textView.gravity = Gravity.CENTER
-    textView.textColor = themeColor("colorBackground", 0xFFFFFFFF)
-    textView.backgroundColor = 0
+    -- 紧凑胶囊:内边距对齐文字高度,避免浮球远大于文字。
+    -- 一律用 setter 方法而非字段赋值:luajava 的属性赋值在既无 setter、
+    -- 又无同名字段时(如 isSingleLine)会抛 "... is not a field" 并使整段注入失败。
+    local padH = math.floor(14 * density)
+    local padV = math.floor(6 * density)
+    textView.setPadding(padH, padV, padH, padV)
+    pcall(function () textView.setTextSize(12) end)
+    pcall(function () textView.setSingleLine(true) end)
+    pcall(function () textView.setGravity(Gravity.CENTER) end)
+    pcall(function () textView.setTextColor(themeColor("colorBackground", 0xFFFFFFFF)) end)
+    pcall(function () textView.setBackgroundColor(0) end)
     floatLayout.addView(textView)
 
     self.textView = textView
