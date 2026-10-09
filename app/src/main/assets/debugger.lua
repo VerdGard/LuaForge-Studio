@@ -94,7 +94,7 @@ local VARIABLE_TYPE_COLOUR = 0xff3D374E
 local PILL_COLOR_ERROR = 0xffAA3437
 local DEFAULT_PRIMARY = 0xFF6750A4
 -- 浮窗 / 弹窗圆角半径(dp)
-local CORNER_RADIUS_DP = 20
+local CORNER_RADIUS_DP = 14
 
 local GradientDrawable = bindClass "android.graphics.drawable.GradientDrawable"
 
@@ -245,19 +245,24 @@ local Debugger = SimpleClass {
 
   showFloatWindow = function (self)
     local MaterialCardView = bindClass "com.google.android.material.card.MaterialCardView"
+    local Gravity = bindClass "android.view.Gravity"
     local density = self.context.getResources().getDisplayMetrics().density
     local radiusPx = CORNER_RADIUS_DP * density
 
     local floatLayout = MaterialCardView(self.context)
     floatLayout.setRadius(radiusPx)
-    floatLayout.cardElevation = 8 * density
+    floatLayout.cardElevation = 4 * density
     floatLayout.strokeWidth = 0
     self.floatLayout = floatLayout
 
     local textView = newInstance("androidx.appcompat.widget.AppCompatTextView", self.context)
+    -- 紧凑胶囊:内边距对齐文字高度,避免浮球远大于文字
     textView.setPadding(
-      math.floor(38 * density), math.floor(18 * density),
-      math.floor(38 * density), math.floor(18 * density))
+      math.floor(14 * density), math.floor(6 * density),
+      math.floor(14 * density), math.floor(6 * density))
+    textView.textSize = 12
+    textView.isSingleLine = true
+    textView.gravity = Gravity.CENTER
     textView.textColor = themeColor("colorBackground", 0xFFFFFFFF)
     textView.backgroundColor = 0
     floatLayout.addView(textView)
