@@ -21,6 +21,16 @@
   - 浮窗销毁时复位标记,非调试运行保持原有 Toast 行为
 - 浮窗与 PopupMenu 弹窗改用圆角(20dp):浮窗底色随模式在 `Colors.colorPrimary` /
   报错红之间切换,PopupMenu 经 `mPopup` 反射铺圆角背景
+- **Jetpack Compose 支持(方案 A)**:Lua 用 table 描述 UI 树,由 Kotlin 桥渲染为 Material3 组件
+  - 新增全局函数 `compose(tree)`(返回可挂载的 `ComposeView`)/ `composeContent(tree)`(直接设为当前页面内容视图),由 `LuaActivity.initLua` 注册
+  - 支持标签:`Column` / `Row` / `Box` / `Card` / `Text` / `Button` / `Spacer` / `Divider`;通用属性 `padding` / `fillMaxWidth` / `width` / `height` / `background` / `corner`;颜色写作 `0xAARRGGBB`
+  - 不直接调用 `@Composable`:`@Composable` 函数签名被编译器改写(注入 `Composer`)且必须在 composition 上下文执行,Lua 无法直接调用,故采用「描述树 → 渲染」形态
+  - 新增模板 `templates/Compose.zip`(可直接运行的最小示例)与文档 `assets/doc/Compose.md`
+- 编辑器新增**符号自动补全**(设置 → 编辑器配置,默认开启)
+  - 点击底部符号栏的 `(` `[` `{` `"` `'` 时自动补成对,并把光标移到括号中间;关闭后仅插入单个符号
+- 设置新增**打包设置**卡片:选择打包时保留的 CPU 架构
+  - 三选一:**通用版**(32 位 + 64 位)/ **仅 64 位**(arm64-v8a)/ **仅 32 位**(armeabi-v7a)
+  - 清理阶段按选择裁剪 APK 的 `lib/` 目录,减小产物体积
 - 版本固定为 **1.6.7**(本次及以后版本);本地不构建,统一由 GitHub Actions 出包
 
 ## 1.6.5

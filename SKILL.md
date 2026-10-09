@@ -1,6 +1,6 @@
 ---
 name: luaforge-studio
-description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaForge-Studio 内置 MCP 服务(HTTP JSON-RPC, 默认端口 8787)驱动编辑器:读写源码、语法检查、编译验证、构建并安装 APK、调试运行并用控件树断言界面。关键词: LuaForge-Studio、Lua、ALY、loadlayout、import、luajava、global_utils、MemUtil、MCP、tools/call、run_project、check_screen、build_apk、check_syntax、debugger_status、debugger_outputs。"
+description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaForge-Studio 内置 MCP 服务(HTTP JSON-RPC, 默认端口 8787)驱动编辑器:读写源码、语法检查、编译验证、构建并安装 APK、调试运行并用控件树断言界面。关键词: LuaForge-Studio、Lua、ALY、loadlayout、import、luajava、global_utils、MemUtil、MCP、tools/call、run_project、check_screen、build_apk、check_syntax、debugger_status、debugger_outputs、compose、composeContent、Jetpack Compose。"
 ---
 
 # LuaForge-Studio 技能
@@ -16,6 +16,7 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 |---|---|
 | 写/改功能代码(`main.lua`、`*.lua`) | §1 Lua 语法 → §3 改文件 → §3.3 验证闭环 |
 | 改界面(`layout.aly` / `layout.lua`) | §1.4 布局写法 → §3.3 验证闭环 |
+| 用 Compose 写界面(`compose` / `composeContent`) | §1.8 Jetpack Compose → §3.3 验证闭环 |
 | 让项目跑起来看效果 | §3.3 `run_project` → `wait_for_text` → `check_screen` |
 | 出安装包 | §3.3 `build_apk` → `install_apk` |
 | 只想知道代码对不对 | §3.3 `check_syntax` + `compile_file`(只验证,不留产物) |
@@ -147,6 +148,7 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 | `material.R` | Material 组件资源 |
 | `luajava` | 桥接库;额外带 `luadir` / `luapath` / `luaextdir` 三个路径字段 |
 | `print` | 定制打印,`print.register("print")` 注册(`LuaActivity.java:1297`),经 `sendMsg` → `RuntimeLog.logLua` 落进 `luaforge.log`(`LuaActivity.java:1687-1696`) |
+| `compose(tree)` / `composeContent(tree)` | Jetpack Compose 桥(`LuaCompose.register`,`LuaActivity.java:1333`);Lua table 描述 UI 树 → 渲染 Material3 组件,详见 §1.8 |
 | `set(name, v)` / `call(name, ...)` | 跨线程设值/调用 |
 
 `require "import"` 之后(全部来自 `core/src/main/resources/lua/import.lua`):
@@ -191,7 +193,50 @@ MaterialAlertDialogBuilder(activity)
    读属性同理走 `javaGetter`,自动尝试 `getXxx` / `isXxx`(`LuaJavaAPI.java:1479-1530`),所以 `item.ItemId` 与 `item.getItemId()` 都可用。
    若名字既非字段也无对应 setter,报 `xxx is not a field`(`luajava.c:753`)。
 
-### 1.8 可运行的最小项目
+### 1.8 Jetpack Compose
+
+在 Lua 里用 **table 描述 UI 树**,由 Kotlin 桥渲染为真正的 Material3 组件。**Lua 不能直接调用 `@Composable`**
+(`@Composable` 函数签名被编译器改写、注入 `Composer` 参数,且必须在 composition 上下文中执行),
+因此采用「Lua 描述树 → Kotlin 渲染」的形态(方案 A)。
+
+全局函数(来自 `core/src/main/kotlin/com/luaforge/studio/compose/LuaCompose.kt`,`LuaActivity.java:1330-1335` 注册):
+
+| 函数 | 说明 |
+|---|---|
+| `compose(tree)` | 返回一个可挂载的 `ComposeView`(可交给 `loadlayout` / `setContentView`) |
+| `composeContent(tree)` | 直接把 `tree` 渲染并设为当前页面内容视图;内部已切 UI 线程 |
+
+**节点格式**:每个节点是一个 table,`[1]` 必须是标签字符串;第二个位置参数只对 `Text` / `Button` 有意义
+(等价 `text`);其余位置参数若不是字符串则当子节点递归解析;其余键为属性。
+
+```lua
+composeContent({
+  "Column",
+  fillMaxWidth = true,
+  padding = 20,
+  spacing = 14,
+  { "Text", "标题", size = 26, bold = true, align = "center", fillMaxWidth = true },
+  { "Card", corner = 18, fillMaxWidth = true,
+    { "Column", spacing = 10,
+      { "Text", "卡片内容", size = 16, bold = true },
+    },
+  },
+  { "Row", spacing = 12,
+    { "Button", "点我", onClick = function() print("clicked") end },
+  },
+  { "Divider" },
+  { "Text", "提示", size = 12, color = 0xFF6650a4 },
+})
+```
+
+支持的标签:`Column`(spacing)/ `Row`(spacing)/ `Box` / `Card`(corner,默认 12)/
+`Text`(text,size,bold,color,align)/ `Button`(text,onClick)/ `Spacer`(h,w)/ `Divider`。
+通用属性:`padding`(dp)、`fillMaxWidth`、`width` / `height`(dp)、`background`(`0xAARRGGBB`)、`corner`(dp)。颜色用 Lua 十六进制数字。
+
+新增项目模板 `templates/Compose.zip` 可直接跑;完整文档见 `app/src/main/assets/doc/Compose.md`。
+组件集为「基础集」,按需扩展标签与属性。
+
+### 1.9 可运行的最小项目
 
 `main.lua`(**Default 模板实测内容**):
 
@@ -224,7 +269,7 @@ activity
 }
 ```
 
-### 1.9 易错点
+### 1.10 易错点
 
 1. `main.lua` 与 `settings.json` **必须同时存在**才算合法项目(`LuaActivity.java:413` 按这两个文件识别项目)。
 2. 不 `require "import"` 就没有 `import` / `loadlayout`,连 `LinearLayoutCompat` 都解析不到。
@@ -402,6 +447,7 @@ MCP 只允许访问这些根(`McpTools.kt:1429-1443`):
 - Lua 库:`core/src/main/resources/lua/{import,loadlayout,loadmenu,loadbitmap,xml,Colors}.lua`、`app/src/main/assets/layouthelper/loadlayout2.lua`
 - Java 桥接:`app/src/main/jni/luajava/luajava.c`(void 返回 self、`ljlib` 函数表)、`core/src/main/java/com/luajava/LuaJavaAPI.java`(setter/getter 解析)
 - 模板:`app/src/main/assets/templates/Default.zip`、`app/src/main/kotlin/com/luaforge/studio/ui/project/NewProjectScreen.kt`
+- Compose 桥:`core/src/main/kotlin/com/luaforge/studio/compose/LuaCompose.kt`、注册处 `core/src/main/java/com/androlua/LuaActivity.java:1330-1335`、模板与文档 `app/src/main/assets/templates/Compose.zip`、`app/src/main/assets/doc/Compose.md`
 - MCP:`app/src/main/kotlin/com/luaforge/studio/mcp/{McpServer,McpManager,McpTools}.kt`、`docs/MCP.md`
 - 路径与日志:`app/src/main/kotlin/com/luaforge/studio/utils/{FileUtil,LogConfig}.kt`
 
