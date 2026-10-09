@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
 }
 
 android {
@@ -49,6 +50,7 @@ android {
 
     buildFeatures {
         buildConfig = true
+        compose = true
     }
 
     packaging {
@@ -70,6 +72,12 @@ kotlin {
 
 dependencies {
     api(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
+
+    // Jetpack Compose:Lua 脚本 Compose 桥(compose 全局函数)。
+    // 用 api 传递,使打包产物 core-apk 也带上 Compose 运行时。
+    api(libs.compose.ui)
+    api(libs.compose.foundation)
+    api(libs.compose.material3)
 
     // Navigation
     api(libs.navigation.fragment)

@@ -1326,6 +1326,14 @@ public class LuaActivity extends AppCompatActivity
           }
         };
     call.register("call");
+
+    // Jetpack Compose 桥:向 Lua 暴露 compose(table) / composeContent(table)。
+    // Lua 无法直接调用 @Composable,因此由 Kotlin 侧把 Lua 的 table 描述渲染成 ComposeView。
+    try {
+      com.luaforge.studio.compose.LuaCompose.register(L, this);
+    } catch (Throwable t) {
+      sendMsg("注册 compose 失败: " + t.getMessage());
+    }
   }
 
   public void setDebug(boolean isDebug) {
