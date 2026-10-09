@@ -90,7 +90,40 @@ end
 local PRINTS_ID = 0
 local VARIABLES_ID = 1
 local VARIABLE_TYPE_COLOUR = 0xff3D374E
-local INFO_ICON_COLOUR = 0xffAA3437
+-- 原版配色:常态胶囊 = Colors.colorPrimary,报错 = 0xffAA3437,文字 = Colors.colorBackground
+local PILL_COLOR_ERROR = 0xffAA3437
+local DEFAULT_PRIMARY = 0xFF6750A4
+-- 浮窗 / 弹窗圆角半径(dp)
+local CORNER_RADIUS_DP = 20
+
+local GradientDrawable = bindClass "android.graphics.drawable.GradientDrawable"
+
+-- 生成圆角矩形 drawable
+local function roundedDrawable(radiusPx)
+  local d = GradientDrawable()
+  d.setShape(GradientDrawable.RECTANGLE)
+  d.setCornerRadius(radiusPx)
+  return d
+end
+
+-- 把 PopupMenu 弹窗背景换成圆角矩形:
+--   appcompat 的 mPopup 字段指向 MenuPopupHelper,其 setBackgroundDrawable 能圆角整个弹窗;
+--   同时给内部 ListView 铺一层圆角背景兜底。任一环节失败都静默保持默认外观,不影响功能。
+local function roundPopup(popup, radiusPx)
+  pcall(function ()
+    local field = popup.getClass().getDeclaredField("mPopup")
+    field.setAccessible(true)
+    local inner = field.get(popup)
+    pcall(function () inner.setBackgroundDrawable(roundedDrawable(radiusPx)) end)
+    pcall(function ()
+      local lv = inner.getListView()
+      if lv then
+        lv.setBackground(roundedDrawable(radiusPx))
+        lv.setDividerHeight(0)
+      end
+    end)
+  end)
+end
 
 local Debugger = SimpleClass {
   ICON_MODE_INFO = 0,
@@ -123,7 +156,8 @@ local Debugger = SimpleClass {
     self.old_print = _G.print
     self.old_onError = _G.onError
 
-    -- 接管全局 print:所有 print 输出都汇入调试浮窗缓冲,并保留原有 sendMsg 落盘
+    -- 接管全局 print:所有 print 输出都汇入调试浮窗缓冲。
+    -- sendMsg 仅用于落盘 luaforge.log;宿主在 debuggerActive 期间不会再在屏幕弹 Toast。
     _G.print = function (...)
       local n = select("#", ...)
       local buf = ""
@@ -157,6 +191,11 @@ local Debugger = SimpleClass {
         pcall(self.old_onError, ...)
       end
     end
+
+    -- 告知宿主:调试浮窗已接管 print / onError,抑制旧的屏幕 Toast 回显
+    pcall(function ()
+      context.setDebuggerActive(true)
+    end)
   end,
 
   destroy = function (self)
@@ -169,6 +208,11 @@ local Debugger = SimpleClass {
       self.old_onError = nil
     end
     pcall(function ()
+      if self.context then
+        self.context.setDebuggerActive(false)
+      end
+    end)
+    pcall(function ()
       self:removeFloatWindow()
     end)
     self.context = nil
@@ -180,28 +224,42 @@ local Debugger = SimpleClass {
   setTextMode = function (self, mode)
     local color, content
     if mode == self.ICON_MODE_ERROR then
-      color = INFO_ICON_COLOUR
+      color = PILL_COLOR_ERROR
       content = "Erroring"
     elseif mode == self.ICON_MODE_INFO then
-      color = themeColor("colorBackground", 0xFFFFFFFF)
+      color = themeColor("colorPrimary", DEFAULT_PRIMARY)
       content = "Console"
     else
       error("The icon mode is not exist")
     end
+    -- 底色放在圆角卡片上、文字区透明,保证圆角裁剪生效且配色随模式切换
+    if self.floatLayout then
+      pcall(function ()
+        self.floatLayout.setCardBackgroundColor(color)
+      end)
+    end
     if self.textView then
       self.textView.text = content
-      self.textView.backgroundColor = color
     end
   end,
 
   showFloatWindow = function (self)
     local MaterialCardView = bindClass "com.google.android.material.card.MaterialCardView"
+    local density = self.context.getResources().getDisplayMetrics().density
+    local radiusPx = CORNER_RADIUS_DP * density
+
     local floatLayout = MaterialCardView(self.context)
-    floatLayout.cardElevation = 8
+    floatLayout.setRadius(radiusPx)
+    floatLayout.cardElevation = 8 * density
+    floatLayout.strokeWidth = 0
+    self.floatLayout = floatLayout
 
     local textView = newInstance("androidx.appcompat.widget.AppCompatTextView", self.context)
-    textView.setPadding(38, 18, 38, 18)
+    textView.setPadding(
+      math.floor(38 * density), math.floor(18 * density),
+      math.floor(38 * density), math.floor(18 * density))
     textView.textColor = themeColor("colorBackground", 0xFFFFFFFF)
+    textView.backgroundColor = 0
     floatLayout.addView(textView)
 
     self.textView = textView
@@ -228,8 +286,6 @@ local Debugger = SimpleClass {
       self.context.getWindow().getDecorView().addView(floatLayout, lp)
       self.useWindowManager = false
     end
-    self.floatLayout = floatLayout
-
     local startX, startY, wmX, wmY
 
     floatLayout.setOnTouchListener {
@@ -267,6 +323,7 @@ local Debugger = SimpleClass {
         menu.add(GROUP_ID, VARIABLES_ID, 1, "Show variables").onMenuItemClick = function ()
           self:showVariables()
         end
+        roundPopup(popup, radiusPx)
         popup.show()
         self.popup = popup
       end

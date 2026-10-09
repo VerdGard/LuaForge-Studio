@@ -121,6 +121,13 @@ public class LuaActivity extends AppCompatActivity
   private boolean isUpdata;
 
   private boolean mDebug = true;
+
+  /**
+   * 调试浮窗是否已接管 print/onError。
+   * 由注入脚本(assets/debugger.lua)通过 setDebuggerActive(true/false) 置位:
+   * 为 true 时 print 输出只进浮窗,不再在屏幕回显 Toast(避免同一份信息重复展示)。
+   */
+  private boolean debuggerActive = false;
   private LuaResources mResources;
   private final ArrayList<LuaGcable> gclist = new ArrayList<LuaGcable>();
   private String pageName = "main";
@@ -1626,6 +1633,14 @@ public class LuaActivity extends AppCompatActivity
     lastShow = now;
   }
 
+  /**
+   * 由调试浮窗脚本调用:标记本页是否已接管 print/onError。
+   * 接管期间 sendMsg 只落盘、不再屏幕回显;浮窗销毁时复位。
+   */
+  public void setDebuggerActive(boolean active) {
+    this.debuggerActive = active;
+  }
+
   private void setField(String key, Object value) {
     synchronized (L) {
       try {
@@ -1686,7 +1701,8 @@ public class LuaActivity extends AppCompatActivity
         case 0:
           {
             String data = msg.getData().getString(DATA);
-            if (mDebug) showToast(data);
+            // 调试浮窗已接管时不再弹屏幕 Toast:print 只在浮窗内展示
+            if (mDebug && !debuggerActive) showToast(data);
             status.append(data + "\n");
             adapter.add(data);
           }

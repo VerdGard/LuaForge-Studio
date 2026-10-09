@@ -15,6 +15,12 @@
   - `debugger_outputs`:读取浮窗缓冲(print / 报错),支持 `limit`、`keyword` 过滤
   - `debugger_clear`:清空浮窗缓冲
   - 数据源为运行中 LuaState 暴露的只读全局 `__lfDebugger`,与浮窗展示同源
+- print/报错只进调试浮窗,不再在屏幕重复弹 Toast
+  - 浮窗接管 `print`/`onError` 后调用 `LuaActivity.setDebuggerActive(true)`,
+    `MainHandler` 在该标记期间跳过旧 Toast 回显(仅落盘 `luaforge.log`)
+  - 浮窗销毁时复位标记,非调试运行保持原有 Toast 行为
+- 浮窗与 PopupMenu 弹窗改用圆角(20dp):浮窗底色随模式在 `Colors.colorPrimary` /
+  报错红之间切换,PopupMenu 经 `mPopup` 反射铺圆角背景
 - 版本固定为 **1.6.7**(本次及以后版本);本地不构建,统一由 GitHub Actions 出包
 
 ## 1.6.5
