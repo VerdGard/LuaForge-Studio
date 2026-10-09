@@ -14,8 +14,13 @@ local SimpleClass = function (t)
         __index = function (self, key)
           local member = t[key]
           if type(member) == "function" then
-            return function (_, ...)
-              return member(self, ...)
+            -- 同时兼容点号 self.m(args) 与冒号 self:m(args) 两种调用:
+            -- 冒号调用时首参即对象自身,此时丢弃它再前置注入 self。
+            return function (first, ...)
+              if first == self then
+                return member(self, ...)
+              end
+              return member(self, first, ...)
             end
           end
           return member
@@ -71,6 +76,15 @@ do
   else
     Colors = { colorPrimary = 0xFF6750A4, colorBackground = 0xFFFFFFFF }
   end
+end
+
+-- 安全取色:Colors 的 __index 会走 MaterialColors.getColor,可能抛错;失败回退默认值
+local function themeColor(name, fallback)
+  local ok, c = pcall(function () return Colors[name] end)
+  if ok and type(c) == "number" then
+    return c
+  end
+  return fallback
 end
 
 local PRINTS_ID = 0
@@ -169,7 +183,7 @@ local Debugger = SimpleClass {
       color = INFO_ICON_COLOUR
       content = "Erroring"
     elseif mode == self.ICON_MODE_INFO then
-      color = Colors.colorBackground
+      color = themeColor("colorBackground", 0xFFFFFFFF)
       content = "Console"
     else
       error("The icon mode is not exist")
@@ -187,11 +201,11 @@ local Debugger = SimpleClass {
 
     local textView = newInstance("androidx.appcompat.widget.AppCompatTextView", self.context)
     textView.setPadding(38, 18, 38, 18)
-    textView.textColor = Colors.colorBackground
+    textView.textColor = themeColor("colorBackground", 0xFFFFFFFF)
     floatLayout.addView(textView)
 
     self.textView = textView
-    self.setTextMode(self.ICON_MODE_INFO)
+    self:setTextMode(self.ICON_MODE_INFO)
 
     local Build = bindClass "android.os.Build"
     local Settings = bindClass "android.provider.Settings"
