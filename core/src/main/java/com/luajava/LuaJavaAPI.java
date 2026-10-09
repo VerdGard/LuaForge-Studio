@@ -35,7 +35,6 @@ import com.android.cglib.proxy.MethodFilter;
 import com.androlua.FirewallGate;
 import com.androlua.LuaBitmap;
 import com.androlua.LuaEnhancer;
-import com.androlua.LuaContext;
 import com.androlua.LuaGcable;
 
 import java.lang.reflect.Array;
@@ -125,67 +124,6 @@ public final class LuaJavaAPI {
      * 防火墙 Java 侧方法调用判定:命中监控通道且越界 -> 返回拦截原因;否则 null=放行。
      * 判定前先按类+方法名短路,未命中通道零开销(仅 IDE 会话 isActive 时进入)。
      */
-    /** Toast / Snackbar 实例判定(按类型名逐级上溯,避免与 material 编译期耦合)。 */
-    private static boolean isPopup(Object o) {
-        if (o == null) return false;
-        Class<?> c = o.getClass();
-        while (c != null) {
-            String n = c.getName();
-            if ("android.widget.Toast".equals(n)
-                    || "com.google.android.material.snackbar.Snackbar".equals(n)) {
-                return true;
-            }
-            c = c.getSuperclass();
-        }
-        return false;
-    }
-
-    /**
-     * 调试控制台方法调用拦截。桥未注册或目标不命中时直接放行;参数转换只读、不弹栈。
-     * 阻塞类确认(如 newActivity)由桥实现自行处理,此处不持有 Lua 栈锁。
-     */
-    private static ConsoleBridgeRef.InterceptResult interceptMethodCall(
-            long luaState, Object obj, String cacheName) {
-        // cacheName 形如 "com.androlua.LuaActivity@newActivity"(实例)或
-        // "android.widget.Toast.makeText"(静态/枚举);取最后 @ / . 后的裸方法名下传。
-        int at = cacheName.lastIndexOf('@');
-        int dot = cacheName.lastIndexOf('.');
-        String method = cacheName.substring(Math.max(at, dot) + 1);
-        Object bridge = ConsoleBridgeRef.getBridge();
-        if (bridge == null) return ConsoleBridgeRef.allow();
-        boolean interesting =
-                (obj instanceof LuaContext)
-                        || (obj instanceof Class
-                                && ("makeText".equals(method) || "make".equals(method)))
-                        || (isPopup(obj) && "show".equals(method));
-        if (!interesting) return ConsoleBridgeRef.allow();
-
-        // Toast/Snackbar show() —— 与 make 登记的实例配对,标注「已调用 show」,放行原显示
-        if (isPopup(obj) && "show".equals(method)) {
-            ConsoleBridgeRef.onPopupShown(obj);
-            return ConsoleBridgeRef.allow();
-        }
-
-        LuaState L = LuaStateFactory.getExistingState(luaState);
-        Object[] args;
-        synchronized (L) {
-            int top = L.getTop();
-            args = new Object[top];
-            for (int i = 0; i < top; i++) {
-                try {
-                    args[i] = L.toJavaObject(i + 1);
-                } catch (Exception e) {
-                    args[i] = null;
-                }
-            }
-        }
-        try {
-            return ConsoleBridgeRef.interceptMethodCall(bridge, obj, method, args, luaState);
-        } catch (Exception e) {
-            return ConsoleBridgeRef.allow();
-        }
-    }
-
     private static String firewallCheckMethod(LuaState L, Object obj, String cacheName) {
         if (!FirewallGate.isActive()) return null;
         try {
@@ -314,21 +252,6 @@ public final class LuaJavaAPI {
             throw new LuaException(new SecurityException(fwBlock));
         }
 
-        // 调试控制台:方法调用拦截(newActivity / setContentView / runFunc / Toast / Snackbar)
-        ConsoleBridgeRef.InterceptResult intercept = interceptMethodCall(luaState, obj, cacheName);
-        if (intercept.isVeto()) {
-            synchronized (L) {
-                L.pushNil();
-            }
-            return 1;
-        }
-        if (intercept.isReplace()) {
-            synchronized (L) {
-                L.pushObjectValue(intercept.replaceValue);
-            }
-            return 1;
-        }
-
         synchronized (L) {
             StringBuilder msgBuilder = new StringBuilder();
             Method method = null;
@@ -397,17 +320,6 @@ public final class LuaJavaAPI {
                         //e.printStackTrace();
                         msgBuilder.append("  at ").append(method).append("\n  -> ").append((e.getCause() != null) ? e.getCause() : e).append("\n");
                         throw new LuaException("Invalid method call.\n" + msgBuilder);
-                    }
-
-                    // 调试控制台:makeText/make 工厂返回实例 -> 登记文本,show() 时配对标注(不阻断原显示)
-                    if (isPopup(ret)
-                            && ("makeText".equals(method.getName()) || "make".equals(method.getName()))
-                            && ConsoleBridgeRef.isBridgeActive()) {
-                        Object popupText = objs.length > 1 ? objs[1] : null;
-                        ConsoleBridgeRef.onPopupCaptured(
-                                ret,
-                                popupText == null ? "" : String.valueOf(popupText),
-                                !(ret instanceof android.widget.Toast));
                     }
 
                     // Void function returns null
@@ -479,17 +391,6 @@ public final class LuaJavaAPI {
                             voidMethodCache.put(cacheName, method);
                             break;
                     }
-                    // 调试控制台:makeText/make 工厂返回实例 -> 登记文本,show() 时配对标注(不阻断原显示)
-                    if (isPopup(ret)
-                            && ("makeText".equals(method.getName()) || "make".equals(method.getName()))
-                            && ConsoleBridgeRef.isBridgeActive()) {
-                        Object popupText = objs.length > 1 ? objs[1] : null;
-                        ConsoleBridgeRef.onPopupCaptured(
-                                ret,
-                                popupText == null ? "" : String.valueOf(popupText),
-                                !(ret instanceof android.widget.Toast));
-                    }
-
                     // Void function returns null
                     if (ret == null && method.getReturnType().equals(Void.TYPE))
                         return 0;
@@ -855,12 +756,6 @@ public final class LuaJavaAPI {
     public static int javaBindClass(long luaState, String className) throws LuaException {
         LuaState L = LuaStateFactory.getExistingState(luaState);
         Class<?> clazz = bindClass(className);
-        if (ConsoleBridgeRef.isBridgeActive()) {
-            try {
-                ConsoleBridgeRef.onBindClass(className, clazz);
-            } catch (Exception ignored) {
-            }
-        }
         L.pushJavaObject(clazz);
         return 1;
     }

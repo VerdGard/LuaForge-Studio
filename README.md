@@ -1,5 +1,22 @@
 # 更新日志
 
+## 1.6.7
+- **彻底弃用旧「调试控制台」**,改用内置 `debugger.lua`(浮窗式调试器,来源 Aqora,已适配本项目 Lua 方言)
+  - 删除 app 模块 `com.luaforge.studio.console.**`(约 40 文件)、core 侧 `ConsoleBridgeRef` 反射门面、MCP `ConsoleTools.kt` 与 manifest 里的 `ConsoleInitializer` 提供者
+  - `core`/`a` 侧移除全部控制台埋点:`LuaActivity` 的 traced require / `onEvent` / 音量键唤回浮球 / `reportConsoleError`,`LuaJavaAPI` 的方法调用拦截与 popup 捕获,`LuaPrint` 回归原始简单实现
+  - 适配点:本项目把 `lambda` 作为**解析器保留字**(`lambda(params) -> expr`),`debugger.lua` 原用的 `lambda(t):method(...)` 无法编译 → 改写为普通 `SimpleClass(t)`;不替换 `_G.error`(避免破坏 `pcall`/`assert`),仅接管 `_G.onError`;浮窗 `LayoutParams` 补 `type`(API≥26 用 `TYPE_APPLICATION_OVERLAY` 并查 `Settings.canDrawOverlays`,否则 `TYPE_PHONE`,无权限时回退挂 `decorView`);颜色优先 `require "Colors"`,失败回退内置色
+  - 加载源**内置到 assets**:`app/src/main/assets/debugger.lua`,由 `DebuggerHost`(LuaSessionHook)在会话启动时注入
+- **所有 print 与调试信息统一走 debugger**
+  - `debugger.lua` 覆盖全局 `print`:写入浮窗缓冲,并 `pcall(context.sendMsg)` 保留 `luaforge.log` 落盘
+  - Lua 报错经 `_G.onError` 进入浮窗;`LuaActivity.sendError` 改为 `runFunc("onError", ...)` 未接管时才回退 `sendMsg`
+  - `core` 的 `LuaSessionHook` 改为多槽接口并新增 `onSessionEnd(LuaState)`,`onSessionStart` 增加 `boolean toolLaunch` 形参;`LuaActivity` 提供 `addSessionHook`/`removeSessionHook`,工具型启动(布局助手)经 `debugger_disable` extra 抑制注入
+- **MCP**:移除 6 个 `console_*` 工具,新增 3 个 debugger 工具
+  - `debugger_status`:当前运行页面 / 项目 / 浮窗是否注入 / 缓冲条数
+  - `debugger_outputs`:读取浮窗缓冲(print / 报错),支持 `limit`、`keyword` 过滤
+  - `debugger_clear`:清空浮窗缓冲
+  - 数据源为运行中 LuaState 暴露的只读全局 `__lfDebugger`,与浮窗展示同源
+- 版本固定为 **1.6.7**(本次及以后版本);本地不构建,统一由 GitHub Actions 出包
+
 ## 1.6.5
 - 新增 `MemUtil` 全局工具类与底层 `libmemkit.so`(C 实现,内存**读写 / 搜索**,风格接近 GameGuardian)
   - 在项目 `settings.json` 的 `global_utils` 加入 `MemUtil` 即注册为 Lua 全局函数;也可 `require "memkit"` 直接用原生接口(可选参数语义更完整)

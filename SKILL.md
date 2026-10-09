@@ -1,6 +1,6 @@
 ---
 name: luaforge-studio
-description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaForge-Studio 内置 MCP 服务(HTTP JSON-RPC, 默认端口 8787)驱动编辑器:读写源码、语法检查、编译验证、构建并安装 APK、调试运行并用控件树断言界面。关键词: LuaForge-Studio、Lua、ALY、loadlayout、import、luajava、global_utils、MemUtil、MCP、tools/call、run_project、check_screen、build_apk、check_syntax、console_status、console_outputs。"
+description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaForge-Studio 内置 MCP 服务(HTTP JSON-RPC, 默认端口 8787)驱动编辑器:读写源码、语法检查、编译验证、构建并安装 APK、调试运行并用控件树断言界面。关键词: LuaForge-Studio、Lua、ALY、loadlayout、import、luajava、global_utils、MemUtil、MCP、tools/call、run_project、check_screen、build_apk、check_syntax、debugger_status、debugger_outputs。"
 ---
 
 # LuaForge-Studio 技能
@@ -272,7 +272,7 @@ curl -X POST http://127.0.0.1:8787/ -H 'Content-Type: application/json' \
 - 路径可为项目相对路径,或允许范围内的绝对路径。
 - 不传 `path` 时多数工具回退到"当前打开的项目 / 当前活动文件"。
 
-### 3.2 工具清单(50 个,`McpTools.kt` + `ConsoleTools.kt` 实测)
+### 3.2 工具清单(47 个,`McpTools.kt` 实测)
 
 **项目与文件**
 
@@ -314,18 +314,18 @@ curl -X POST http://127.0.0.1:8787/ -H 'Content-Type: application/json' \
 | `list_global_utils` | 查看项目 `global_utils` 配置及这些工具类**运行时会实际注册**的 Lua 全局函数(参数、返回类型、context 注入、同名覆盖);顺带暴露 `unknown`(拼错的名字)与 `runningPages` | `path` |
 | `call_global_util` | 在**运行中**的项目里调用 `global_utils` 注册的 Lua 全局函数(与项目自身调用同一路径;首个 `Context`/`Activity` 形参自动注入) | `name` **必填**、`args`、`page`、`path`、`timeoutMs` |
 
-**调试控制台(只读 + 清空,与浮窗同源)**
+**调试浮窗(debugger.lua,只读 + 清空,与浮窗同源)**
 
 | 工具 | 说明 | 关键参数 |
 |---|---|---|
-| `console_status` | 控制台状态:会话(项目/文件/调试模式/已运行时长)、面板(浮球/浮窗/状态机)、当前文件与布局、捕获开关、缓冲与错误计数 | — |
-| `console_outputs` | 控制台「输出」缓冲:print / Lua 报错 / Toast / Snackbar(含逐参 Lua 类型与真实类型) | `file`、`label`、`limit`、`includeTypes` |
-| `console_events` | 控制台事件条目:Lua 侧实际被调用的函数及参数摘要 | `limit`、`func` |
-| `console_modules` | 控制台「环境」:require 模块 / bindClass 类 / `libs/*.dex` 方法签名 | `file` |
-| `console_logcat` | 本调试会话 logcat(与控制台「Logcat」页同源) | `lines`、`level` |
-| `console_clear` | 清空控制台输出缓冲(不动 `luaforge.log`) | `scope` |
+| `debugger_status` | 调试浮窗状态:当前运行页面 / 项目 / 是否注入浮窗 / 缓冲条数 | `page`、`path` |
+| `debugger_outputs` | 读取浮窗缓冲条目(print / Lua 报错,按发生顺序) | `limit`、`keyword`、`page`、`path` |
+| `debugger_clear` | 清空浮窗缓冲 | `page`、`path` |
 
-> `console_*` 仅在**调试运行(debugmode 项目)**时产生数据;与既有 `get_logs` / `get_runtime_errors`(读 `luaforge.log` 文本)不同,这批工具读的是控制台的**结构化缓冲**,与浮窗展示同源。
+> 调试运行(debugmode 项目)时 `assets/debugger.lua` 注入页面并接管全局 `print` / `onError`,
+> 所有 print 与调试信息进入浮窗缓冲;这批工具读的是运行中 LuaState 暴露的只读全局 `__lfDebugger`(内存缓冲),
+> 与浮窗展示同源,区别于 `get_logs` / `get_runtime_errors`(读 `luaforge.log` 文本尾部)。
+> 非 debugmode 项目或用 `debugger_disable` 抑制的工具型启动不注入浮窗。
 
 ### 3.3 标准工作流
 

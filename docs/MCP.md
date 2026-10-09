@@ -1,4 +1,4 @@
-# MCP 服务(LuaForge-Studio 1.6.4)
+# MCP 服务(LuaForge-Studio 1.6.7)
 
 把编辑器的能力(读写代码、调试运行、构建 APK、界面检查)通过 [Model Context Protocol](https://modelcontextprotocol.io) 暴露给外部 AI 客户端。
 
@@ -49,7 +49,7 @@ curl -X POST http://127.0.0.1:8787/ -H 'Content-Type: application/json' \
 { "headers": { "Authorization": "Bearer <你的令牌>" } }
 ```
 
-## 4. 工具清单(50 个)
+## 4. 工具清单(47 个)
 
 参数均为可选,除非标 **必填**。带 `array` 的参数可传 JSON 数组,也可传换行/逗号分隔的字符串。
 
@@ -124,31 +124,32 @@ curl -X POST http://127.0.0.1:8787/ -H 'Content-Type: application/json' \
 | `clear_logs` | 清空 `luaforge.log` | — |
 | `get_logs` | 读取应用日志末尾内容 | `lines`(默认 200) |
 
-### 调试控制台
+### 调试浮窗(debugger.lua)
 
-调试控制台(浮球 + 非全屏浮窗)在**调试运行(debugmode 项目)**期间捕获的运行现场,
-这里以只读工具暴露给 MCP:读到的是控制台浮窗展示的**同一份结构化数据**。
+调试运行(**debugmode 项目**)时,`assets/debugger.lua` 会注入每个页面并显示浮窗,
+脚本接管全局 `print` 与 `onError`,项目里的所有 print 输出与 Lua 报错都进入浮窗缓冲。
+这里以只读 + 清空工具暴露给 MCP:读到的是运行中 LuaState 暴露的
+只读全局 `__lfDebugger`(浮窗实例),与浮窗展示同源。
 
 | 工具 | 说明 | 参数 |
 | --- | --- | --- |
-| `console_status` | 控制台状态:会话(项目 / 文件 / 调试模式 / 已运行时长)、面板(浮球 / 浮窗 / 状态机)、当前文件与布局判定、捕获开关、缓冲与错误计数 | — |
-| `console_outputs` | 读取控制台「输出」缓冲:print / Lua 报错 / Toast / Snackbar 条目(含逐参 Lua 类型与真实类型),按文件缓冲分组 | `file`、`label`(print/error/toast/snackbar)、`limit`(默认 100)、`includeTypes`(默认 true) |
-| `console_events` | 读取控制台事件条目:Lua 侧显式定义且被实际调用的函数(生命周期 / 事件回调),含时间、参数摘要、所在文件 | `limit`(默认 100)、`func` |
-| `console_modules` | 读取控制台「环境」信息:Lua 版本 / 是否 JIT、按文件跟踪的 require 模块(Lua / 原生库,含函数签名)、bindClass 的 Java 类、`libs/*.dex` 的类与反射方法签名 | `file`(缺省用当前会话游标文件) |
-| `console_logcat` | 读取本调试会话的 logcat(与控制台「Logcat」页同源,`--pid` 限定本进程) | `lines`(默认 200)、`level`(V/D/I/W/E/F/S) |
-| `console_clear` | 清空控制台输出缓冲(不动 `luaforge.log`) | `scope`(`current` / `all`,默认 `all`) |
+| `debugger_status` | 调试浮窗状态:当前运行页面、项目路径、浮窗是否注入(`debuggerActive`)、缓冲条数 | `page`、`path` |
+| `debugger_outputs` | 读取浮窗缓冲条目(print / Lua 报错,按发生顺序) | `limit`(默认 200)、`keyword`(子串过滤)、`page`、`path` |
+| `debugger_clear` | 清空浮窗缓冲 | `page`、`path` |
 
 与既有工具的**分工**区别于数据来源:
 
-- `get_logs` / `get_runtime_errors` 读 `luaforge.log` 的**文本尾部**
-- `console_outputs` / `console_events` / `console_modules` / `console_logcat` 读控制台的**结构化缓冲与捕获文件**
+- `get_logs` / `get_runtime_errors` 读 `luaforge.log` 的**文本尾部**(print 经 `context.sendMsg` 同步落盘)
+- `debugger_outputs` 读浮窗的**内存缓冲**,反映当前运行实例尚未落盘的最新现场
 
 注意事项:
 
-- 控制台仅在**调试运行**时激活:非 debugmode 项目、或用 `console_disable` 抑制的工具型启动(布局助手)**不产生**捕获数据
-- `console_outputs` 的 `file` 是**绝对路径**(缓冲键),可用 `console_status` 的 `currentFile` 取值
-- `console_*` 为只读 + 清空,不会改变控制台设置,也不驱动浮球 / 浮窗 UI(面板仍由使用者手动打开)
-- 无会话 / 无捕获时返回明确空态或错误,不抛异常
+- 仅在**调试运行(debugmode 项目)**时注入:非 debugmode 项目、或用 `debugger_disable` 抑制的
+  工具型启动(布局助手)不注入浮窗,`debugger_outputs` 会返回明确错误
+- 多页面项目会在每个 debug 页面各注入一个浮窗;`debugger_*` 通过 `page`(pageName)或
+  `path`(项目路径)定位目标实例,未指定时回退当前运行实例
+- `debugger_*` 为只读 + 清空,不驱动浮窗 UI
+- 无会话 / 未注入时返回明确空态或错误,不抛异常
 
 ### 全局工具类(global_utils)
 

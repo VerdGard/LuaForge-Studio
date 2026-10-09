@@ -35,10 +35,16 @@ object FirewallHost : LuaSessionHook {
     @Synchronized
     fun install(context: Context) {
         appContext = context.applicationContext
-        LuaActivity.setSessionHook(this)
+        LuaActivity.addSessionHook(this)
     }
 
-    override fun onSessionStart(L: LuaState, luaDir: String, luaPath: String, debugMode: Boolean) {
+    override fun onSessionStart(
+        L: LuaState,
+        luaDir: String,
+        luaPath: String,
+        debugMode: Boolean,
+        toolLaunch: Boolean
+    ) {
         // 仅 IDE 调试会话注入;非调试运行(模拟产物形态)不介入
         if (!debugMode) return
 

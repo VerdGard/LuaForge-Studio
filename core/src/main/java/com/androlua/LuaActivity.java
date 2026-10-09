@@ -51,7 +51,6 @@ import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 
-import com.luajava.ConsoleBridgeRef;
 import com.luajava.JavaFunction;
 import com.luajava.LuaException;
 import com.luajava.LuaObject;
@@ -122,8 +121,6 @@ public class LuaActivity extends AppCompatActivity
   private boolean isUpdata;
 
   private boolean mDebug = true;
-  /** 调试控制台会话句柄(反射构造的 SessionInfo);未注册控制台时为 null。 */
-  private Object consoleSession;
   private LuaResources mResources;
   private final ArrayList<LuaGcable> gclist = new ArrayList<LuaGcable>();
   private String pageName = "main";
@@ -132,14 +129,28 @@ public class LuaActivity extends AppCompatActivity
   private LuaObject mOnKeyShortcut;
 
   /**
-   * IDE 调试会话钩子。core 定义、IDE(app 模块)安装；
-   * 打包产物不安装 -> 为 null，入口零开销。
+   * IDE 调试会话钩子。core 定义、IDE(app 模块)安装;
+   * 打包产物不安装 -> 列表为空,入口零开销。
+   *
+   * <p>可安装多个(防火墙 / 调试浮窗等),按安装顺序依次回调。
    */
-  private static volatile LuaSessionHook sSessionHook;
+  private static final java.util.List<LuaSessionHook> sSessionHooks =
+      new java.util.concurrent.CopyOnWriteArrayList<LuaSessionHook>();
 
-  /** 由 IDE 在启动时安装（传 null 卸载）。 */
+  /** 由 IDE 在启动时安装(传 null 卸载全部)。覆盖既有钩子。 */
   public static void setSessionHook(LuaSessionHook hook) {
-    sSessionHook = hook;
+    sSessionHooks.clear();
+    if (hook != null) sSessionHooks.add(hook);
+  }
+
+  /** 追加一个会话钩子(如调试浮窗),与既有钩子共存。 */
+  public static void addSessionHook(LuaSessionHook hook) {
+    if (hook != null && !sSessionHooks.contains(hook)) sSessionHooks.add(hook);
+  }
+
+  /** 移除一个会话钩子。 */
+  public static void removeSessionHook(LuaSessionHook hook) {
+    sSessionHooks.remove(hook);
   }
 
   private static byte[] readAll(InputStream input) throws IOException {
@@ -237,35 +248,16 @@ public class LuaActivity extends AppCompatActivity
       mLuaDexLoader = new LuaDexLoader(this);
       mLuaDexLoader.loadLibs();
 
-      // IDE 会话钩子：注入防火墙脚本并预热判定网关。
-      // 放在 loadLibs() 之后：确保 libs/*.dex、原生库（如 lfs）已就位后再包装写入入口。
-      // 产物未安装钩子 -> 直接跳过，零开销。
-      LuaSessionHook hook = sSessionHook;
-      if (hook != null) {
+      // IDE 会话钩子:防火墙注入、调试浮窗注入等。
+      // 放在 loadLibs() 之后:确保 libs/*.dex、原生库(如 lfs)已就位后再包装写入入口。
+      // 产物未安装钩子 -> 列表为空,直接跳过,零开销。
+      // 工具型启动(布局助手等)经 debugger_disable 抑制,不进调试浮窗会话。
+      boolean toolLaunch = getIntent().getBooleanExtra("debugger_disable", false);
+      for (LuaSessionHook hook : sSessionHooks) {
         try {
-          hook.onSessionStart(L, luaDir, luaPath, mDebug);
+          hook.onSessionStart(L, luaDir, luaPath, mDebug, toolLaunch);
         } catch (Throwable ignored) {
           // 钩子异常不能阻断页面启动
-        }
-      }
-      // 调试控制台:会话开始(须在 doFile 前,保证 debugParams 可注入 LuaState)。
-      // 工具型启动(布局助手等)经 console_disable 抑制,不进调试会话。
-      // 控制台类只存在于 IDE:产物内反射失败 -> consoleSession 恒 null,零开销。
-      Object consoleBridge = ConsoleBridgeRef.getBridge();
-      if (consoleBridge != null && !getIntent().getBooleanExtra("console_disable", false)) {
-        try {
-          consoleSession =
-              ConsoleBridgeRef.newSessionInfo(
-                  this,
-                  L,
-                  luaPath,
-                  luaDir,
-                  luaExtDir,
-                  System.currentTimeMillis(),
-                  mDebug,
-                  getIntent().getStringExtra("debugParams"));
-          ConsoleBridgeRef.onSessionStart(consoleSession);
-        } catch (Exception ignored) {
         }
       }
       synchronized (sLuaActivityMap) {
@@ -697,13 +689,12 @@ public class LuaActivity extends AppCompatActivity
 
   @Override
   protected void onDestroy() {
-    // 调试控制台:会话结束(归档旧会话 / 停止 logcat / 移除浮球)
-    if (consoleSession != null) {
+    // IDE 会话钩子:会话结束(移除调试浮窗等现场资源)
+    for (LuaSessionHook hook : sSessionHooks) {
       try {
-        ConsoleBridgeRef.onSessionEnd(consoleSession);
-      } catch (Exception ignored) {
+        hook.onSessionEnd(L);
+      } catch (Throwable ignored) {
       }
-      consoleSession = null;
     }
     if (mReceiver != null) unregisterReceiver(mReceiver);
 
@@ -788,11 +779,6 @@ public class LuaActivity extends AppCompatActivity
 
   @Override
   public boolean onKeyDown(int keyCode, KeyEvent event) {
-    // 调试控制台:完全关闭后可经音量键恢复浮球
-    try {
-      if (ConsoleBridgeRef.onKeyDown(keyCode, event)) return true;
-    } catch (Exception ignored) {
-    }
     if (mOnKeyDown != null) {
       try {
         Object ret = mOnKeyDown.call(keyCode, event);
@@ -1296,36 +1282,6 @@ public class LuaActivity extends AppCompatActivity
     JavaFunction print = new LuaPrint(this, L);
     print.register("print");
 
-    // 调试控制台:按文件跟踪 require(仅控制台桥已注册时挂载;产物内零改动)
-    if (ConsoleBridgeRef.isBridgeActive()) {
-      final LuaObject originalRequire = L.getLuaObject("require");
-      JavaFunction tracedRequire =
-          new JavaFunction(L) {
-            @Override
-            public int execute() throws LuaException {
-              String name = (L.type(2) == LuaState.LUA_TSTRING) ? L.toString(2) : null;
-              if (originalRequire != null && !originalRequire.isNil()) {
-                L.pushObjectValue(originalRequire);
-                L.pushValue(2);
-                int ok = L.pcall(1, 1, 0);
-                if (ok == 0) {
-                  // 模块加载后枚举 C/Lua 库函数名与 debug.getinfo 参数个数
-                  if (name != null) {
-                    try {
-                      ConsoleBridgeRef.onRequire(name, probeRequireFunctions(L), probeIsNative(L));
-                    } catch (Exception ignored) {
-                    }
-                  }
-                  return 1;
-                }
-                throw new LuaException("require failed: " + L.toString(-1));
-              }
-              return 0;
-            }
-          };
-      tracedRequire.register("require");
-    }
-
     L.getGlobal("package");
     L.pushString(luaLpath);
     L.setField(-2, "path");
@@ -1408,89 +1364,6 @@ public class LuaActivity extends AppCompatActivity
     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
       ActivityManager.TaskDescription tDesc = new ActivityManager.TaskDescription(title.toString());
       setTaskDescription(tDesc);
-    }
-  }
-
-  /**
-   * 调试控制台:require 后枚举模块表的 C/Lua 函数名 -> debug.getinfo 参数个数。
-   * 纯只读,结束时恢复栈顶;非 table 直接返回,防 lua_next 原生崩溃。
-   */
-  private static Map<String, Integer> probeRequireFunctions(LuaState L) {
-    Map<String, Integer> out = new HashMap<String, Integer>();
-    if (L == null || L.getTop() < 1) return out;
-    int base = L.getTop();
-    if (L.type(base) != LuaState.LUA_TTABLE) return out;
-    try {
-      L.getGlobal("debug");
-      if (L.type(base + 1) == LuaState.LUA_TTABLE) {
-        L.getField(base + 1, "getinfo");
-        if (L.type(base + 2) == LuaState.LUA_TFUNCTION) {
-          L.pushNil();
-          while (L.next(base) != 0) {
-            if (L.type(base + 3) == LuaState.LUA_TSTRING && L.type(base + 4) == LuaState.LUA_TFUNCTION) {
-              String fname = L.toString(base + 3);
-              L.pushValue(base + 2);
-              L.pushValue(base + 4);
-              L.pushString("u");
-              int ok = L.pcall(2, 1, 0);
-              if (ok == 0 && L.type(base + 5) == LuaState.LUA_TTABLE) {
-                L.getField(base + 5, "nparams");
-                int np = (L.type(base + 6) == LuaState.LUA_TNUMBER) ? (int) L.toInteger(base + 6) : -1;
-                out.put(fname, np);
-                L.setTop(base + 5);
-              }
-            }
-            L.setTop(base + 4);
-            L.pop(1);
-          }
-        }
-      }
-    } catch (Exception ignored) {
-      out.clear();
-    }
-    L.setTop(base);
-    return out;
-  }
-
-  /** 模块来源探测:全部函数 what=="C" 视为原生库;含 Lua 函数/无函数/非表视为 lua 模块。 */
-  private static boolean probeIsNative(LuaState L) {
-    if (L == null || L.getTop() < 1) return false;
-    int base = L.getTop();
-    if (L.type(base) != LuaState.LUA_TTABLE) return false;
-    int cFuncs = 0;
-    int luaFuncs = 0;
-    try {
-      L.getGlobal("debug");
-      if (L.type(base + 1) != LuaState.LUA_TTABLE) return false;
-      L.getField(base + 1, "getinfo");
-      if (L.type(base + 2) != LuaState.LUA_TFUNCTION) return false;
-      L.pushNil();
-      int checked = 0;
-      while (L.next(base) != 0 && checked < 64) {
-        if (L.type(base + 3) == LuaState.LUA_TSTRING && L.type(base + 4) == LuaState.LUA_TFUNCTION) {
-          L.pushValue(base + 2);
-          L.pushValue(base + 4);
-          L.pushString("S");
-          int ok = L.pcall(2, 1, 0);
-          if (ok == 0 && L.type(base + 5) == LuaState.LUA_TTABLE) {
-            L.getField(base + 5, "what");
-            if (L.type(base + 6) == LuaState.LUA_TSTRING) {
-              String what = L.toString(base + 6);
-              if ("C".equals(what)) cFuncs++;
-              else if ("Lua".equals(what) || "main".equals(what) || "tail".equals(what)) luaFuncs++;
-            }
-            L.setTop(base + 5);
-          }
-          checked++;
-        }
-        L.setTop(base + 4);
-        L.pop(1);
-      }
-      return cFuncs > 0 && luaFuncs == 0;
-    } catch (Exception ignored) {
-      return false;
-    } finally {
-      L.setTop(base);
     }
   }
 
@@ -1592,11 +1465,6 @@ public class LuaActivity extends AppCompatActivity
           L.pushString(funcName);
           L.rawGet(-2);
           if (L.isFunction(-1)) {
-            // 事件捕获:Lua 文件显式定义且即将被调用的函数(含生命周期回调)一律记录
-            try {
-              ConsoleBridgeRef.onEvent(funcName, args);
-            } catch (Exception ignored) {
-            }
             L.getGlobal("debug");
             L.getField(-1, "traceback");
             L.remove(-2);
@@ -1700,18 +1568,9 @@ public class LuaActivity extends AppCompatActivity
   public void sendError(String title, Exception msg) {
     RuntimeLog.error(pageName + "." + title, title + ": " + msg.getMessage(), msg);
     Object ret = runFunc("onError", title, msg);
-    // 报错 Toast 由控制台设置项门控(默认关);未注册控制台时 isErrorToastEnabled 恒 true,保持原行为。
-    // 无论开关与否,错误都经 reportConsoleError 入控制台缓冲(浮球角标可见)。
     if (ret != null && ret.getClass() == Boolean.class && (Boolean) ret) {
-    } else if (ConsoleBridgeRef.isErrorToastEnabled()) sendMsg(title + ": " + msg.getMessage());
-    reportConsoleError(title, msg != null ? msg.getMessage() : String.valueOf(msg));
-  }
-
-  /** 调试控制台:Lua 运行时错误上报。桥未注册时零开销。 */
-  private void reportConsoleError(String title, String message) {
-    try {
-      ConsoleBridgeRef.onError(title, message);
-    } catch (Exception ignored) {
+    } else {
+      sendMsg(title + ": " + msg.getMessage());
     }
   }
 
@@ -1827,8 +1686,7 @@ public class LuaActivity extends AppCompatActivity
         case 0:
           {
             String data = msg.getData().getString(DATA);
-            // print/报错 Toast 统一由控制台开关门控;未注册控制台时恒 true,保持旧行为。
-            if (mDebug && ConsoleBridgeRef.isErrorToastEnabled()) showToast(data);
+            if (mDebug) showToast(data);
             status.append(data + "\n");
             adapter.add(data);
           }

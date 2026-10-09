@@ -284,6 +284,43 @@ object McpTools {
 
         tools.put(
             tool(
+                "debugger_status",
+                "调试浮窗(debugger.lua)状态:当前运行页面 / 项目 / 浮窗缓冲条数。" +
+                    "用于确认调试运行是否已注入浮窗、以及是否有 print/报错现场可读",
+                obj(
+                    "page" to strProp("目标页面名(pageName),存在多个运行页面时用于精确指定"),
+                    "path" to strProp("目标项目路径,缺省用当前打开的项目")
+                )
+            )
+        )
+
+        tools.put(
+            tool(
+                "debugger_outputs",
+                "读取调试浮窗缓冲:项目运行期间经全局 print 与 Lua 报错(onError)汇入的全部条目。" +
+                    "与 get_logs 读 luaforge.log 文本互补,这里读的是浮窗同源缓冲",
+                obj(
+                    "page" to strProp("目标页面名(pageName),存在多个运行页面时用于精确指定"),
+                    "path" to strProp("目标项目路径,缺省用当前打开的项目"),
+                    "limit" to intProp("返回最新条目数,默认 200"),
+                    "keyword" to strProp("只返回包含该关键词的条目")
+                )
+            )
+        )
+
+        tools.put(
+            tool(
+                "debugger_clear",
+                "清空调试浮窗缓冲(不动 luaforge.log),便于每次运行前取得干净的现场",
+                obj(
+                    "page" to strProp("目标页面名(pageName),存在多个运行页面时用于精确指定"),
+                    "path" to strProp("目标项目路径,缺省用当前打开的项目")
+                )
+            )
+        )
+
+        tools.put(
+            tool(
                 "refresh_editor",
                 "把磁盘上的最新内容重新载入编辑器(外部修改文件后强制刷新界面);缺省刷新全部已打开文件",
                 obj("path" to strProp("文件路径,缺省刷新全部已打开文件"))
@@ -491,9 +528,6 @@ object McpTools {
             )
         )
 
-        // 调试控制台适配层(只读 + 清空):与控制台浮窗同源的结构化现场
-        ConsoleTools.appendToolList(tools)
-
         return tools
     }
 
@@ -504,8 +538,6 @@ object McpTools {
     suspend fun call(context: Context, name: String, args: JSONObject): JSONObject {
         LogCatcher.i(TAG, "调用工具: $name")
         return try {
-            // 控制台适配层优先:命中 console_* 直接返回(未命中返回 null 继续下方判定)
-            ConsoleTools.call(context, name, args)?.let { return it }
             when (name) {
                 "list_projects" -> listProjects(context)
                 "list_files" -> listFiles(context, args)
@@ -549,6 +581,9 @@ object McpTools {
                 "check_screen" -> checkScreen(args)
                 "get_runtime_errors" -> getRuntimeErrors(args)
                 "clear_logs" -> clearLogs()
+                "debugger_status" -> debuggerStatus(context, args)
+                "debugger_outputs" -> debuggerOutputs(context, args)
+                "debugger_clear" -> debuggerClear(context, args)
                 "list_global_utils" -> listGlobalUtils(context, args)
                 "call_global_util" -> callGlobalUtil(context, args)
                 else -> errorResult("未知工具: $name")
@@ -1384,6 +1419,111 @@ object McpTools {
         } catch (e: Exception) {
             LogCatcher.e(TAG, "清空日志失败", e)
             errorResult("清空日志失败: ${e.message}")
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 调试浮窗(debugger.lua)
+    // ------------------------------------------------------------------
+
+    /**
+     * 读调试浮窗状态。
+     *
+     * 注入脚本(assets/debugger.lua)在运行 LuaState 上暴露只读全局 `__lfDebugger`(实例),
+     * 其 `prints` 字段为缓冲数组。这里在运行实例上按字段读取,与浮窗展示同源。
+     */
+    private suspend fun debuggerStatus(context: Context, args: JSONObject): JSONObject {
+        val activity = resolveRunningActivity(context, args)
+            ?: return debuggerNoSession(context)
+        return withContext(Dispatchers.Main) {
+            val state = activity.getLuaState()
+            if (state == null) return@withContext errorResult("运行实例没有 LuaState")
+            val prints = readDebuggerPrints(state)
+            textResult(
+                JSONObject()
+                    .put("page", activity.getPageName() ?: JSONObject.NULL)
+                    .put("projectPath", activity.getLuaDir() ?: JSONObject.NULL)
+                    .put("debuggerActive", prints != null)
+                    .put("bufferCount", prints?.size ?: 0)
+                    .toString(2)
+            )
+        }
+    }
+
+    private suspend fun debuggerOutputs(context: Context, args: JSONObject): JSONObject {
+        val activity = resolveRunningActivity(context, args)
+            ?: return debuggerNoSession(context)
+        val limit = args.optInt("limit", 200).coerceIn(1, 5000)
+        val keyword = args.optString("keyword", "").trim()
+        return withContext(Dispatchers.Main) {
+            val state = activity.getLuaState()
+            if (state == null) return@withContext errorResult("运行实例没有 LuaState")
+            val entries = readDebuggerPrints(state) ?: return@withContext errorResult(
+                "当前运行实例未注入调试浮窗。请确认项目 settings.json 的 debugmode 为 true 后重新 run_project。"
+            )
+            val filtered = if (keyword.isEmpty()) entries else entries.filter { it.contains(keyword) }
+            val tail = if (filtered.size > limit) filtered.subList(filtered.size - limit, filtered.size) else filtered
+            textResult(
+                JSONObject()
+                    .put("page", activity.getPageName() ?: JSONObject.NULL)
+                    .put("projectPath", activity.getLuaDir() ?: JSONObject.NULL)
+                    .put("total", entries.size)
+                    .put("matched", filtered.size)
+                    .put("returned", tail.size)
+                    .put("entries", JSONArray(tail))
+                    .toString(2)
+            )
+        }
+    }
+
+    private suspend fun debuggerClear(context: Context, args: JSONObject): JSONObject {
+        val activity = resolveRunningActivity(context, args)
+            ?: return debuggerNoSession(context)
+        return withContext(Dispatchers.Main) {
+            val state = activity.getLuaState()
+            if (state == null) return@withContext errorResult("运行实例没有 LuaState")
+            val outcome = runCatching {
+                val dbg = state.getLuaObject("__lfDebugger")
+                if (dbg == null || dbg.isNil()) error("调试浮窗未注入")
+                val fn = state.getLuaObject("__lfDebuggerClear")
+                if (fn == null || fn.isNil()) error("调试浮窗清空入口不存在")
+                fn._call_aux(arrayOfNulls<Any>(0), 1)
+                true
+            }
+            outcome.fold(
+                onSuccess = {
+                    textResult(JSONObject().put("cleared", true).toString(2))
+                },
+                onFailure = { e ->
+                    errorResult("清空调试缓冲失败: ${e.message ?: e}")
+                }
+            )
+        }
+    }
+
+    private fun debuggerNoSession(context: Context): JSONObject {
+        val running = LuaActivity.getRunningActivities()
+        return if (running.isEmpty()) {
+            errorResult("没有正在运行的项目。请先 run_project 启动调试运行,再读取调试浮窗。")
+        } else {
+            errorResult(
+                "未匹配到运行中的项目(当前运行页面: ${running.keys.joinToString(", ")})。" +
+                    "请用 page 指定 pageName,或用 path 指定项目。"
+            )
+        }
+    }
+
+    /** 读取 `__lfDebugger.prints` 缓冲为字符串列表;浮窗未注入 / 非表时返回 null。 */
+    private fun readDebuggerPrints(state: LuaState): List<String>? {
+        return try {
+            val dbg = state.getLuaObject("__lfDebugger")
+            if (dbg == null || dbg.isNil()) return null
+            val prints = dbg.getField("prints")
+            if (prints == null || prints.isNil() || !prints.isTable()) return null
+            prints.asArray().map { it?.toString() ?: "" }
+        } catch (e: Exception) {
+            LogCatcher.e(TAG, "读取调试浮窗缓冲失败", e)
+            null
         }
     }
 
