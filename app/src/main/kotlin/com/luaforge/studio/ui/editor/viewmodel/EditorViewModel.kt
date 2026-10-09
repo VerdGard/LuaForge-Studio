@@ -430,6 +430,29 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
         editorInstances[openFiles[activeFileIndex].file.absolutePath]
     } else null
 
+    /**
+     * 符号栏点击入口:根据「符号自动补全」设置决定是否补全配对。
+     * 例如点击 `(` 时插入 `()` 并把光标移到括号中间;关闭时退化为直接插入。
+     */
+    fun insertSymbolFromBar(symbol: String) {
+        val pair = if (SettingsManager.currentSettings.symbolAutoPair) autoPairFor(symbol) else null
+        if (pair != null) {
+            insertSymbolToCorrectEditor(pair.first, pair.second)
+        } else {
+            insertSymbolToCorrectEditor(symbol)
+        }
+    }
+
+    /** 左半符号 → (待插入文本, 光标落在文本内的偏移)。非成对符号返回 null。 */
+    private fun autoPairFor(symbol: String): Pair<String, Int>? = when (symbol) {
+        "(" -> "()" to 1
+        "[" -> "[]" to 1
+        "{" -> "{}" to 1
+        "\"" -> "\"\"" to 1
+        "'" -> "''" to 1
+        else -> null
+    }
+
     fun insertSymbolToCorrectEditor(symbol: String, selectionOffset: Int = symbol.length) {
         val validIndex = activeFileIndex.coerceIn(0, maxOf(0, openFiles.size - 1))
         if (activeFileIndex != validIndex) activeFileIndex = validIndex

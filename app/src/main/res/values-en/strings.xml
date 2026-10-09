@@ -180,6 +180,8 @@
     <string name="settings_third_party_widget_desc">Allow custom widgets from dex/jar files in the project libs folder; when disabled, only system and official widgets are allowed.</string>
     <string name="settings_smart_sorting">Smart sorting</string>
     <string name="settings_smart_sorting_desc">Automatically sort quick actions and symbol bar based on usage frequency.</string>
+    <string name="settings_symbol_auto_pair">Symbol auto-pairing</string>
+    <string name="settings_symbol_auto_pair_desc">Insert the matching closing bracket or quote and place the cursor in between when tapping a left bracket or quote on the symbol bar.</string>
     <string name="settings_hex_color_highlight">Hex Color Highlight</string>
     <string name="settings_hex_color_highlight_desc">Display Hex Color.</string>
 
@@ -660,6 +662,14 @@
     <string name="code_editor_build_type_debug">Debug</string>
     <string name="code_editor_build_type_debug_desc">Enable debug mode</string>
     <string name="code_editor_build_type_release">Release</string>
+    <string name="settings_build_abi">Packaging</string>
+    <string name="settings_build_abi_desc">Choose the CPU architectures kept when packaging</string>
+    <string name="settings_abi_universal">Universal</string>
+    <string name="settings_abi_universal_desc">Include both 32-bit and 64-bit, compatible with all devices (largest size)</string>
+    <string name="settings_abi_arm64">64-bit only</string>
+    <string name="settings_abi_arm64_desc">Keep arm64-v8a only, for the vast majority of modern devices</string>
+    <string name="settings_abi_arm32">32-bit only</string>
+    <string name="settings_abi_arm32_desc">Keep armeabi-v7a only, for older 32-bit devices</string>
     <string name="code_editor_build_type_release_desc">Disable debug mode</string>
     <string name="code_editor_build_type_default_desc">Build using the encryption and debug settings from project properties</string>
     <string name="code_editor_build_start">Start build</string>

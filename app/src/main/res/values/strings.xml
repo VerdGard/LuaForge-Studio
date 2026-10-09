@@ -180,6 +180,8 @@
     <string name="settings_third_party_widget_desc">允许使用项目 libs 目录下 dex/jar 里的自定义控件，关闭后仅允许系统与官方控件</string>
     <string name="settings_smart_sorting">智能排序</string>
     <string name="settings_smart_sorting_desc">根据使用频率自动排序快捷功能和符号栏</string>
+    <string name="settings_symbol_auto_pair">符号自动补全</string>
+    <string name="settings_symbol_auto_pair_desc">点击符号栏的左括号或引号时,自动补全配对并在括号中间定位光标</string>
     <string name="settings_hex_color_highlight">十六进制颜色高亮</string>
     <string name="settings_hex_color_highlight_desc">显示十六进制颜色</string>
 
@@ -663,6 +665,14 @@
     <string name="code_editor_build_type_release">Release 版</string>
     <string name="code_editor_build_type_release_desc">关闭调试模式</string>
     <string name="code_editor_build_type_default_desc">按项目属性中的加密与调试设置构建</string>
+    <string name="settings_build_abi">打包设置</string>
+    <string name="settings_build_abi_desc">选择打包时保留的 CPU 架构</string>
+    <string name="settings_abi_universal">通用版</string>
+    <string name="settings_abi_universal_desc">同时包含 32 位与 64 位,兼容全部设备(体积最大)</string>
+    <string name="settings_abi_arm64">仅 64 位</string>
+    <string name="settings_abi_arm64_desc">只保留 arm64-v8a,适配绝大多数现代设备</string>
+    <string name="settings_abi_arm32">仅 32 位</string>
+    <string name="settings_abi_arm32_desc">只保留 armeabi-v7a,适配老旧 32 位设备</string>
     <string name="code_editor_build_start">开始构建</string>
 
 </resources>

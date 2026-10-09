@@ -348,7 +348,8 @@ fun SymbolBar(
                             symbol = symbol,
                             onClick = {
                                 viewModel.incrementSymbolFrequency(symbol)
-                                viewModel.insertSymbolToCorrectEditor(symbol)
+                                // 经 insertSymbolFromBar:按「符号自动补全」设置决定是否补全配对
+                                viewModel.insertSymbolFromBar(symbol)
                             }
                         )
                     }

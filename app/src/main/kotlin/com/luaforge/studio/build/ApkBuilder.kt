@@ -3,6 +3,7 @@ package com.luaforge.studio.build
 import android.content.Context
 import org.json.JSONObject
 import com.luaforge.studio.build.maven.*
+import com.luaforge.studio.ui.settings.AbiTarget
 import com.luaforge.studio.utils.ConsoleUtil
 import com.luaforge.studio.utils.JsonUtil
 import com.luaforge.studio.utils.LogCatcher
@@ -165,7 +166,9 @@ class ApkBuilder {
             /** 项目 settings.json 的 encrypt：PROJECT_DEFAULT 构建类型下生效。 */
             encryptEnabled: Boolean = true,
             /** 项目 settings.json 的 mergeDex：是否将 libs 目录下的 dex 合并至 classes 根。 */
-            mergeDexEnabled: Boolean = true
+            mergeDexEnabled: Boolean = true,
+            /** 打包目标架构:通用 / 仅 64 位 / 仅 32 位。默认通用版以保持向后兼容。 */
+            abiTarget: AbiTarget = AbiTarget.UNIVERSAL
         ): String {
             LogCatcher.i("ApkBuilder", "开始构建APK")
             LogCatcher.i("ApkBuilder", "项目路径: $projectPath")
@@ -247,7 +250,8 @@ class ApkBuilder {
                     mavenJars,
                     buildType,
                     encryptLua,
-                    mergeDexEnabled
+                    mergeDexEnabled,
+                    abiTarget
                 )
 
                 if (unsignedApkPath == null) {
@@ -803,7 +807,8 @@ class ApkBuilder {
             mavenJars: List<File> = emptyList(),
             buildType: BuildType = BuildType.PROJECT_DEFAULT,
             encryptLua: Boolean = true,
-            mergeDexEnabled: Boolean = true
+            mergeDexEnabled: Boolean = true,
+            abiTarget: AbiTarget = AbiTarget.UNIVERSAL
         ): String? {
             val L = getSharedLuaState()
 
@@ -826,6 +831,9 @@ class ApkBuilder {
 
                 // 4. 清理未引用的库文件
                 cleanUnusedLibraries(workDir, referencedModules, projectPath)
+
+                // 4.5 按目标架构过滤 lib/ 下的 ABI 目录(通用版保留全部)
+                applyAbiFilter(workDir, abiTarget)
 
                 // 5. 加密core.apk中引用的库文件(未加密版跳过,保持明文)
                 if (encryptLua) {
@@ -1251,6 +1259,30 @@ class ApkBuilder {
                 }
             }
             return modules
+        }
+
+        /**
+         * 按目标架构过滤 APK 内的原生库目录。
+         *
+         * - [AbiTarget.UNIVERSAL] 保留 armeabi-v7a 与 arm64-v8a
+         * - [AbiTarget.ARM64]     仅保留 arm64-v8a,删除 lib/armeabi-v7a
+         * - [AbiTarget.ARM32]     仅保留 armeabi-v7a,删除 lib/arm64-v8a
+         *
+         * 通过删除整个 ABI 目录实现,不触碰库文件本身的引用扫描逻辑。
+         */
+        private fun applyAbiFilter(workDir: File, abiTarget: AbiTarget) {
+            val removeDirs = when (abiTarget) {
+                AbiTarget.UNIVERSAL -> emptyList()
+                AbiTarget.ARM64 -> listOf("armeabi-v7a")
+                AbiTarget.ARM32 -> listOf("arm64-v8a")
+            }
+            for (abi in removeDirs) {
+                val dir = File(workDir, "lib/$abi")
+                if (dir.exists()) {
+                    deleteDirectory(dir)
+                    LogCatcher.i("ApkBuilder", "按目标架构($abiTarget)移除 lib/$abi")
+                }
+            }
         }
 
         // 清理未引用的库文件

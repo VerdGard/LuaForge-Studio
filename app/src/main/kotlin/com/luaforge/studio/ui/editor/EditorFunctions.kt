@@ -10,6 +10,8 @@ import androidx.core.content.FileProvider
 import com.luaforge.studio.R
 import com.luaforge.studio.build.ApkBuilder
 import com.luaforge.studio.build.BuildType
+import com.luaforge.studio.ui.settings.AbiTarget
+import com.luaforge.studio.ui.settings.SettingsManager
 import com.luaforge.studio.ui.editor.viewmodel.EditorViewModel
 import com.luaforge.studio.utils.ConsoleUtil
 import com.luaforge.studio.utils.JsonUtil
@@ -133,7 +135,8 @@ suspend fun compileCurrentFile(
 suspend fun buildProject(
     context: Context,
     projectPath: String,
-    buildType: BuildType = BuildType.PROJECT_DEFAULT
+    buildType: BuildType = BuildType.PROJECT_DEFAULT,
+    abiTarget: AbiTarget = SettingsManager.currentSettings.abiTarget
 ): String =
     withContext(Dispatchers.IO) {
         LogCatcher.i("CodeEditScreen", "开始构建项目，路径: $projectPath")
@@ -314,7 +317,8 @@ val mavenDependencies = try {
                 mavenDependencies,
                 buildType,                   // 构建类型(跟随项目 / 未加密 / Debug / Release)
                 encryptProject,              // settings.json 的 encrypt（PROJECT_DEFAULT 时生效）
-                mergeDexEnabled              // settings.json 的 mergeDex
+                mergeDexEnabled,             // settings.json 的 mergeDex
+                abiTarget                    // 打包目标架构(通用/仅64位/仅32位)
             )
 
             // 构建后再次检查内存

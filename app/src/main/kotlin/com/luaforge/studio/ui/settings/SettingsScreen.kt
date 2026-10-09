@@ -9,6 +9,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
 import androidx.compose.material.icons.automirrored.filled.MergeType
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.TextSnippet
+import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Code
@@ -75,6 +77,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -227,6 +230,8 @@ fun SettingsScreen(
     var mcpTokenText by remember { mutableStateOf(currentSettingsState.mcpToken) }
     // 安全防护卡片(网络拦截 + 防火墙合并)展开态
     var securityExpanded by remember { mutableStateOf(false) }
+    // 打包设置卡片展开态
+    var buildAbiExpanded by remember { mutableStateOf(false) }
 
     var fontMenuExpanded by remember { mutableStateOf(false) }
     var editorFontMenuExpanded by remember { mutableStateOf(false) }
@@ -936,6 +941,37 @@ Column(
                         },
                         onClick = {
                             updateSettingsWithSave(currentSettingsState.copy(smartSortingEnabled = !currentSettingsState.smartSortingEnabled))
+                        }
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                    )
+
+                    SettingsListItem(
+                        title = stringResource(R.string.settings_symbol_auto_pair),
+                        subtitle = stringResource(R.string.settings_symbol_auto_pair_desc),
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Code,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = currentSettingsState.symbolAutoPair,
+                                onCheckedChange = {
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(symbolAutoPair = it)
+                                    )
+                                }
+                            )
+                        },
+                        onClick = {
+                            updateSettingsWithSave(currentSettingsState.copy(symbolAutoPair = !currentSettingsState.symbolAutoPair))
                         }
                     )
 
@@ -1875,8 +1911,35 @@ SettingsListItem(
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
+
                             Text(stringResource(R.string.settings_reset_default_colors))
                         }
+                    }
+                }
+            }
+
+            item {
+                SettingsCardGroup(
+                    title = stringResource(R.string.settings_build_abi),
+                    icon = Icons.Filled.Android,
+                    initiallyExpanded = buildAbiExpanded,
+                    onExpandedChange = { buildAbiExpanded = it }
+                ) {
+                    Text(
+                        text = stringResource(R.string.settings_build_abi_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+
+                    AbiTarget.entries.forEach { target ->
+                        AbiTargetOption(
+                            target = target,
+                            selected = currentSettingsState.abiTarget == target,
+                            onSelect = {
+                                updateSettingsWithSave(currentSettingsState.copy(abiTarget = target))
+                            }
+                        )
                     }
                 }
             }
@@ -2230,6 +2293,68 @@ fun SettingsCardGroup(
             }
         }
     }
+}
+
+/** 打包目标架构单选项。 */
+@Composable
+fun AbiTargetOption(
+    target: AbiTarget,
+    selected: Boolean,
+    onSelect: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 2.dp)
+            .clickable(onClick = onSelect),
+        shape = MaterialTheme.shapes.medium,
+        color = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        },
+        border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            RadioButton(selected = selected, onClick = onSelect)
+
+            Column(modifier = Modifier.padding(start = 2.dp)) {
+                Text(
+                    text = abiTargetLabel(target),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = abiTargetDescription(target),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/** 打包目标架构标题。 */
+@Composable
+private fun abiTargetLabel(target: AbiTarget): String = when (target) {
+    AbiTarget.UNIVERSAL -> stringResource(R.string.settings_abi_universal)
+    AbiTarget.ARM64 -> stringResource(R.string.settings_abi_arm64)
+    AbiTarget.ARM32 -> stringResource(R.string.settings_abi_arm32)
+}
+
+/** 打包目标架构说明。 */
+@Composable
+private fun abiTargetDescription(target: AbiTarget): String = when (target) {
+    AbiTarget.UNIVERSAL -> stringResource(R.string.settings_abi_universal_desc)
+    AbiTarget.ARM64 -> stringResource(R.string.settings_abi_arm64_desc)
+    AbiTarget.ARM32 -> stringResource(R.string.settings_abi_arm32_desc)
 }
 
 @Composable

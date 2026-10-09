@@ -107,6 +107,12 @@ private object PreferencesKeys {
     val SELF_GUARD = booleanPreferencesKey("self_guard")
     val CROSS_WRITE_COUNTS = stringPreferencesKey("cross_write_counts")
     val SELF_GUARD_COUNTS = stringPreferencesKey("self_guard_counts")
+
+    // 【新增】符号自动补全开关:底部符号栏点击左括号/引号时自动补全配对并居中光标
+    val SYMBOL_AUTO_PAIR = booleanPreferencesKey("symbol_auto_pair")
+
+    // 【新增】打包目标架构:ARM32 / ARM64 / UNIVERSAL
+    val ABI_TARGET = stringPreferencesKey("abi_target")
 }
 
 /** 防火墙拦截类型（分计）。 */
@@ -123,6 +129,16 @@ enum class SortOrder {
 // Toast 位置枚举
 enum class ToastPosition {
     TOP, BOTTOM
+}
+
+/**
+ * 打包目标架构。
+ * - [UNIVERSAL] 通用版:同时包含 armeabi-v7a 与 arm64-v8a,兼容所有设备(体积最大)
+ * - [ARM64]     仅 64 位:只保留 arm64-v8a
+ * - [ARM32]     仅 32 位:只保留 armeabi-v7a
+ */
+enum class AbiTarget {
+    UNIVERSAL, ARM64, ARM32
 }
 
 object SettingsManager {
@@ -298,6 +314,17 @@ object SettingsManager {
             emptyMap()
         }
 
+        // 【新增】符号自动补全(默认开启)
+        val symbolAutoPair = preferences[PreferencesKeys.SYMBOL_AUTO_PAIR] ?: true
+
+        // 【新增】打包目标架构(默认通用版)
+        val abiTargetName = preferences[PreferencesKeys.ABI_TARGET] ?: "UNIVERSAL"
+        val abiTarget = try {
+            AbiTarget.valueOf(abiTargetName)
+        } catch (_: Exception) {
+            AbiTarget.UNIVERSAL
+        }
+
         updateSettings(
             SettingsData(
                 themeType = themeType,
@@ -342,7 +369,9 @@ object SettingsManager {
                 crossProjectWriteGuard = crossProjectWriteGuard,    // 【新增】
                 selfGuard = selfGuard,                              // 【新增】
                 crossWriteCounts = crossWriteCounts,                // 【新增】
-                selfGuardCounts = selfGuardCounts                   // 【新增】
+                selfGuardCounts = selfGuardCounts,                  // 【新增】
+                symbolAutoPair = symbolAutoPair,                    // 【新增】
+                abiTarget = abiTarget                              // 【新增】
             )
         )
     }
@@ -421,6 +450,10 @@ object SettingsManager {
             preferences[PreferencesKeys.SELF_GUARD] = currentSettings.selfGuard
             preferences[PreferencesKeys.CROSS_WRITE_COUNTS] = Gson().toJson(currentSettings.crossWriteCounts)
             preferences[PreferencesKeys.SELF_GUARD_COUNTS] = Gson().toJson(currentSettings.selfGuardCounts)
+
+            // 【新增】保存符号自动补全与打包目标架构
+            preferences[PreferencesKeys.SYMBOL_AUTO_PAIR] = currentSettings.symbolAutoPair
+            preferences[PreferencesKeys.ABI_TARGET] = currentSettings.abiTarget.name
         }
         notifyListeners()
     }
@@ -606,4 +639,8 @@ data class SettingsData(
     val crossWriteCounts: Map<String, Int> = emptyMap(),
     /** 项目名 → 自我守护拦截次数 */
     val selfGuardCounts: Map<String, Int> = emptyMap(),
+    /** 符号自动补全:底部符号栏点击左括号或引号时自动补全配对并居中光标 */
+    val symbolAutoPair: Boolean = true,
+    /** 打包目标架构(默认通用版) */
+    val abiTarget: AbiTarget = AbiTarget.UNIVERSAL,
 )
