@@ -1659,7 +1659,9 @@ public class LuaActivity extends AppCompatActivity
    * 逐条 remove 会在高频输出下产生 O(n) 抖动,批量裁剪把均摊成本降到 O(1)。
    */
   private void recordLogLine(String data) {
-    status.append(data).append("\n");
+    // 注意:TextView.append(...) 返回 void,不能链式调用;须分两句。
+    status.append(data);
+    status.append("\n");
     adapter.add(data);
     int over = adapter.getCount() - MAX_LOG_LINES;
     if (over > 0) {
