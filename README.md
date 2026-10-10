@@ -31,6 +31,16 @@
 - 设置新增**打包设置**卡片:选择打包时保留的 CPU 架构
   - 三选一:**通用版**(32 位 + 64 位)/ **仅 64 位**(arm64-v8a)/ **仅 32 位**(armeabi-v7a)
   - 清理阶段按选择裁剪 APK 的 `lib/` 目录,减小产物体积
+- **MCP 默认端口由 `8787` 改为 `9123`**
+  - 代码 `McpManager.kt` / `SettingsManager.kt` 三处默认值同步;设置页仍可改(1024–65535)
+  - 文档 `docs/MCP.md`、`SKILL.md` 中示例地址一并更新
+- 设置 → 编辑器配置:移除「滑动手势」开关及其在编辑器中的上下滑动显隐快捷功能栏逻辑
+  - 同步清理 `CodeEditorView` 的触摸监听、`EditorTabs`/`CodeEditScreen` 的透传链路、`SettingsManager` 字段与 `get_settings` 暴露项
+- 修复与增强**布局助手**(`assets/layouthelper/main.lua`)
+  - 修复:启动诊断误报。无三方库的项目(N 三方库)本应 `dex_loaders=0 scanned=0`,旧实现却把这条无害统计经 `Error()` 记为 `[ERROR]`,且日志出现 `[Layouthelper] [Layouthelper]` 双前缀 → 现统一日志出口(仅本函数补标签),诊断降级为 `INFO`,并追加 `libs_exists` / `lib_files` / `third_party_views` 便于判断
+  - 修复:图片属性候选漏配 `.jpeg` / `.webp` / `.bmp` / `.gif`,且未做大写兼容 → `addDir` 补齐并大小写不敏感
+  - 增强:项目 `libs/*.dex` 中解析出的三方 View 子类会**注册为全局控件**并加入「添加控件」列表(新增「三方控件」分类,上限 80 个);点击时若未预注册,经 `_G.__lfThirdParty` 懒解析;仍解析不出时给出明确报错而非静默失败
+  - 修复:`libsDir.listFiles()` 为 nil 时不再崩溃(空目录保护)
 - 版本固定为 **1.6.7**(本次及以后版本);本地不构建,统一由 GitHub Actions 出包
 
 ## 1.6.5

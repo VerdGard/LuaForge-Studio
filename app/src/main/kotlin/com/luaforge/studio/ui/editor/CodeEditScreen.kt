@@ -68,9 +68,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-// 定义滑动手势方向枚举
-enum class SwipeDirection { UP, DOWN }
-
 // 定义覆盖层密封类
 sealed class OverlayScreen {
     object NONE : OverlayScreen()
@@ -180,9 +177,6 @@ fun CodeEditScreen(
     val onReplaceCurrent: (String) -> Unit = { text -> viewModel.replaceCurrent(text) }
     val onReplaceAll: (String) -> Unit = { text -> viewModel.replaceAll(text) }
     // =================================
-
-    // ========== 快捷功能栏可见性状态 ==========
-    var quickBarVisible by remember { mutableStateOf(true) }
 
     // ========== Maven下载进度状态 ==========
     var showDownloadProgress by remember { mutableStateOf(false) }
@@ -679,13 +673,6 @@ fun CodeEditScreen(
                                             toast = toast,
                                             quickActionScrollState = quickActionScrollState,
                                             symbolBarScrollState = symbolBarScrollState,
-                                            quickBarVisible = quickBarVisible,
-                                            onSwipe = { direction ->
-                                                quickBarVisible = when (direction) {
-                                                    SwipeDirection.UP -> false
-                                                    SwipeDirection.DOWN -> true
-                                                }
-                                            }
                                         )
                                     }
                                 }
@@ -957,9 +944,6 @@ fun EditorContent(
     toast: NonBlockingToastState,
     quickActionScrollState: ScrollState,
     symbolBarScrollState: ScrollState,
-    // 新增参数
-    quickBarVisible: Boolean,
-    onSwipe: (SwipeDirection) -> Unit,
     // 所属项目路径(用于按项目解析编辑器设置)
     projectPath: String = ""
 ) {
@@ -980,7 +964,7 @@ fun EditorContent(
         }
 
         AnimatedVisibility(
-            visible = hasOpenFiles && quickBarVisible,
+            visible = hasOpenFiles,
             enter = fadeIn() + expandVertically(
                 expandFrom = Alignment.Top,
                 animationSpec = tween(300)
@@ -1045,8 +1029,7 @@ fun EditorContent(
                             scope.launch { if (fileTreeDrawerState.isClosed) fileTreeDrawerState.open() }
                         },
                         projectPath = projectPath,
-                        modifier = Modifier.fillMaxSize(),
-                        onSwipe = onSwipe // 传递滑动手势回调
+                        modifier = Modifier.fillMaxSize()
                     )
                 }
                 DraggableSymbolPanel(

@@ -23,13 +23,23 @@ local MyBottomSheetDialog = require "MyBottomSheetDialog"
 local loadlayout = require "loadlayout"
 local loadlayout2 = require "loadlayout2"
 
-function Error(str)
+-- 统一日志出口:由本函数补 [Layouthelper] 标签,调用方只传正文,
+-- 避免调用方再拼标签导致 "[Layouthelper] [Layouthelper]" 双前缀
+local function logLine(level, msg)
   local logPath = "/storage/emulated/0/LuaForge-Studio/luaforge.log"
   local file = io.open(logPath, "a+")
   if file then
-    file:write(string.format("[%s] [ERROR] [Layouthelper] %s\n", os.date("%Y-%m-%d %H:%M:%S"), tostring(str)))
+    file:write(string.format("[%s] [%s] [Layouthelper] %s\n", os.date("%Y-%m-%d %H:%M:%S"), level, tostring(msg)))
     file:close()
   end
+end
+
+function Error(msg)
+  logLine("ERROR", msg)
+end
+
+function Info(msg)
+  logLine("INFO", msg)
 end
 
 -- 三方控件支持:预载项目 libs 目录下的 dex/jar,并打通宿主 classpath 之外的装载器链。
@@ -38,9 +48,10 @@ end
 if _G.THIRD_PARTY_WIDGET_SUPPORT then
   local libFiles = {}
   local libsDir = File(luadir .. "/libs")
-  if libsDir.exists() then
+  local libsExists = libsDir.exists()
+  if libsExists then
     local ls = libsDir.listFiles()
-    for n = 0, #ls - 1 do
+    for n = 0, (ls and #ls or 0) - 1 do
       local f = ls[n]
       local name = f.getName()
       if name:find("%.dex$") or name:find("%.jar$") then
@@ -129,17 +140,49 @@ if _G.THIRD_PARTY_WIDGET_SUPPORT then
     end
   end
 
-  -- 诊断埋点:装载器数、dex 类表规模、注册结果
+  -- 三方控件注册:从 dex 类表挑出 View 子类,注册为全局并加入「添加控件」列表,
+  -- 同时暴露解析器供对话框懒解析未预先注册的三方类
+  _G.__lfThirdParty = { resolve = loadFromLoaders, map = simpleToFull }
+  local tpNames = {}
   do
-    local msgs = {}
-    msgs[#msgs + 1] = "[Layouthelper] dex loaders=" .. tostring(#loaders) ..
-      " third_party=true scanned=" .. tostring(dexEntryCount) ..
-      " registered=" .. tostring(#registered)
-    msgs[#msgs + 1] = "[Layouthelper] registered: " ..
-      (#registered > 0 and table.concat(registered, ",") or "(none)")
-    local joined = table.concat(msgs, "\n")
-    print(joined)
-    Error(joined)
+    local cap = 80
+    for short, full in pairs(simpleToFull) do
+      if #tpNames >= cap then break end
+      if _G[short] == nil then
+        local okC, c = pcall(loadFromLoaders, full)
+        if okC and c then
+          local okV, isV = pcall(function() return View.isAssignableFrom(c) end)
+          if okV and isV then
+            _G[short] = c
+            tpNames[#tpNames + 1] = short
+          end
+        end
+      end
+    end
+    table.sort(tpNames)
+  end
+  if #tpNames > 0 and ns and wds then
+    ns[#ns + 1] = "Third-party"
+    wds[#wds + 1] = tpNames
+    if ns2 then ns2[#ns2 + 1] = "三方控件" end
+    if wds2 then wds2[#wds2 + 1] = {} end
+  end
+
+  -- 诊断埋点:装载器数、dex 类表规模、注册结果。
+  -- 项目无三方库时 loaders=0/scanned=0 属正常,记录为 INFO 而非 ERROR。
+  do
+    local parts = {}
+    parts[#parts + 1] = "dex_loaders=" .. tostring(#loaders)
+    parts[#parts + 1] = "third_party=true"
+    parts[#parts + 1] = "libs=" .. luadir .. "/libs"
+    parts[#parts + 1] = "libs_exists=" .. tostring(libsExists)
+    parts[#parts + 1] = "lib_files=" .. tostring(#libFiles)
+    parts[#parts + 1] = "scanned=" .. tostring(dexEntryCount)
+    parts[#parts + 1] = "registered=" .. tostring(#registered)
+    parts[#parts + 1] = "third_party_views=" .. tostring(#tpNames)
+    Info(table.concat(parts, " "))
+    Info("registered: " ..
+      ((registered and #registered > 0) and table.concat(registered, ",") or "(none)"))
   end
 end
 
@@ -203,12 +246,17 @@ checks.scaleType = {
 
 function addDir(out, dir, f)
   local ls = f.listFiles()
+  if not ls then return end
   for n = 0, #ls - 1 do
     local name = ls[n].getName()
     if ls[n].isDirectory() then
       addDir(out, dir .. name .. "/", ls[n])
-     elseif name:find("%.j?pn?g$") then
-      table.insert(out, dir .. name)
+     else
+      local lname = name:lower()
+      if lname:find("%.jpe?g$") or lname:find("%.png$") or lname:find("%.webp$")
+        or lname:find("%.bmp$") or lname:find("%.gif$") then
+        table.insert(out, dir .. name)
+      end
     end
   end
 end
@@ -348,7 +396,17 @@ end
 el.setAdapter(mAdapter)
 
 el.onChildClick = function(l, v, g, c)
-  local w = { _G[wds[g + 1][c + 1]] }
+  local name = wds[g + 1] and wds[g + 1][c + 1]
+  local cls = name and _G[name] or nil
+  -- 三方控件可能尚未注册:按需经 dex 装载器懒解析
+  if cls == nil and name and _G.__lfThirdParty and _G.__lfThirdParty.map[name] then
+    cls = _G.__lfThirdParty.resolve(_G.__lfThirdParty.map[name])
+  end
+  if cls == nil then
+    Error("无法解析控件类: " .. tostring(name))
+    return
+  end
+  local w = { cls }
   table.insert(curr, w)
   local s, l = pcall(loadlayout2, layout_main, {})
   if s then

@@ -73,9 +73,7 @@ fun FileTabView(
     panelState: DraggablePanelState,
     onOpenFileTree: () -> Unit = {},
     projectPath: String = "",
-    modifier: Modifier = Modifier,
-    // 新增滑动手势回调参数
-    onSwipe: ((SwipeDirection) -> Unit)? = null
+    modifier: Modifier = Modifier
 ) {
     val openFiles = viewModel.openFiles
     val activeFileIndex = viewModel.activeFileIndex
@@ -464,8 +462,7 @@ fun FileTabView(
                                 viewModel = viewModel,
                                 isActiveFile = isActiveFile,
                                 expansionRatio = panelState.expansionRatio,
-                                projectPath = projectPath,
-                                onSwipe = onSwipe // 传递滑动手势回调
+                                projectPath = projectPath
                             )
                         } else {
                             Box(

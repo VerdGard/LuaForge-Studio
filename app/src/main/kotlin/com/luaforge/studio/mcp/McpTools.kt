@@ -1538,7 +1538,6 @@ object McpTools {
                 .put("editorWordWrap", s.editorWordWrap)
                 .put("indentGuideEnabled", s.indentGuideEnabled)
                 .put("enableTabHistory", s.enableTabHistory)
-                .put("enableSwipeGesture", s.enableSwipeGesture)
                 .put("hexColorHighlightEnabled", s.hexColorHighlightEnabled)
                 .put("completionCaseSensitive", s.completionCaseSensitive)
                 .put("languageTag", s.languageTag)

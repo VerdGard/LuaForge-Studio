@@ -125,7 +125,7 @@ object McpManager {
 /** MCP 服务运行状态快照。 */
 data class McpStatus(
     val running: Boolean = false,
-    val port: Int = 8787,
+    val port: Int = 9123,
     val token: String = "",
     val addresses: List<String> = emptyList(),
     val error: String? = null

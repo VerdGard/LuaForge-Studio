@@ -1,7 +1,6 @@
 package com.luaforge.studio.ui.editor.components
 
 import android.content.Context
-import android.view.MotionEvent
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.animation.AnimatedContent
@@ -37,10 +36,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.luaforge.studio.ui.editor.SwipeDirection
 import com.luaforge.studio.ui.editor.viewmodel.CodeEditorState
 import com.luaforge.studio.ui.editor.viewmodel.EditorViewModel
 import com.luaforge.studio.ui.settings.SettingsManager
@@ -56,7 +53,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers as KotlinDispatchers
-import kotlin.math.abs
 
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
@@ -67,9 +63,7 @@ fun CodeEditorView(
     isActiveFile: Boolean = false,
     expansionRatio: Float = 0f,
     // 所属项目路径(用于按项目读取自动换行状态;为空时回退全局)
-    projectPath: String = "",
-    // 滑动手势回调
-    onSwipe: ((SwipeDirection) -> Unit)? = null
+    projectPath: String = ""
 ) {
     val context = LocalContext.current
     var isEditorReady by remember { mutableStateOf(false) }
@@ -110,47 +104,6 @@ fun CodeEditorView(
 
     val scope = rememberCoroutineScope()
     var parseJob by remember { mutableStateOf<Job?>(null) }
-
-    // 滑动检测阈值（px）
-    val swipeThreshold = with(LocalDensity.current) { 30.dp.toPx() }
-
-    LaunchedEffect(editor) {
-        var lastTouchY = 0f
-        var totalDeltaY = 0f
-        var isSwiping = false
-
-        editor.setOnTouchListener { v, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    lastTouchY = event.y
-                    totalDeltaY = 0f
-                    isSwiping = false
-                    false // 不消费事件，让编辑器继续处理
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val deltaY = event.y - lastTouchY
-                    // 累加垂直滑动距离
-                    totalDeltaY += deltaY
-                    lastTouchY = event.y
-
-                    // 只有当设置开启、累积距离超过阈值且尚未判定方向时才触发
-                    if (settingsState.enableSwipeGesture && !isSwiping && abs(totalDeltaY) > swipeThreshold) {
-                        isSwiping = true
-                        val direction = if (totalDeltaY > 0) SwipeDirection.DOWN else SwipeDirection.UP
-                        onSwipe?.invoke(direction)
-                        // 触发后重置累积距离，避免连续触发
-                        totalDeltaY = 0f
-                    }
-                    false
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    isSwiping = false
-                    false
-                }
-                else -> false
-            }
-        }
-    }
 
     LaunchedEffect(expansionRatio, lastSyntaxError) {
         when {

@@ -1,6 +1,6 @@
 ---
 name: luaforge-studio
-description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaForge-Studio 内置 MCP 服务(HTTP JSON-RPC, 默认端口 8787)驱动编辑器:读写源码、语法检查、编译验证、构建并安装 APK、调试运行并用控件树断言界面。关键词: LuaForge-Studio、Lua、ALY、loadlayout、import、luajava、global_utils、MemUtil、MCP、tools/call、run_project、check_screen、build_apk、check_syntax、debugger_status、debugger_outputs、compose、composeContent、Jetpack Compose。"
+description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaForge-Studio 内置 MCP 服务(HTTP JSON-RPC, 默认端口 9123)驱动编辑器:读写源码、语法检查、编译验证、构建并安装 APK、调试运行并用控件树断言界面。关键词: LuaForge-Studio、Lua、ALY、loadlayout、import、luajava、global_utils、MemUtil、MCP、tools/call、run_project、check_screen、build_apk、check_syntax、debugger_status、debugger_outputs、compose、composeContent、Jetpack Compose。"
 ---
 
 # LuaForge-Studio 技能
@@ -284,23 +284,23 @@ activity
 
 ### 2.1 启用
 
-设置 → **MCP 服务** → 开启"启用 MCP 服务"。默认端口 `8787`(`McpManager.kt:128`、`SettingsManager.kt:266`),可改 1024–65535。开启"需要访问令牌"后请求须带 `Authorization: Bearer <令牌>`。
+设置 → **MCP 服务** → 开启"启用 MCP 服务"。默认端口 `9123`(`McpManager.kt:128`、`SettingsManager.kt:282`),可改 1024–65535。开启"需要访问令牌"后请求须带 `Authorization: Bearer <令牌>`。
 
 协议版本 `2024-11-05`(`McpServer.kt:395`)。
 
 ### 2.2 连接与自检
 
-- 同设备:`http://127.0.0.1:8787/mcp`
-- 局域网:`http://<设备IP>:8787/mcp`
+- 同设备:`http://127.0.0.1:9123/mcp`
+- 局域网:`http://<设备IP>:9123/mcp`
 
 ```bash
 # 状态
-curl http://127.0.0.1:8787/
+curl http://127.0.0.1:9123/
 # 工具清单
-curl -X POST http://127.0.0.1:8787/ -H 'Content-Type: application/json' \
+curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 # 调工具
-curl -X POST http://127.0.0.1:8787/ -H 'Content-Type: application/json' \
+curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_projects","arguments":{}}}'
 ```
 

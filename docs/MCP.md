@@ -8,10 +8,10 @@
 
 | 项 | 说明 |
 | --- | --- |
-| 监听端口 | 1024–65535,默认 `8787`;修改后服务自动重启 |
+| 监听端口 | 1024–65535,默认 `9123`;修改后服务自动重启 |
 | 需要访问令牌 | 开启后请求须携带 `Authorization: Bearer <令牌>`;开启时若令牌为空会自动生成 |
 
-启用后设置页会显示全部可用地址,每个地址各占一行、等宽字体展示,行尾按钮可**一键复制**,例如 `http://192.168.1.5:8787`。
+启用后设置页会显示全部可用地址,每个地址各占一行、等宽字体展示,行尾按钮可**一键复制**,例如 `http://192.168.1.5:9123`。
 
 ## 2. 协议
 
@@ -25,8 +25,8 @@
 自检:
 
 ```bash
-curl http://127.0.0.1:8787/
-curl -X POST http://127.0.0.1:8787/ -H 'Content-Type: application/json' \
+curl http://127.0.0.1:9123/
+curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
@@ -37,7 +37,7 @@ curl -X POST http://127.0.0.1:8787/ -H 'Content-Type: application/json' \
   "mcpServers": {
     "luaforge": {
       "type": "http",
-      "url": "http://192.168.1.5:8787"
+      "url": "http://192.168.1.5:9123"
     }
   }
 }

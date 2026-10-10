@@ -88,9 +88,6 @@ private object PreferencesKeys {
     // 【新增】十六进制颜色高亮开关
     val HEX_COLOR_HIGHLIGHT_ENABLED = booleanPreferencesKey("hex_color_highlight_enabled")
 
-    // 【新增】滑动手势开关
-    val ENABLE_SWIPE_GESTURE = booleanPreferencesKey("enable_swipe_gesture")
-
     // 【新增】MCP 服务设置
     val MCP_ENABLED = booleanPreferencesKey("mcp_enabled")
     val MCP_PORT = intPreferencesKey("mcp_port")
@@ -274,12 +271,9 @@ object SettingsManager {
         // 【新增】加载十六进制颜色高亮开关
         val hexColorHighlightEnabled = preferences[PreferencesKeys.HEX_COLOR_HIGHLIGHT_ENABLED] ?: false
 
-        // 【新增】加载滑动手势开关
-        val enableSwipeGesture = preferences[PreferencesKeys.ENABLE_SWIPE_GESTURE] ?: false
-
         // 【新增】加载 MCP 服务设置
         val mcpEnabled = preferences[PreferencesKeys.MCP_ENABLED] ?: false
-        val mcpPort = preferences[PreferencesKeys.MCP_PORT] ?: 8787
+        val mcpPort = preferences[PreferencesKeys.MCP_PORT] ?: 9123
         val mcpRequireToken = preferences[PreferencesKeys.MCP_REQUIRE_TOKEN] ?: false
         val mcpToken = preferences[PreferencesKeys.MCP_TOKEN] ?: ""
 
@@ -358,7 +352,6 @@ object SettingsManager {
                 editorWordWrapByProject = editorWordWrapByProject,
                 languageTag = languageTag,
                 hexColorHighlightEnabled = hexColorHighlightEnabled,
-                enableSwipeGesture = enableSwipeGesture,  // 【新增】
                 mcpEnabled = mcpEnabled,                  // 【新增】
                 mcpPort = mcpPort,                        // 【新增】
                 mcpRequireToken = mcpRequireToken,        // 【新增】
@@ -429,9 +422,6 @@ object SettingsManager {
 
             // 【新增】保存十六进制颜色高亮开关
             preferences[PreferencesKeys.HEX_COLOR_HIGHLIGHT_ENABLED] = currentSettings.hexColorHighlightEnabled
-
-            // 【新增】保存滑动手势开关
-            preferences[PreferencesKeys.ENABLE_SWIPE_GESTURE] = currentSettings.enableSwipeGesture
        
 
             // 【新增】保存 MCP 服务设置
@@ -623,9 +613,8 @@ data class SettingsData(
     val editorWordWrapByProject: Map<String, Boolean> = emptyMap(),
     val languageTag: String = "zh",
     val hexColorHighlightEnabled: Boolean = false,  // 【新增】十六进制颜色高亮开关
-    val enableSwipeGesture: Boolean = false,         // 【新增】滑动手势开关
     val mcpEnabled: Boolean = false,                 // 【新增】MCP 服务开关
-    val mcpPort: Int = 8787,                         // 【新增】MCP 服务端口
+    val mcpPort: Int = 9123,                         // 【新增】MCP 服务端口
     val mcpRequireToken: Boolean = false,            // 【新增】MCP 是否要求令牌
     val mcpToken: String = "",                       // 【新增】MCP 访问令牌
     val networkInterceptEnabled: Boolean = false,    // 【新增】网络请求拦截开关(默认关闭)

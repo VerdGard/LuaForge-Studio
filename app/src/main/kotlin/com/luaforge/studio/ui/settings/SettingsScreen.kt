@@ -62,7 +62,6 @@ import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Swipe
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -1009,37 +1008,6 @@ Column(
                             )
                         }
                     )
-                    
-                    HorizontalDivider(
-    modifier = Modifier.padding(vertical = 4.dp),
-    thickness = 0.5.dp,
-    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
-)
-
-SettingsListItem(
-    title = stringResource(R.string.settings_swipe_gesture),
-    subtitle = stringResource(R.string.settings_swipe_gesture_desc),
-    leadingIcon = {
-        Icon(
-            Icons.Filled.Swipe,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary
-        )
-    },
-    trailingContent = {
-        Switch(
-            checked = currentSettingsState.enableSwipeGesture,
-            onCheckedChange = {
-                updateSettingsWithSave(
-                    currentSettingsState.copy(enableSwipeGesture = it)
-                )
-            }
-        )
-    },
-    onClick = {
-        updateSettingsWithSave(currentSettingsState.copy(enableSwipeGesture = !currentSettingsState.enableSwipeGesture))
-    }
-)
 
                 }
             }
