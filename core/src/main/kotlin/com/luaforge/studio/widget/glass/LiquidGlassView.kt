@@ -57,7 +57,9 @@ class LiquidGlassView @JvmOverloads constructor(
 
     private var cornerRadiusPx by mutableFloatStateOf(28f)
     private var blurRadiusPx by mutableFloatStateOf(24f)
-    private var glassColor: Int by mutableIntStateOf(0x40FFFFFF)
+    // 属性名不能叫 glassColor:它生成的 JVM setter setGlassColor(I)V 会与
+    // 下方手写的 fun setGlassColor(argb: Int) 签名冲突(Platform declaration clash)。
+    private var glassColorArgb: Int by mutableIntStateOf(0x40FFFFFF)
 
     private val composeView = ComposeView(context)
 
@@ -81,14 +83,14 @@ class LiquidGlassView @JvmOverloads constructor(
 
     /** 玻璃底色:布局中写 `glassColor = 0x40FFFFFF`。 */
     fun setGlassColor(argb: Int) {
-        glassColor = argb
+        glassColorArgb = argb
     }
 
     @Composable
     private fun LiquidGlassSurface() {
         val radiusPx = cornerRadiusPx
         val blurPx = blurRadiusPx
-        val base = Color(glassColor)
+        val base = Color(glassColorArgb)
         val density = LocalDensity.current
 
         // CanvasBackdrop:玻璃层内容由本控件自绘(底色 + 彩色斑块),再施加
