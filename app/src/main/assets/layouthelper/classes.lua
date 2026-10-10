@@ -126,7 +126,9 @@ local classNames = {
   "com.google.android.material.floatingtoolbar.FloatingToolbarLayout",
   "com.google.android.material.button.MaterialButtonGroup",
   "com.google.android.material.search.SearchBar",
-  "com.luaforge.studio.widget.textfield.MaterialTextField"
+  "com.luaforge.studio.widget.textfield.MaterialTextField",
+  -- 液态玻璃控件(基于 backdrop 效果,ComposeView 包装为普通 View)
+  "com.luaforge.studio.widget.glass.LiquidGlassView"
 }
 
 for _, v in ipairs(classNames) do

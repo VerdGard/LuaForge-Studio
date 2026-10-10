@@ -23,6 +23,7 @@ import com.luaforge.studio.utils.LuaParserUtil
 import com.luaforge.studio.utils.FileUtil
 import com.luaforge.studio.utils.LogCatcher
 import com.luaforge.studio.utils.ProjectUtil
+import com.luaforge.studio.widget.BuiltinWidgets
 import com.luajava.LuaObject
 import com.luajava.LuaState
 import com.luajava.LuaStateFactory
@@ -236,6 +237,8 @@ object McpTools {
                 obj("content" to strProp("要分析的代码;缺省时分析当前活动文件"))
             )
         )
+
+        tools.put(tool("list_widgets", "列出随 IDE 发布的内置控件(如 LiquidGlassView),含短名、分类与可写属性", obj()))
 
         tools.put(
             tool(
@@ -575,6 +578,7 @@ object McpTools {
                 "install_apk" -> installApk(context, args)
                 "backup_project" -> backupProjectTool(context, args)
                 "analyze_imports" -> analyzeImports(context, args)
+                "list_widgets" -> listWidgets()
                 "get_logs" -> getLogs(args)
                 "get_settings" -> getSettings()
                 "dump_screen" -> dumpScreen(args)
@@ -1230,6 +1234,41 @@ object McpTools {
     // ------------------------------------------------------------------
     // 分析 / 日志 / 设置
     // ------------------------------------------------------------------
+
+    /**
+     * 列出随 IDE 发布的内置控件。
+     *
+     * 数据源为 [com.luaforge.studio.widget.BuiltinWidgets]:布局助手与运行时
+     * 均绑定这些 Android View 子类,外部工具据此即可知道有哪些控件可用、
+     * 每个控件可写哪些属性(属性名即去掉 set 前缀首字母小写的 setter)。
+     */
+    private fun listWidgets(): JSONObject {
+        val widgets = JSONArray()
+        BuiltinWidgets.all.forEach { w ->
+            val props = JSONObject()
+            w.properties.forEach { (k, v) -> props.put(k, v) }
+            widgets.put(
+                JSONObject()
+                    .put("className", w.className)
+                    .put("shortName", w.shortName)
+                    .put("displayName", w.displayName)
+                    .put("group", w.group)
+                    .put("properties", props)
+                    .put("doc", w.doc.ifBlank { JSONObject.NULL })
+            )
+        }
+        return textResult(
+            JSONObject()
+                .put("count", BuiltinWidgets.all.size)
+                .put("widgets", widgets)
+                .put(
+                    "note",
+                    "布局中直接写短名即可(如 { LiquidGlassView, layout_width=\"match_parent\", " +
+                        "layout_height=\"120dp\", cornerRadius=28 });properties 为可直接写入布局表的属性名。"
+                )
+                .toString(2)
+        )
+    }
 
     private suspend fun analyzeImports(context: Context, args: JSONObject): JSONObject {
         var code = args.optString("content", "")

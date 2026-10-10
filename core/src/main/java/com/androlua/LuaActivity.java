@@ -90,6 +90,13 @@ public class LuaActivity extends AppCompatActivity
   private int mHeight;
   private ListView list;
   private ArrayListAdapter<String> adapter;
+  /**
+   * 日志面板上限:status(TextView)/adapter(ListView)在每次 print 时追加。
+   * 注入调试浮窗后 print 会高频调用,不设上限会持续膨胀并触发超长文本重排。
+   */
+  private static final int MAX_LOG_LINES = 2000;
+  /** Toast 汇总文本上限:长时间高频 print 时会不断 append,需防无限增长。 */
+  private static final int MAX_TOAST_CHARS = 128 * 1024;
   private LuaState L;
   private String luaPath;
   private final StringBuilder toastbuilder = new StringBuilder();
@@ -1628,6 +1635,10 @@ public class LuaActivity extends AppCompatActivity
       toast.show();
     } else {
       toastbuilder.append("\n").append(text);
+      // 防无限增长:超限时丢弃前半,保留尾部长文本
+      if (toastbuilder.length() > MAX_TOAST_CHARS) {
+        toastbuilder.delete(0, toastbuilder.length() - MAX_TOAST_CHARS / 2);
+      }
       View view = toast.getView();
       if (view != null) {
         TextView tv = view.findViewById(R.id.toast_text);
@@ -1639,6 +1650,48 @@ public class LuaActivity extends AppCompatActivity
       toast.show();
     }
     lastShow = now;
+  }
+
+  /**
+   * 有界追加一条日志到面板(TextView + ListView)。
+   *
+   * 超出 {@link #MAX_LOG_LINES} 时按 1/4 批量丢弃最旧部分:
+   * 逐条 remove 会在高频输出下产生 O(n) 抖动,批量裁剪把均摊成本降到 O(1)。
+   */
+  private void recordLogLine(String data) {
+    status.append(data).append("\n");
+    adapter.add(data);
+    int over = adapter.getCount() - MAX_LOG_LINES;
+    if (over > 0) {
+      int drop = Math.max(over, MAX_LOG_LINES / 4);
+      adapter.setNotifyOnChange(false);
+      for (int i = 0; i < drop && adapter.getCount() > 1; i++) {
+        adapter.remove(0);
+      }
+      adapter.notifyDataSetChanged();
+      // status 同步裁剪:保留尾部对应的若干行,避免 TextView 文本无限增长
+      CharSequence cs = status.getText();
+      int keep = MAX_LOG_LINES;
+      int idx = cs.length();
+      for (int nl = 0; nl < keep && idx > 0; nl++) {
+        int p = lastIndexOf(cs, '\n', idx - 1);
+        if (p < 0) {
+          idx = 0;
+          break;
+        }
+        idx = p;
+      }
+      if (idx > 0) {
+        status.setText(cs.subSequence(idx + 1, cs.length()));
+      }
+    }
+  }
+
+  private static int lastIndexOf(CharSequence cs, char c, int from) {
+    for (int i = from; i >= 0; i--) {
+      if (cs.charAt(i) == c) return i;
+    }
+    return -1;
   }
 
   /**
@@ -1711,8 +1764,7 @@ public class LuaActivity extends AppCompatActivity
             String data = msg.getData().getString(DATA);
             // 调试浮窗已接管时不再弹屏幕 Toast:print 只在浮窗内展示
             if (mDebug && !debuggerActive) showToast(data);
-            status.append(data + "\n");
-            adapter.add(data);
+            recordLogLine(data);
           }
           break;
         case 1:

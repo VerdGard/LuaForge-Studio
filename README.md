@@ -105,6 +105,12 @@
   - 泄漏检测:滚动窗口采样(最多 10 次)统计平均增长,持续增长即告警并回收;回落则进入冷却或分步 GC
   - `stop()` / `monitoring()` / `force_gc()` / `get_status()` / `on_destroy()` / `help()`
   - 入参越界(如 `pause`、`stepmul`、`interval`)自动收敛到合法默认值
+- 新增**液态玻璃控件** `LiquidGlassView`(基于 [Kyant0/AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass) 的 backdrop 效果)
+  - 用 `ComposeView` 把 Compose 侧效果包成普通 Android View,使 `loadlayout` / 布局助手能像普通控件一样使用
+  - 属性:`cornerRadius`(圆角 px)、`blurRadius`(背景模糊 px)、`glassColor`(玻璃底色 ARGB)
+  - 已同步:布局助手控件清单(`classes.lua` 短名 + `layoutData.lua`「特殊视图」分类)、白名单放行 `com.luaforge.studio.`、文档 `assets/doc/LiquidGlassView.md`
+  - MCP 新增 `list_widgets`,列出内置控件及其可写属性
+  - 低端 / 旧版本设备由库自行降级(跳过不支持的 RenderEffect / RuntimeShader),不崩溃
 - 三方控件支持(设置 → 编辑器配置,默认开启)
   - 使用 `.aly` 布局前预载项目 `libs/*.dex|jar`,并把 `DexClassLoader` 链路打通到裸类名解析
     - 背景:`luajava.bindClass` 走 `Class.forName`,只看宿主 classpath,看不到 `activity.loadDex` 追加的装载器

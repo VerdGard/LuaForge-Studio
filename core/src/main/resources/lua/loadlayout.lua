@@ -58,7 +58,10 @@ local builtinWidgetPrefixes = {
   "androidx.constraintlayout.widget.", "androidx.drawerlayout.widget.",
   "androidx.swiperefreshlayout.widget.", "androidx.core.widget.",
   "androidx.fragment.app.", "androidx.preference.",
-  "com.google.android.material.", "com.androlua."
+  "com.google.android.material.", "com.androlua.",
+  -- 随 IDE 一起发布的自有控件(MaterialTextField / LiquidGlassView 等):
+  -- 它们不是用户项目的三方库,禁用三方控件时也应放行
+  "com.luaforge.studio."
 }
 local function widgetClassAllowed(cls)
   local lower = string.lower(cls or "")

@@ -49,7 +49,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 { "headers": { "Authorization": "Bearer <你的令牌>" } }
 ```
 
-## 4. 工具清单(47 个)
+## 4. 工具清单(48 个)
 
 参数均为可选,除非标 **必填**。带 `array` 的参数可传 JSON 数组,也可传换行/逗号分隔的字符串。
 
@@ -76,6 +76,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 | `list_templates` | 列出可用于新建项目的模板 | — |
 | `create_project` | 按模板新建项目 | `name`、`packageName`、`template`、`debugMode`、`globalUtils`、`overwrite` |
 | `analyze_imports` | 分析代码用到的类,生成 import 列表 | `content`(缺省用当前活动文件) |
+| `list_widgets` | 列出随 IDE 发布的内置控件(如 `LiquidGlassView`),含短名、分类与可写属性 | — |
 
 > `delete_file` 只能删空目录,递归删除请由客户端先列目录再逐个删除。
 

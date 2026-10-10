@@ -133,6 +133,9 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 - **延迟属性**:ConstraintLayout 约束与 RelativeLayout 规则延后到子控件都建好后统一应用(`loadlayout.lua:1201-1213`)。
 - **`.aly` 可被 `require`**:`loadlayout.lua` 往 `package.searchers` 注入 `alyloader`(430-447),识别 `\27Lua` 预编译签名,否则按 `return <内容>` 当表达式加载。
 - **两套实现**:`core/src/main/resources/lua/loadlayout.lua`(运行时,1223 行)与 `app/src/main/assets/layouthelper/loadlayout2.lua`(布局助手用,1262 行,支持 `pagesWithTitle` 等扩展)。语法一致,写项目用前者。
+- **内置控件**(随 IDE 发布,编译进 `core`,非三方库):`MaterialTextField`、`LiquidGlassView`(液态玻璃,基于 backdrop 效果)。直接写短名即可,属性名 = 去掉 `set` 前缀首字母小写:
+  `{ LiquidGlassView, layout_width = "match_parent", layout_height = "120dp", cornerRadius = 28, blurRadius = 24, glassColor = 0x40FFFFFF }`。
+  清单见 MCP `list_widgets`,文档见 `assets/doc/LiquidGlassView.md`。
 
 ### 1.6 全局对象与函数
 
@@ -317,7 +320,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 - 路径可为项目相对路径,或允许范围内的绝对路径。
 - 不传 `path` 时多数工具回退到"当前打开的项目 / 当前活动文件"。
 
-### 3.2 工具清单(47 个,`McpTools.kt` 实测)
+### 3.2 工具清单(48 个,`McpTools.kt` 实测)
 
 **项目与文件**
 
@@ -339,6 +342,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 | `backup_project` / `restore_backup` | 备份 / 还原 | `backupPath` **必填**(还原) |
 | `list_templates` / `create_project` | 模板 / 建项目 | `name`、`packageName`、`template`、`debugMode`、`globalUtils` |
 | `analyze_imports` | 分析所需 import | `content` |
+| `list_widgets` | 列出随 IDE 发布的内置控件(含短名/分类/可写属性) | — |
 
 **编辑器**
 

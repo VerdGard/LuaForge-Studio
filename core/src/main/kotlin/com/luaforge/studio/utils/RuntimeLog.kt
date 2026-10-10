@@ -1,5 +1,7 @@
 package com.luaforge.studio.utils
 
+import android.os.Handler
+import android.os.HandlerThread
 import androidx.annotation.Keep
 import java.io.File
 import java.io.FileOutputStream
@@ -16,6 +18,11 @@ import java.util.Locale
  *
  * 这里统一把这些消息追加到与 LogCatcher 相同的日志文件,保持单一来源。
  * 写入失败绝不影响 Lua 运行。
+ *
+ * 性能:落盘改为「调用线程只入队、后台单线程串行写盘」。
+ * 原因:Lua 在宿主线程(通常即 UI 线程)执行,注入调试浮窗后每条 print 都会
+ * 走到这里;若在此同步做磁盘 IO,高频输出会直接拖住 UI 线程造成卡顿。
+ * 现在调用方只做一次 Handler.post,磁盘读写全部在后台线程完成。
  */
 @Keep
 object RuntimeLog {
@@ -27,9 +34,23 @@ object RuntimeLog {
     private const val MAX_BYTES = 4L * 1024 * 1024
     private const val TRUNCATE_KEEP = 1024 * 1024
 
-    private val lock = Any()
+    /** 串行化后台落盘的文件锁。 */
+    private val fileLock = Any()
 
+    /** 时间格式非线程安全:调用方在独立锁内格式化后再入队。 */
+    private val timeLock = Any()
     private val timeFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
+
+    /**
+     * 后台单线程串行落盘。
+     *
+     * 用 HandlerThread 而非线程池:保证日志行按顺序写入、且只有一条
+     * 写盘线程互相竞争,避免多线程随机穿插破坏日志可读性。
+     */
+    private val worker: HandlerThread by lazy {
+        HandlerThread("LuaForgeRuntimeLog").apply { start() }
+    }
+    private val handler: Handler by lazy { Handler(worker.looper) }
 
     @JvmStatic
     fun log(tag: String, message: String) {
@@ -69,7 +90,20 @@ object RuntimeLog {
     }
 
     private fun write(level: String, tag: String, message: String) {
-        synchronized(lock) {
+        val line = synchronized(timeLock) {
+            "[${timeFormat.format(Date())}] [$level] [$tag] $message\n"
+        }
+        try {
+            handler.post { appendLine(line) }
+        } catch (_: Throwable) {
+            // HandlerThread 初始化失败等极端场景:退化为同步写,保证不丢日志
+            appendLine(line)
+        }
+    }
+
+    /** 仅在后台落盘线程执行(退化路径除外)。 */
+    private fun appendLine(line: String) {
+        synchronized(fileLock) {
             try {
                 val file = File(LOG_FILE_PATH)
                 val parent = file.parentFile
@@ -77,7 +111,6 @@ object RuntimeLog {
                     parent.mkdirs()
                 }
                 truncateIfNeeded(file)
-                val line = "[${timeFormat.format(Date())}] [$level] [$tag] $message\n"
                 FileOutputStream(file, true).use { it.write(line.toByteArray(Charsets.UTF_8)) }
             } catch (_: Throwable) {
                 // 日志写入失败不能影响 Lua 运行

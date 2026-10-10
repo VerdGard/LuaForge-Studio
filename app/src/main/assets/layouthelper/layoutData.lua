@@ -202,6 +202,7 @@ wds = {
     "WebView",
     "AnalogClock",
     "PullingLayout",
+    "LiquidGlassView",
   },
   {
     "DatePicker",
@@ -340,7 +341,8 @@ wds2 = {
     "视频视图",
     "网页视图",
     "模拟时钟",
-    "下拉布局"
+    "下拉布局",
+    "液态玻璃"
   },
   {
     "日期选择器",

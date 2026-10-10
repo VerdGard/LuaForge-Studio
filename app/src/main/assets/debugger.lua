@@ -95,6 +95,9 @@ local PILL_COLOR_ERROR = 0xffAA3437
 local DEFAULT_PRIMARY = 0xFF6750A4
 -- 浮窗 / 弹窗圆角半径(dp)
 local CORNER_RADIUS_DP = 14
+-- 打印缓冲上限:超过则丢弃最旧记录。
+-- 调试浮窗会接管全局 print,长跑项目若无限追加会持续占用内存并加重 GC 卡顿。
+local MAX_PRINTS = 2000
 
 local GradientDrawable = bindClass "android.graphics.drawable.GradientDrawable"
 
@@ -384,7 +387,13 @@ local Debugger = SimpleClass {
   end,
 
   addPrint = function (self, s)
-    self.prints[#self.prints + 1] = s
+    local n = #self.prints + 1
+    self.prints[n] = s
+    -- 环形裁剪:超出上限时丢弃最旧的一条,保持内存有界
+    local overflow = n - MAX_PRINTS
+    if overflow > 0 then
+      table.remove(self.prints, 1)
+    end
   end,
 
   removeFloatWindow = function (self)
