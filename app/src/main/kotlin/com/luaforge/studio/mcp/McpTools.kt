@@ -238,7 +238,15 @@ object McpTools {
             )
         )
 
-        tools.put(tool("list_widgets", "列出随 IDE 发布的内置控件(如 LiquidGlassView),含短名、分类与可写属性", obj()))
+        tools.put(tool("list_widgets", "列出随 IDE 发布的内置控件(如 MaterialTextField),含短名、分类与可写属性", obj()))
+
+        tools.put(
+            tool(
+                "list_project_libraries",
+                "列出项目的原生库与三方库:lib/<abi>/*.so 与 libs/*.dex|jar,并返回设备首选 ABI",
+                obj("path" to strProp("项目路径,缺省为当前打开的项目"))
+            )
+        )
 
         tools.put(
             tool(
@@ -579,6 +587,7 @@ object McpTools {
                 "backup_project" -> backupProjectTool(context, args)
                 "analyze_imports" -> analyzeImports(context, args)
                 "list_widgets" -> listWidgets()
+                "list_project_libraries" -> listProjectLibraries(context, args)
                 "get_logs" -> getLogs(args)
                 "get_settings" -> getSettings()
                 "dump_screen" -> dumpScreen(args)
@@ -1263,8 +1272,8 @@ object McpTools {
                 .put("widgets", widgets)
                 .put(
                     "note",
-                    "布局中直接写短名即可(如 { LiquidGlassView, layout_width=\"match_parent\", " +
-                        "layout_height=\"120dp\", cornerRadius=28 });properties 为可直接写入布局表的属性名。"
+                    "布局中直接写短名即可(如 { MaterialTextField, layout_width=\"match_parent\", " +
+                        "layout_height=\"48dp\", hint=\"请输入\" });properties 为可直接写入布局表的属性名。"
                 )
                 .toString(2)
         )
@@ -2224,6 +2233,83 @@ object McpTools {
                 .put("message", "文本$description")
                 .toString(2)
         ).put("isError", true)
+    }
+
+    /**
+     * 列出项目的原生库与三方库,便于外部工具发现可复用的 .so / .dex。
+     *
+     * - `lib/<abi>/*.so`:按设备首选 ABI 分目录的原生库(运行时经 `require "模块名"` 调用)
+     * - `libs/*.dex|jar`:项目三方库,动态类加载后裸类名/FQN 均可用
+     * - `libs/*.so`:兼容的扁平原生库
+     */
+    private suspend fun listProjectLibraries(context: Context, args: JSONObject): JSONObject {
+        val project = resolveProjectPath(context, args.optString("path", ""))
+            ?: return errorResult("无法确定项目路径,请先在前台打开项目或传入 path")
+        val root = File(project)
+        if (!isAllowed(context, root)) return errorResult("路径不在允许范围内: $project")
+
+        val primaryAbi = if (Build.SUPPORTED_ABIS.isNotEmpty()) Build.SUPPORTED_ABIS[0] else Build.CPU_ABI
+
+        fun collectSo(dir: File): JSONArray {
+            val arr = JSONArray()
+            dir.listFiles()?.sortedBy { it.name }?.forEach { f ->
+                if (f.isFile && f.name.endsWith(".so")) arr.put(f.name)
+            }
+            return arr
+        }
+
+        // lib/:按 ABI 子目录分组;同时给出与设备匹配的那一组
+        val libRoot = File(root, "lib")
+        val libByAbi = JSONObject()
+        var matchedAbi: String? = null
+        var matchedLibs: JSONArray = JSONArray()
+        if (libRoot.isDirectory) {
+            libRoot.listFiles()?.sortedBy { it.name }?.forEach { entry ->
+                if (entry.isDirectory) {
+                    libByAbi.put(entry.name, collectSo(entry))
+                }
+            }
+            val abiDir = File(libRoot, primaryAbi)
+            if (abiDir.isDirectory) {
+                matchedAbi = primaryAbi
+                matchedLibs = collectSo(abiDir)
+            } else {
+                // 无匹配 ABI 子目录时退回 lib/ 下的扁平 .so(运行时同样按此规则回退)
+                matchedAbi = null
+                matchedLibs = collectSo(libRoot)
+            }
+        }
+
+        // libs/:dex/jar 与扁平 so 分开列
+        val libsDir = File(root, "libs")
+        val dexLibs = JSONArray()
+        val flatSoLibs = JSONArray()
+        if (libsDir.isDirectory) {
+            libsDir.listFiles()?.sortedBy { it.name }?.forEach { f ->
+                if (!f.isFile) return@forEach
+                when {
+                    f.name.endsWith(".dex") || f.name.endsWith(".jar") -> dexLibs.put(f.name)
+                    f.name.endsWith(".so") -> flatSoLibs.put(f.name)
+                }
+            }
+        }
+
+        return textResult(
+            JSONObject()
+                .put("project", root.absolutePath)
+                .put("deviceAbi", primaryAbi)
+                .put("libMatchedAbi", matchedAbi ?: JSONObject.NULL)
+                .put("libByAbi", libByAbi)
+                .put("nativeLibs", matchedLibs)
+                .put("dexLibs", dexLibs)
+                .put("flatSoLibs", flatSoLibs)
+                .put(
+                    "note",
+                    "原生库放 lib/<abi>/(arm64-v8a 或 armeabi-v7a),Lua 侧 require \"模块名\"(如 libcjson.so -> require \"cjson\");" +
+                        "三方 dex/jar 放 libs/,动态加载后裸类名与全限定名均可用(如 Http.get)。"
+                )
+                .toString(2)
+        )
     }
 
     private suspend fun listTemplates(context: Context): JSONObject {

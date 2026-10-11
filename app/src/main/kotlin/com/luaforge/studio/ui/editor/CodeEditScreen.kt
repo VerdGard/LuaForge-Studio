@@ -465,51 +465,41 @@ fun CodeEditScreen(
     val quickActions = remember {
         listOf(
             QuickAction(R.string.code_editor_open, "打开") {
-                viewModel.incrementQuickActionFrequency("打开")
                 scope.launch {
                     if (fileTreeDrawerState.isClosed) fileTreeDrawerState.open()
                 }
             },
             QuickAction(R.string.save, "保存") {
-                viewModel.incrementQuickActionFrequency("保存")
                 scope.launch { viewModel.saveAllModifiedFiles(toast) }
             },
             QuickAction(R.string.code_editor_new, "新建") {
-                viewModel.incrementQuickActionFrequency("新建")
                 newFileType = context.getString(R.string.code_editor_file)
                 newFileName = ""
                 showNewFileDialog = true
             },
             QuickAction(R.string.code_editor_format, "格式化") {
-                viewModel.incrementQuickActionFrequency("格式化")
                 viewModel.formatCode()
             },
             QuickAction(R.string.code_editor_layout_helper, "布局助手") {
-                viewModel.incrementQuickActionFrequency("布局助手")
                 onLaunchLayoutHelper()
             },
             QuickAction(R.string.code_editor_project_property, "项目属性") {
                 scope.launch {
                     viewModel.saveAllFilesSilently()
-                    viewModel.incrementQuickActionFrequency("项目属性")
                     currentOverlay = OverlayScreen.ATTRIBUTE
                 }
             },
             QuickAction(R.string.code_editor_build, "构建项目") {
-                viewModel.incrementQuickActionFrequency("构建项目")
                 onBuildProjectAction()
             },
             QuickAction(R.string.code_editor_analyse, "导入分析") {
-                viewModel.incrementQuickActionFrequency("导入分析")
                 val codeContent = viewModel.activeFileState?.content ?: ""
                 currentOverlay = OverlayScreen.ANALYSE(codeContent, projectPath)
             },
             QuickAction(R.string.code_editor_api_viewer, "API阅览器") {
-                viewModel.incrementQuickActionFrequency("API阅览器")
                 currentOverlay = OverlayScreen.JAVA_API()
             },
             QuickAction(R.string.search, "搜索") {
-                viewModel.incrementQuickActionFrequency("搜索")
                 if (viewModel.openFiles.isNotEmpty()) {
                     isSearchVisible = !isSearchVisible
                     if (!isSearchVisible) {
@@ -522,28 +512,14 @@ fun CodeEditScreen(
                 }
             },
             QuickAction(R.string.code_editor_backup, "备份") {
-                viewModel.incrementQuickActionFrequency("备份")
                 onBackupProject()
             },
             QuickAction(R.string.code_editor_palette, "调色板") {
-                viewModel.incrementQuickActionFrequency("调色板")
                 showColorPickerDialog = true
             }
         )
     }
 
-    val smartSortingEnabled by remember { derivedStateOf { currentSettings.smartSortingEnabled } }
-
-    var sortedQuickActions by remember { mutableStateOf(quickActions) }
-    LaunchedEffect(viewModel.isQuickActionFrequencyLoaded, smartSortingEnabled) {
-        if (viewModel.isQuickActionFrequencyLoaded) {
-            sortedQuickActions = if (smartSortingEnabled) {
-                quickActions.sortedByDescending { viewModel.quickActionFrequencyMap[it.key] ?: 0 }
-            } else {
-                quickActions
-            }
-        }
-    }
 
     EdgeSwipeDismissibleDrawer(
         drawerState = fileTreeDrawerState,
@@ -656,7 +632,7 @@ fun CodeEditScreen(
                                             lastFileToOpen = lastFileToOpen.value,
                                             panelState = panelState,
                                             fileTreeDrawerState = fileTreeDrawerState,
-                                            quickActions = sortedQuickActions,
+                                            quickActions = quickActions,
                                             isBackingUp = isBackingUp,
                                             isSearchVisible = isSearchVisible,
                                             searchText = searchText,

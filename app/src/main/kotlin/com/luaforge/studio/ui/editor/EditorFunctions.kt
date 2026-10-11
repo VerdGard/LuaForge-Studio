@@ -326,7 +326,7 @@ val mavenDependencies = try {
                 buildType,                   // 构建类型(跟随项目 / 未加密 / Debug / Release)
                 encryptProject,              // settings.json 的 encrypt（PROJECT_DEFAULT 时生效）
                 mergeDexEnabled,             // settings.json 的 mergeDex
-                abiTarget,                   // 打包目标架构(通用/仅64位/仅32位)
+                abiTarget,                   // 打包目标架构(通用/arm64-v8a/armeabi-v7a)
                 skipCompileFiles             // 跳过编译(不加密)的文件
             )
 

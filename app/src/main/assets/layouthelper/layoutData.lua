@@ -201,8 +201,7 @@ wds = {
     "VideoView",
     "WebView",
     "AnalogClock",
-    "PullingLayout",
-    "LiquidGlassView",
+    "PullingLayout"
   },
   {
     "DatePicker",

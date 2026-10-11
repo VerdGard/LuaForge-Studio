@@ -13,13 +13,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
 import com.luaforge.studio.ui.editor.persistence.ProjectEditorStateManager
 import com.luaforge.studio.langs.lua.LuaIncrementalAnalyzeManager
 import com.luaforge.studio.langs.lua.LuaLanguage
@@ -39,16 +34,11 @@ import io.github.rosemoe.sora.widget.EditorSearcher
 import io.github.rosemoe.sora.widget.component.EditorAutoCompletion
 import io.github.rosemoe.sora.widget.schemes.EditorColorScheme
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlinx.coroutines.Dispatchers as KotlinDispatchers
-
-// DataStore 实例
-private val Context.symbolDataStore by preferencesDataStore(name = "symbol_frequency")
-private val Context.quickActionDataStore by preferencesDataStore(name = "quick_action_frequency")
 
 data class CodeEditorState(
     val file: File,
@@ -161,73 +151,6 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
         selectedClassCandidates = null
     }
     // ----------------------------------------
-
-    // 符号频率
-    val symbolFrequencyMap = mutableStateMapOf<String, Int>()
-    fun incrementSymbolFrequency(symbol: String) {
-        symbolFrequencyMap[symbol] = (symbolFrequencyMap[symbol] ?: 0) + 1
-        viewModelScope.launch { saveSymbolFrequency() }
-    }
-
-    private suspend fun loadSymbolFrequency() {
-        try {
-            val preferences = appContext.symbolDataStore.data.first()
-            val json = preferences[stringPreferencesKey("frequency_map")] ?: return
-            val type = object : TypeToken<Map<String, Int>>() {}.type
-            val map: Map<String, Int> = Gson().fromJson(json, type)
-            symbolFrequencyMap.clear()
-            symbolFrequencyMap.putAll(map)
-        } catch (e: Exception) {
-            LogCatcher.e("EditorViewModel", "加载符号频率失败", e)
-        }
-    }
-
-    private suspend fun saveSymbolFrequency() {
-        try {
-            val map = symbolFrequencyMap.toMap()
-            val json = Gson().toJson(map)
-            appContext.symbolDataStore.edit { preferences ->
-                preferences[stringPreferencesKey("frequency_map")] = json
-            }
-        } catch (e: Exception) {
-            LogCatcher.e("EditorViewModel", "保存符号频率失败", e)
-        }
-    }
-
-    // 快捷功能频率
-    val quickActionFrequencyMap = mutableStateMapOf<String, Int>()
-    var isQuickActionFrequencyLoaded by mutableStateOf(false); private set
-    fun incrementQuickActionFrequency(actionLabel: String) {
-        quickActionFrequencyMap[actionLabel] = (quickActionFrequencyMap[actionLabel] ?: 0) + 1
-        viewModelScope.launch { saveQuickActionFrequency() }
-    }
-
-    private suspend fun loadQuickActionFrequency() {
-        try {
-            val preferences = appContext.quickActionDataStore.data.first()
-            val json = preferences[stringPreferencesKey("frequency_map")] ?: return
-            val type = object : TypeToken<Map<String, Int>>() {}.type
-            val map: Map<String, Int> = Gson().fromJson(json, type)
-            quickActionFrequencyMap.clear()
-            quickActionFrequencyMap.putAll(map)
-        } catch (e: Exception) {
-            LogCatcher.e("EditorViewModel", "加载快捷功能频率失败", e)
-        } finally {
-            isQuickActionFrequencyLoaded = true
-        }
-    }
-
-    private suspend fun saveQuickActionFrequency() {
-        try {
-            val map = quickActionFrequencyMap.toMap()
-            val json = Gson().toJson(map)
-            appContext.quickActionDataStore.edit { preferences ->
-                preferences[stringPreferencesKey("frequency_map")] = json
-            }
-        } catch (e: Exception) {
-            LogCatcher.e("EditorViewModel", "保存快捷功能频率失败", e)
-        }
-    }
 
     // 布局助手返回
     @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
@@ -373,10 +296,6 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
             }
         }
 
-        viewModelScope.launch {
-            loadSymbolFrequency()
-            loadQuickActionFrequency()
-        }
         _isInitialized = true
         LogCatcher.i("EditorViewModel", "initialize 完成")
     }

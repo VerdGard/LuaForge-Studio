@@ -39,7 +39,6 @@ public class LuaFunctionRegistrar {
                     put("UiUtil", "com.luaforge.studio.utils.UiUtil");
                     put("RecyclerAdapterUtil", "com.luaforge.studio.utils.RecyclerAdapterUtil");
                     put("ThemeUtil", "com.luaforge.studio.utils.ThemeUtil");
-        put("MemUtil", "com.luaforge.studio.utils.MemUtil");
                 }
             };
 

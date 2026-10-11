@@ -67,8 +67,8 @@ private object PreferencesKeys {
     val SORT_ORDER = stringPreferencesKey("sort_order")
     val PINNED_PROJECTS = stringPreferencesKey("pinned_projects")
 
-    // 智能排序开关
-    val SMART_SORTING_ENABLED = booleanPreferencesKey("smart_sorting_enabled")
+    // 长按选中整行开关
+    val LONG_PRESS_SELECT_LINE = booleanPreferencesKey("long_press_select_line")
 
     // Toast 位置
     val TOAST_POSITION = stringPreferencesKey("toast_position")
@@ -131,8 +131,8 @@ enum class ToastPosition {
 /**
  * 打包目标架构。
  * - [UNIVERSAL] 通用版:同时包含 armeabi-v7a 与 arm64-v8a,兼容所有设备(体积最大)
- * - [ARM64]     仅 64 位:只保留 arm64-v8a
- * - [ARM32]     仅 32 位:只保留 armeabi-v7a
+ * - [ARM64]     arm64-v8a(64 位):只保留 arm64-v8a
+ * - [ARM32]     armeabi-v7a(32 位):只保留 armeabi-v7a
  */
 enum class AbiTarget {
     UNIVERSAL, ARM64, ARM32
@@ -197,7 +197,7 @@ object SettingsManager {
             preferences[PreferencesKeys.EDITOR_FONT_TYPE] ?: "JETBRAINS_MONO"
         )
         val customFontPath = preferences[PreferencesKeys.CUSTOM_FONT_PATH] ?: ""
-        val enableTabHistory = preferences[PreferencesKeys.ENABLE_TAB_HISTORY] ?: false
+        val enableTabHistory = preferences[PreferencesKeys.ENABLE_TAB_HISTORY] ?: true
         val indentGuideEnabled = preferences[PreferencesKeys.INDENT_GUIDE_ENABLED] ?: true
 
         val fixedPath = getFixedProjectStoragePath()
@@ -214,7 +214,7 @@ object SettingsManager {
 
         // 加载补全大小写敏感设置项
         val completionCaseSensitive =
-            preferences[PreferencesKeys.COMPLETION_CASE_SENSITIVE] ?: false
+            preferences[PreferencesKeys.COMPLETION_CASE_SENSITIVE] ?: true
 
         val selectedAppIconName = preferences[PreferencesKeys.SELECTED_APP_ICON] ?: "PLAY_STORE"
         val selectedAppIcon = try {
@@ -240,8 +240,8 @@ object SettingsManager {
             emptySet()
         }
 
-        // 加载智能排序开关
-        val smartSortingEnabled = preferences[PreferencesKeys.SMART_SORTING_ENABLED] ?: false
+        // 加载长按选中整行开关(默认开启)
+        val longPressSelectLine = preferences[PreferencesKeys.LONG_PRESS_SELECT_LINE] ?: true
 
         // 加载 Toast 位置
         val toastPositionName = preferences[PreferencesKeys.TOAST_POSITION] ?: "BOTTOM"
@@ -269,7 +269,7 @@ object SettingsManager {
         val languageTag = preferences[PreferencesKeys.LANGUAGE_TAG] ?: ""
 
         // 【新增】加载十六进制颜色高亮开关
-        val hexColorHighlightEnabled = preferences[PreferencesKeys.HEX_COLOR_HIGHLIGHT_ENABLED] ?: false
+        val hexColorHighlightEnabled = preferences[PreferencesKeys.HEX_COLOR_HIGHLIGHT_ENABLED] ?: true
 
         // 【新增】加载 MCP 服务设置
         val mcpEnabled = preferences[PreferencesKeys.MCP_ENABLED] ?: false
@@ -343,7 +343,7 @@ object SettingsManager {
                 completionCaseSensitive = completionCaseSensitive,
                 sortOrder = sortOrder,
                 pinnedProjects = pinnedProjects,
-                smartSortingEnabled = smartSortingEnabled,
+                longPressSelectLine = longPressSelectLine,
                 toastPosition = toastPosition,
                 toastBorderEnabled = toastBorderEnabled,
                 editorWordWrap = editorWordWrap,
@@ -405,7 +405,7 @@ object SettingsManager {
             val pinnedJson = Gson().toJson(currentSettings.pinnedProjects)
             preferences[PreferencesKeys.PINNED_PROJECTS] = pinnedJson
 
-            preferences[PreferencesKeys.SMART_SORTING_ENABLED] = currentSettings.smartSortingEnabled
+            preferences[PreferencesKeys.LONG_PRESS_SELECT_LINE] = currentSettings.longPressSelectLine
 
             preferences[PreferencesKeys.TOAST_POSITION] = currentSettings.toastPosition.name
 
@@ -588,7 +588,7 @@ data class SettingsData(
     val dynamicColor: Boolean = false,
     val editorFontType: EditorFontType = EditorFontType.JETBRAINS_MONO,
     val customFontPath: String = "",
-    val enableTabHistory: Boolean = false,
+    val enableTabHistory: Boolean = true,
     val classNameColor: Color = Color(0xFF6E81D9),
     val localVariableColor: Color = Color(0xFFAAAA88),
     val keywordColor: Color = Color(0xFFFF565E),
@@ -598,10 +598,11 @@ data class SettingsData(
     val selectedLineColor: Color = Color(0x1A000000),
     val indentGuideEnabled: Boolean = true,
     val selectedAppIcon: IconManager.AppIcon = IconManager.AppIcon.PLAY_STORE,
-    val completionCaseSensitive: Boolean = false,
+    val completionCaseSensitive: Boolean = true,
     val sortOrder: SortOrder = SortOrder.NAME_ASC,
     val pinnedProjects: Set<String> = emptySet(),
-    val smartSortingEnabled: Boolean = false,
+    /** 长按选中整行(默认开启);关闭时长按交回编辑器默认的选词行为 */
+    val longPressSelectLine: Boolean = true,
     val toastPosition: ToastPosition = ToastPosition.BOTTOM,
     val toastBorderEnabled: Boolean = false,
     val editorWordWrap: Boolean = false,
@@ -612,7 +613,7 @@ data class SettingsData(
     /** 项目路径 → 该项目的自动换行状态(仅当 perProjectWordWrap 为 true 时生效) */
     val editorWordWrapByProject: Map<String, Boolean> = emptyMap(),
     val languageTag: String = "zh",
-    val hexColorHighlightEnabled: Boolean = false,  // 【新增】十六进制颜色高亮开关
+    val hexColorHighlightEnabled: Boolean = true,  // 十六进制颜色高亮开关(默认开启)
     val mcpEnabled: Boolean = false,                 // 【新增】MCP 服务开关
     val mcpPort: Int = 9123,                         // 【新增】MCP 服务端口
     val mcpRequireToken: Boolean = false,            // 【新增】MCP 是否要求令牌

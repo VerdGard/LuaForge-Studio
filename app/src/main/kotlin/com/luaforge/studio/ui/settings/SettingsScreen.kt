@@ -33,7 +33,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Comment
 import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
 import androidx.compose.material.icons.automirrored.filled.MergeType
-import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.TextSnippet
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Apps
@@ -919,27 +918,27 @@ Column(
                     )
 
                     SettingsListItem(
-                        title = stringResource(R.string.settings_smart_sorting),
-                        subtitle = stringResource(R.string.settings_smart_sorting_desc),
+                        title = stringResource(R.string.settings_long_press_select_line),
+                        subtitle = stringResource(R.string.settings_long_press_select_line_desc),
                         leadingIcon = {
                             Icon(
-                                Icons.AutoMirrored.Filled.Sort,
+                                Icons.Filled.Highlight,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         },
                         trailingContent = {
                             Switch(
-                                checked = currentSettingsState.smartSortingEnabled,
+                                checked = currentSettingsState.longPressSelectLine,
                                 onCheckedChange = {
                                     updateSettingsWithSave(
-                                        currentSettingsState.copy(smartSortingEnabled = it)
+                                        currentSettingsState.copy(longPressSelectLine = it)
                                     )
                                 }
                             )
                         },
                         onClick = {
-                            updateSettingsWithSave(currentSettingsState.copy(smartSortingEnabled = !currentSettingsState.smartSortingEnabled))
+                            updateSettingsWithSave(currentSettingsState.copy(longPressSelectLine = !currentSettingsState.longPressSelectLine))
                         }
                     )
 

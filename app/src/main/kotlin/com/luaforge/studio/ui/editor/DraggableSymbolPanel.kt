@@ -43,7 +43,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.luaforge.studio.R
 import com.luaforge.studio.ui.editor.viewmodel.EditorViewModel
-import com.luaforge.studio.ui.settings.SettingsManager
 import com.luaforge.studio.utils.NonBlockingToastState
 
 // 定义枚举表示待处理的类操作
@@ -234,7 +233,6 @@ fun SymbolBar(
         "#", "^", "$", "?", "&", "|", "<", ">", "~", "'"
     )
 
-    val smartSortingEnabled by remember { derivedStateOf { SettingsManager.currentSettings.smartSortingEnabled } }
     val selectedClassName = viewModel.selectedClassName
     val selectedCandidates = viewModel.selectedClassCandidates
 
@@ -246,23 +244,7 @@ fun SymbolBar(
     var showFormatDialog by remember { mutableStateOf(false) }
     var pendingFullName by remember { mutableStateOf<String?>(null) }
 
-    val baseSortedSymbols = remember(viewModel.symbolFrequencyMap, smartSortingEnabled) {
-        if (smartSortingEnabled) {
-            symbols.sortedWith { a, b ->
-                when {
-                    a == "function()" -> -1
-                    b == "function()" -> 1
-                    else -> {
-                        val freqA = viewModel.symbolFrequencyMap[a] ?: 0
-                        val freqB = viewModel.symbolFrequencyMap[b] ?: 0
-                        freqB.compareTo(freqA)
-                    }
-                }
-            }
-        } else {
-            symbols
-        }
-    }
+    val baseSortedSymbols = symbols
 
     Surface(
         modifier = modifier,
@@ -347,7 +329,6 @@ fun SymbolBar(
                         SymbolButton(
                             symbol = symbol,
                             onClick = {
-                                viewModel.incrementSymbolFrequency(symbol)
                                 // 经 insertSymbolFromBar:按「符号自动补全」设置决定是否补全配对
                                 viewModel.insertSymbolFromBar(symbol)
                             }

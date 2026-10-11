@@ -176,8 +176,8 @@
     <string name="settings_per_project_word_wrap_desc">为每个项目使用独立的自动换行状态,关闭时全局共享同一个设置</string>
     <string name="settings_third_party_widget">三方控件支持</string>
     <string name="settings_third_party_widget_desc">允许使用项目 libs 目录下 dex/jar 里的自定义控件，关闭后仅允许系统与官方控件</string>
-    <string name="settings_smart_sorting">智能排序</string>
-    <string name="settings_smart_sorting_desc">根据使用频率自动排序快捷功能和符号栏</string>
+    <string name="settings_long_press_select_line">长按选中整行</string>
+    <string name="settings_long_press_select_line_desc">在编辑器中长按选中整行文字,关闭则恢复默认选词</string>
     <string name="settings_symbol_auto_pair">符号自动补全</string>
     <string name="settings_symbol_auto_pair_desc">点击符号栏的左括号或引号时,自动补全配对并在括号中间定位光标</string>
     <string name="settings_hex_color_highlight">十六进制颜色高亮</string>
@@ -480,7 +480,6 @@
     <string name="global_util_ui">UiUtil</string>
     <string name="global_util_recycler">RecyclerAdapterUtil</string>
     <string name="global_util_theme">ThemeUtil</string>
-    <string name="global_util_mem">MemUtil</string>
 
     <!-- SDK 版本描述 -->
     <string name="sdk_21">API 21 (Lollipop, Android 5.0)</string>
@@ -671,10 +670,10 @@
     <string name="settings_build_abi_desc">选择打包时保留的 CPU 架构</string>
     <string name="settings_abi_universal">通用版</string>
     <string name="settings_abi_universal_desc">同时包含 32 位与 64 位,兼容全部设备(体积最大)</string>
-    <string name="settings_abi_arm64">仅 64 位</string>
-    <string name="settings_abi_arm64_desc">只保留 arm64-v8a,适配绝大多数现代设备</string>
-    <string name="settings_abi_arm32">仅 32 位</string>
-    <string name="settings_abi_arm32_desc">只保留 armeabi-v7a,适配老旧 32 位设备</string>
+    <string name="settings_abi_arm64">arm64-v8a</string>
+    <string name="settings_abi_arm64_desc">只保留 arm64-v8a(64 位),适配绝大多数现代设备</string>
+    <string name="settings_abi_arm32">armeabi-v7a</string>
+    <string name="settings_abi_arm32_desc">只保留 armeabi-v7a(32 位),适配老旧 32 位设备</string>
     <string name="code_editor_build_start">开始构建</string>
 
 </resources>

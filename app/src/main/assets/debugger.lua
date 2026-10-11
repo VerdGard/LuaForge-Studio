@@ -3,7 +3,8 @@
 -- 适配点:
 --   1. 移除 lambda 语法(本项目 lambda 为保留字),类系统改用普通函数实现
 --   2. 不再替换全局 error()(会破坏 pcall/assert 语义),仅接管全局 onError
---   3. 浮窗按悬浮窗权限选择 TYPE_APPLICATION_OVERLAY,无权限时回退挂 Activity 根视图
+--   3. 浮窗始终挂到运行界面的 DecorView(不使用系统级悬浮窗),
+--      使其与运行界面同窗口:界面不可见即隐藏、界面销毁即移除,仅在本项目运行界面显示
 --   4. 暴露 __lfDebugger / __lfDebuggerCount / __lfDebuggerDump / __lfDebuggerClear 供 IDE 与 MCP 读取
 --   5. 颜色优先读项目 Colors 模块,失败回退内置默认色
 
@@ -137,12 +138,10 @@ local Debugger = SimpleClass {
     checkContext(context)
     self.context = context
 
-    local Context = bindClass "android.content.Context"
     local WindowManager = bindClass "android.view.WindowManager"
     local PixelFormat = bindClass "android.graphics.PixelFormat"
     local Gravity = bindClass "android.view.Gravity"
 
-    self.windowService = context.getSystemService(Context.WINDOW_SERVICE)
     self.windowLayoutParams = WindowManager.LayoutParams()
     self.windowLayoutParams.format = PixelFormat.RGBA_8888
     self.windowLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
@@ -219,7 +218,6 @@ local Debugger = SimpleClass {
       self:removeFloatWindow()
     end)
     self.context = nil
-    self.windowService = nil
     self.windowLayoutParams = nil
     self.popup = nil
   end,
@@ -276,27 +274,17 @@ local Debugger = SimpleClass {
     self.textView = textView
     self:setTextMode(self.ICON_MODE_INFO)
 
-    local Build = bindClass "android.os.Build"
-    local Settings = bindClass "android.provider.Settings"
-    local WindowManager = bindClass "android.view.WindowManager"
-
-    local canOverlay = (Build.VERSION.SDK_INT < 23) or Settings.canDrawOverlays(self.context)
-    if canOverlay then
-      if Build.VERSION.SDK_INT >= 26 then
-        self.windowLayoutParams.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-      else
-        self.windowLayoutParams.type = WindowManager.LayoutParams.TYPE_PHONE
-      end
-      self.windowService.addView(floatLayout, self.windowLayoutParams)
-      self.useWindowManager = true
-    else
-      local FrameLayout = bindClass "android.widget.FrameLayout"
-      local lp = FrameLayout.LayoutParams(-2, -2)
-      lp.leftMargin = math.floor(self.windowLayoutParams.x)
-      lp.topMargin = math.floor(self.windowLayoutParams.y)
-      self.context.getWindow().getDecorView().addView(floatLayout, lp)
-      self.useWindowManager = false
-    end
+    -- 挂到运行界面自身的 DecorView,而不是 WindowManager 的系统级悬浮窗。
+    -- 之前用 TYPE_APPLICATION_OVERLAY 时,浮窗独立于运行界面生命周期:
+    -- 返回编辑器后仍残留(要等 LuaActivity.onDestroy 才清),且会浮现在其他应用之上。
+    -- 挂 DecorView 后浮窗属于运行界面窗口的一部分:切到编辑器/其他应用时随窗口隐藏,
+    -- 运行界面销毁时随窗口一并移除,满足「仅在本项目运行界面显示」。
+    local FrameLayout = bindClass "android.widget.FrameLayout"
+    local lp = FrameLayout.LayoutParams(-2, -2)
+    lp.leftMargin = math.floor(self.windowLayoutParams.x)
+    lp.topMargin = math.floor(self.windowLayoutParams.y)
+    self.decorView = self.context.getWindow().getDecorView()
+    self.decorView.addView(floatLayout, lp)
     local startX, startY, wmX, wmY
 
     floatLayout.setOnTouchListener {
@@ -310,8 +298,11 @@ local Debugger = SimpleClass {
         elseif action == 2 then
           self.windowLayoutParams.x = wmX + (event.getRawX() - startX)
           self.windowLayoutParams.y = wmY + (event.getRawY() - startY)
-          if self.useWindowManager then
-            self.windowService.updateViewLayout(self.floatLayout, self.windowLayoutParams)
+          local params = self.floatLayout and self.floatLayout.getLayoutParams()
+          if params then
+            params.leftMargin = math.floor(self.windowLayoutParams.x)
+            params.topMargin = math.floor(self.windowLayoutParams.y)
+            self.floatLayout.setLayoutParams(params)
           end
         end
         return false
@@ -402,14 +393,11 @@ local Debugger = SimpleClass {
       pcall(function () view.setOnTouchListener(nil) end)
       pcall(function () view.setOnClickListener(nil) end)
 
-      if self.useWindowManager then
-        pcall(function () self.windowService.removeView(view) end)
-      else
-        local parent = view.getParent()
-        if parent then
-          parent.removeView(view)
-        end
+      local parent = view.getParent()
+      if parent then
+        parent.removeView(view)
       end
+      self.decorView = nil
 
       self.floatLayout = nil
       self.textView = nil

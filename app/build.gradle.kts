@@ -217,7 +217,5 @@ dependencies {
     
     api("org.eclipse.jdt:ecj:3.33.0")
     api("com.android.tools:r8:8.2.42")
-    // backdrop 依赖已由 :core 经 api 传递(液态玻璃控件 LiquidGlassView 所在模块),
-    // 此处不再重复声明,避免同一坐标两处维护。
 
 }

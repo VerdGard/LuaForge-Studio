@@ -301,10 +301,11 @@ fun CodeEditorView(
             }
         }
 
-        // 长按改为选中整行文字(覆盖编辑器默认的「选中单词 + 拖拽选择」)。
-        // 编辑器默认 onLongPress 会 selectWord 并进入拖拽选择;这里拦截 LongPressEvent
-        // (EditorMotionEvent.canIntercept() 为 true),阻止默认行为后自行选中整行。
+        // 长按选中整行(受设置项「长按选中整行」控制,默认开启)。
+        // 开启时拦截 LongPressEvent(EditorMotionEvent.canIntercept() 为 true)并自行选中整行,
+        // 覆盖编辑器默认的「选中单词 + 拖拽选择」;关闭时不拦截,交回编辑器默认行为。
         val longPressReceipt = editor.subscribeEvent(LongPressEvent::class.java) { event, _ ->
+            if (!SettingsManager.currentSettings.longPressSelectLine) return@subscribeEvent
             val line = event.line
             val content = editor.text
             if (line in 0 until content.lineCount) {

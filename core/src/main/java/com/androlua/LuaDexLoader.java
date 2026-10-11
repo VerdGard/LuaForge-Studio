@@ -34,11 +34,15 @@ public class LuaDexLoader {
     private final String odexDir;
     private final String privateLibsDir;
 
+    /** 设备首选 ABI(如 arm64-v8a / armeabi-v7a),用于 lib/<abi>/ 选择。 */
+    private final String primaryAbi;
+
     public LuaDexLoader(LuaContext context) {
         mContext = context;
         luaDir = context.getLuaDir();
         LuaApplication app = LuaApplication.getInstance();
         odexDir = app.getOdexDir();
+        primaryAbi = Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : Build.CPU_ABI;
 
         // 初始化私有libs目录
         Context ctx = mContext.getContext();
@@ -80,26 +84,81 @@ public class LuaDexLoader {
     }
 
     public void loadLibs() throws LuaException {
+        // 1. libs/:项目三方库 —— .dex/.jar 走动态类加载;扁平 .so 保留兼容。
         File[] libs = new File(mContext.getLuaDir() + "/libs").listFiles();
-        if (libs == null)
+        if (libs != null) {
+            for (File f : libs) {
+                if (f.isDirectory())
+                    continue;
+                if (f.getAbsolutePath().endsWith(".so"))
+                    loadLib(f.getName());
+                else
+                    loadDex(f.getAbsolutePath());
+            }
+        }
+        // 2. lib/:分架构原生库(优先 lib/<abi>/,其次 lib/ 下的扁平 .so)。
+        loadArchLibs();
+    }
+
+    /**
+     * 加载项目 `lib/` 目录下与设备架构匹配的原生库。
+     *
+     * <p>目录约定(区分架构):
+     * <pre>
+     *   lib/arm64-v8a/libxxx.so
+     *   lib/armeabi-v7a/libxxx.so
+     *   lib/libxxx.so            // 扁平兜底(不分架构)
+     * </pre>
+     *
+     * <p>只加载与设备首选 ABI({@link android.os.Build#SUPPORTED_ABIS}[0]) 匹配的子目录;
+     * 若不存在该 ABI 子目录,再退回 `lib/` 下的扁平 .so。加载后经
+     * {@link #getLibrarys()} 暴露给 Lua 的 `require`,与 `libs/` 的 .so 同一套机制。
+     */
+    public void loadArchLibs() throws LuaException {
+        File libRoot = new File(mContext.getLuaDir() + "/lib");
+        if (!libRoot.isDirectory())
             return;
-        for (File f : libs) {
+        File abiDir = new File(libRoot, primaryAbi);
+        File[] files = abiDir.isDirectory() ? abiDir.listFiles() : libRoot.listFiles();
+        if (files == null)
+            return;
+        for (File f : files) {
             if (f.isDirectory())
                 continue;
-            if (f.getAbsolutePath().endsWith(".so"))
-                loadLib(f.getName());
-            else
-                loadDex(f.getAbsolutePath());
+            String name = f.getName();
+            if (!name.endsWith(".so"))
+                continue;
+            loadLibFrom(f, name);
         }
     }
 
-    public void loadLib(String name) throws LuaException {
+    /** 从指定 .so 文件加载并按模块名缓存(供 `require` 使用)。 */
+    private void loadLibFrom(File src, String name) throws LuaException {
+        String fn = moduleName(name);
+        String dir = mContext.getContext().getDir(fn, Context.MODE_PRIVATE).getAbsolutePath();
+        String libPath = dir + "/lib" + fn + ".so";
+        File dst = new File(libPath);
+        if (!dst.exists()) {
+            if (!src.exists())
+                throw new LuaException("can not find lib " + name);
+            LuaUtil.copyFile(src.getAbsolutePath(), libPath);
+        }
+        libCache.put(fn, libPath);
+    }
+
+    /** 从 .so 文件名解析模块名:`libfoo.so` / `foo.so` -> `foo`。 */
+    private static String moduleName(String name) {
         String fn = name;
         int i = name.indexOf(".");
         if (i > 0)
             fn = name.substring(0, i);
         if (fn.startsWith("lib"))
             fn = fn.substring(3);
+        return fn;
+    }
+
+    public void loadLib(String name) throws LuaException {
+        String fn = moduleName(name);
         String libDir = mContext.getContext().getDir(fn, Context.MODE_PRIVATE).getAbsolutePath();
         String libPath = libDir + "/lib" + fn + ".so";
         File f = new File(libPath);

@@ -49,18 +49,6 @@ object BuiltinWidgets {
                 "boxCornerRadii" to "Float	圆角半径",
                 "endIconMode" to "Int	尾部图标模式"
             )
-        ),
-        Widget(
-            className = "com.luaforge.studio.widget.glass.LiquidGlassView",
-            shortName = "LiquidGlassView",
-            displayName = "液态玻璃",
-            group = "Special Views",
-            properties = linkedMapOf(
-                "cornerRadius" to "Float	圆角半径(px)",
-                "blurRadius" to "Float	背景模糊半径(px)",
-                "glassColor" to "Int	玻璃底色(ARGB,如 0x40FFFFFF)"
-            ),
-            doc = "doc/LiquidGlassView.md"
         )
     )
 }
