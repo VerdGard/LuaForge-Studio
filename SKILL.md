@@ -1,6 +1,6 @@
 ---
 name: luaforge-studio
-description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaForge-Studio 内置 MCP 服务(HTTP JSON-RPC, 默认端口 9123)驱动编辑器:读写源码、语法检查、编译验证、构建并安装 APK、调试运行并用控件树断言界面。关键词: LuaForge-Studio、Lua、ALY、loadlayout、import、luajava、global_utils、MemUtil、MCP、tools/call、run_project、check_screen、build_apk、check_syntax、debugger_status、debugger_outputs、compose、composeContent、Jetpack Compose。"
+description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaForge-Studio 内置 MCP 服务(HTTP JSON-RPC, 默认端口 9123)驱动编辑器:读写源码、语法检查、编译验证、构建并安装 APK、调试运行并用控件树断言界面。关键词: LuaForge-Studio、Lua、ALY、loadlayout、import、luajava、global_utils、MCP、tools/call、run_project、check_screen、build_apk、check_syntax、debugger_status、debugger_outputs。"
 ---
 
 # LuaForge-Studio 技能
@@ -15,12 +15,12 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 | 用户目标 | 走哪条路 |
 |---|---|
 | 写/改功能代码(`main.lua`、`*.lua`) | §1 Lua 语法 → §3 改文件 → §3.3 验证闭环 |
-| 写网络请求 | §1.10 网络访问(**优先 `Http.*`**) |
+| 写网络请求 | §1.9 网络访问(**优先 `Http.*`**) |
 | 改界面(`layout.aly` / `layout.lua`) | §1.4 布局写法 → §3.3 验证闭环 |
-| 用 Compose 写界面(`compose` / `composeContent`) | §1.8 Jetpack Compose → §3.3 验证闭环 |
 | 让项目跑起来看效果 | §3.3 `run_project` → `wait_for_text` → `check_screen` |
 | 出安装包 | §3.3 `build_apk` → `install_apk` |
 | 只想知道代码对不对 | §3.3 `check_syntax` + `compile_file`(只验证,不留产物) |
+| 需要 JSON/正则/压缩/加密/文件遍历等**通用能力** | §1.10 内置原生库与可复用 Java 能力 —— **优先复用 `require` 现成库,别无脑用纯 Lua 重写** |
 
 **铁律:凡"改了代码"的请求,必须用 `check_syntax` 或 `compile_file` 收尾;凡"改了界面/逻辑"的请求,必须 `run_project` + `check_screen` 收尾。** 不做验证等于没做完。
 
@@ -66,6 +66,8 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
   layout.aly      # 布局(纯 Lua 表字面量)
   settings.json   # 应用配置
   Preview.png     # 模板预览图(可删)
+  lib/            # 可选:分架构原生库,lib/<abi>/libxxx.so(见 §1.10)
+  libs/           # 可选:三方 dex/jar 与扁平 so(见 §1.10)
 ```
 
 `settings.json`(Default 模板实测):
@@ -84,8 +86,8 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 
 - `package` 是 APK 包名占位符;`application.label` 是应用名,新建项目时由工具替换。
 - `application.debugmode` 由 `LuaActivity` 读取(`LuaActivity.java:1387`)。
-- `global_utils` 是**要注入的 Java 工具类白名单**,可选值只有 7 个(`NewProjectScreen.kt:81-88`):
-  `BitmapUtil`、`GlideUtil`、`OkHttpUtil`、`UiUtil`、`RecyclerAdapterUtil`、`ThemeUtil`、`MemUtil`。
+- `global_utils` 是**要注入的 Java 工具类白名单**,可选值只有 6 个(`NewProjectScreen.kt:81-88`):
+  `BitmapUtil`、`GlideUtil`、`OkHttpUtil`、`UiUtil`、`RecyclerAdapterUtil`、`ThemeUtil`。
   选中后由 `LuaFunctionRegistrar.registerSelectedFunctions()` 注入(`LuaActivity.java:1395-1398`),其函数直接成为**全局函数**。各工具类的函数清单见 `app/src/main/assets/doc/*.md`。
   > 例外:`OkHttpUtil` 的 `get`/`post`/`upload`/`download` **不**注册为裸全局函数,而是挂在全局表 `Https` 下(`Https.get` 等);反射注册路径与 MCP 描述均跳过这四个方法(`skipReflectiveMethod`)。
 
@@ -135,9 +137,8 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 - **延迟属性**:ConstraintLayout 约束与 RelativeLayout 规则延后到子控件都建好后统一应用(`loadlayout.lua:1201-1213`)。
 - **`.aly` 可被 `require`**:`loadlayout.lua` 往 `package.searchers` 注入 `alyloader`(430-447),识别 `\27Lua` 预编译签名,否则按 `return <内容>` 当表达式加载。
 - **两套实现**:`core/src/main/resources/lua/loadlayout.lua`(运行时,1223 行)与 `app/src/main/assets/layouthelper/loadlayout2.lua`(布局助手用,1262 行,支持 `pagesWithTitle` 等扩展)。语法一致,写项目用前者。
-- **内置控件**(随 IDE 发布,编译进 `core`,非三方库):`MaterialTextField`、`LiquidGlassView`(液态玻璃,基于 backdrop 效果)。直接写短名即可,属性名 = 去掉 `set` 前缀首字母小写:
-  `{ LiquidGlassView, layout_width = "match_parent", layout_height = "120dp", cornerRadius = 28, blurRadius = 24, glassColor = 0x40FFFFFF }`。
-  清单见 MCP `list_widgets`,文档见 `assets/doc/LiquidGlassView.md`。
+- **内置控件**(随 IDE 发布,编译进 `core`,非三方库):`MaterialTextField`。直接写短名即可,属性名 = 去掉 `set` 前缀首字母小写。
+  清单见 MCP `list_widgets`。
 
 ### 1.6 全局对象与函数
 
@@ -152,9 +153,8 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 | `androidx.R` | AppCompat 资源 |
 | `material.R` | Material 组件资源 |
 | `luajava` | 桥接库;额外带 `luadir` / `luapath` / `luaextdir` 三个路径字段 |
-| `Https` | **仅当 `global_utils` 含 `OkHttpUtil` 时注入**:`Https.get` / `Https.post` / `Https.upload` / `Https.download` 四个网络请求函数(注册处 `LuaFunctionRegistrar.registerHttpFunctions`,`LuaActivity.java:1395-1398`)。见 §1.10 与 `assets/doc/OkHttpUtil.md` |
+| `Https` | **仅当 `global_utils` 含 `OkHttpUtil` 时注入**:`Https.get` / `Https.post` / `Https.upload` / `Https.download` 四个网络请求函数(注册处 `LuaFunctionRegistrar.registerHttpFunctions`,`LuaActivity.java:1395-1398`)。见 §1.9 与 `assets/doc/OkHttpUtil.md` |
 | `print` | 定制打印,`print.register("print")` 注册(`LuaActivity.java:1297`),经 `sendMsg` → `RuntimeLog.logLua` 落进 `luaforge.log`(`LuaActivity.java:1687-1696`) |
-| `compose(tree)` / `composeContent(tree)` | Jetpack Compose 桥(`LuaCompose.register`,`LuaActivity.java:1333`);Lua table 描述 UI 树 → 渲染 Material3 组件,详见 §1.8 |
 | `set(name, v)` / `call(name, ...)` | 跨线程设值/调用 |
 
 `require "import"` 之后(全部来自 `core/src/main/resources/lua/import.lua`):
@@ -199,50 +199,7 @@ MaterialAlertDialogBuilder(activity)
    读属性同理走 `javaGetter`,自动尝试 `getXxx` / `isXxx`(`LuaJavaAPI.java:1479-1530`),所以 `item.ItemId` 与 `item.getItemId()` 都可用。
    若名字既非字段也无对应 setter,报 `xxx is not a field`(`luajava.c:753`)。
 
-### 1.8 Jetpack Compose
-
-在 Lua 里用 **table 描述 UI 树**,由 Kotlin 桥渲染为真正的 Material3 组件。**Lua 不能直接调用 `@Composable`**
-(`@Composable` 函数签名被编译器改写、注入 `Composer` 参数,且必须在 composition 上下文中执行),
-因此采用「Lua 描述树 → Kotlin 渲染」的形态(方案 A)。
-
-全局函数(来自 `core/src/main/kotlin/com/luaforge/studio/compose/LuaCompose.kt`,`LuaActivity.java:1330-1335` 注册):
-
-| 函数 | 说明 |
-|---|---|
-| `compose(tree)` | 返回一个可挂载的 `ComposeView`(可交给 `loadlayout` / `setContentView`) |
-| `composeContent(tree)` | 直接把 `tree` 渲染并设为当前页面内容视图;内部已切 UI 线程 |
-
-**节点格式**:每个节点是一个 table,`[1]` 必须是标签字符串;第二个位置参数只对 `Text` / `Button` 有意义
-(等价 `text`);其余位置参数若不是字符串则当子节点递归解析;其余键为属性。
-
-```lua
-composeContent({
-  "Column",
-  fillMaxWidth = true,
-  padding = 20,
-  spacing = 14,
-  { "Text", "标题", size = 26, bold = true, align = "center", fillMaxWidth = true },
-  { "Card", corner = 18, fillMaxWidth = true,
-    { "Column", spacing = 10,
-      { "Text", "卡片内容", size = 16, bold = true },
-    },
-  },
-  { "Row", spacing = 12,
-    { "Button", "点我", onClick = function() print("clicked") end },
-  },
-  { "Divider" },
-  { "Text", "提示", size = 12, color = 0xFF6650a4 },
-})
-```
-
-支持的标签:`Column`(spacing)/ `Row`(spacing)/ `Box` / `Card`(corner,默认 12)/
-`Text`(text,size,bold,color,align)/ `Button`(text,onClick)/ `Spacer`(h,w)/ `Divider`。
-通用属性:`padding`(dp)、`fillMaxWidth`、`width` / `height`(dp)、`background`(`0xAARRGGBB`)、`corner`(dp)。颜色用 Lua 十六进制数字。
-
-新增项目模板 `templates/Compose.zip` 可直接跑;完整文档见 `app/src/main/assets/doc/Compose.md`。
-组件集为「基础集」,按需扩展标签与属性。
-
-### 1.9 可运行的最小项目
+### 1.8 可运行的最小项目
 
 `main.lua`(**Default 模板实测内容**):
 
@@ -275,7 +232,7 @@ activity
 }
 ```
 
-### 1.10 网络访问(优先用 `Http`)
+### 1.9 网络访问(优先用 `Http`)
 
 **前提**:项目 `settings.json` 的 `user_permission` 必须包含 `INTERNET`(Default 模板已含)。
 漏配时请求在网络层失败,回调里表现为 `code == -1`。
@@ -311,6 +268,57 @@ Http.post("https://api.example.com/login", {user = "a", pass = "b"},
 
 **通用注意**:两条通道在 **IDE 内运行**时都会被「网络请求拦截」拦下(见 `docs/NETWORK.md`),
 **打包成 APK 后不拦截**;开发期若请求静默返回 `-1`,先查拦截名单。
+
+### 1.10 内置原生库与可复用 Java 能力(优先复用,别无脑纯 Lua 重写)
+
+**原则:能用内置原生库或现成 Java 类做到的,不要用纯 Lua 重写。** 例如 JSON 编解码用 `require "cjson"`(C 实现),别手写字符串解析;哈希/加密用 `crypt` / `md5` / `microaes`;压缩用 `zlib` / `zip`;正则用 `regex`;文件遍历用 `lfs`;网络用 §1.9 的 `Http`。
+
+#### 随运行时内置的原生库(直接 `require`)
+
+这些 `.so` 编进应用本体(`nativeLibraryDir`),Lua 侧直接 `require "模块名"` 即可,无需自己编译:
+
+| `require` 名 | 能力 |
+|---|---|
+| `cjson` | JSON 编解码(C,极快):`cjson.encode` / `cjson.decode` |
+| `json` | 另一套 JSON 绑定:`json.encode` / `json.decode` |
+| `yyjson` | 高性能 JSON(解析 / 序列化 / 可变 DOM) |
+| `bson` | BSON 编解码(MongoDB 格式) |
+| `lfs` | 文件系统遍历 / 属性 / 目录操作 |
+| `luv` | libuv 事件循环 / 异步 IO |
+| `socket.core` | LuaSocket TCP/UDP;子模块 `socket.serial` / `socket.unix` / `mime.core`(⚠️ 该库**没有** `luaopen_socket`,写 `require "socket"` 会失败) |
+| `xml.core` | LuaXML 解析;亦可用包装脚本 `require "xml"` |
+| `zlib` | zlib 压缩 / 解压(`inflate` / `deflate`)与 `crc32` / `adler32` |
+| `zip` | zip 归档读写 |
+| `crypt` | 编解码 / 摘要:`base64` `hex` `sha1` `hmac` `des` `dh` 等 |
+| `base64` | Base64 编解 |
+| `md5` | MD5 摘要 |
+| `microaes` | AES 全家桶(ecb / cbc / gcm / ctr / xts / siv 等) |
+| `regex` | POSIX 正则:`find` / `match` / `gmatch` / `gsub` / `split` |
+| `rawio` | 原始文件读写 |
+| `time` | 计时 / 时间戳:`now` / `diff` / `start` / `elapsed` 等 |
+| `unix` | POSIX 系统调用(另导出 `unix.unsafe` 命名空间) |
+| `ffi` | LuaJIT 风格 ffi 子集(另导出 `cffi`) |
+| `sensor` | 设备传感器 |
+| `gl` | OpenGL 绑定(LuaGL) |
+| `canvas` | Android Canvas 绑定 |
+| `tcc` | 内嵌 TCC 编译器 |
+| `decrypt` | 加密脚本加载(`loadfile` / `dofile` / `load`) |
+| `luaparser` | Lua 源码解析(IDE 用) |
+
+> ⚠️ `lsqlite3` 目录存在但**未接入顶层 `CMakeLists.txt`**(`add_and_optimize_library` 列表里没有),所以不随包构建,**别写 `require "lsqlite3"`**。
+> 加载机制:全局 `package.cpath` 为 `nativeLibraryDir/lib?.so;libDir/lib?.so`(`LuaApplication.java:181`),`require "xxx"` 命中 `libxxx.so` 后调 `luaopen_xxx`;子模块(`a.b`)走 `searcher_Croot`,先加载 `liba.so` 再调 `luaopen_a_b`。
+
+#### 项目自带的原生库与三方 dex
+
+- **`lib/<abi>/libxxx.so`**:分架构原生库,只加载与设备首选 ABI(`Build.SUPPORTED_ABIS[0]`,如 `arm64-v8a` / `armeabi-v7a`)匹配的子目录;无该子目录时回退 `lib/*.so`(扁平)。加载后 `require "xxx"`(`LuaDexLoader.loadArchLibs`)。
+- **`libs/*.dex` / `libs/*.jar`**:三方 dex/jar,动态加载后其类可**按裸类名或全限定名**直接在 Lua 用(`LuaDexLoader.loadLibs`)。
+- **`libs/*.so`**:兼容旧版的扁平原生库(不分架构)。
+- 用 MCP `list_project_libraries` 可列出项目 `lib/<abi>/*.so`、`libs/*.dex|jar` 与设备首选 ABI。
+
+#### 现成的 Java 能力(别用纯 Lua 重写)
+
+- **网络**:`Http.get` / `Http.post` / `Http.put` / `Http.delete` / `Http.download`(`com.androlua.Http`,见 §1.9),比纯 Lua socket 省事得多。
+- **`global_utils` 白名单**(项目 `settings.json`,见 §1.3):开启后其函数直接成为全局函数 —— 位图 `BitmapUtil`、图片加载 `GlideUtil`、网络 `OkHttpUtil`(→ `Https.*`)、UI `UiUtil`、列表 `RecyclerAdapterUtil`、主题 `ThemeUtil`。各函数清单见 `app/src/main/assets/doc/*.md`。
 
 ### 1.11 易错点
 
@@ -360,7 +368,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 - 路径可为项目相对路径,或允许范围内的绝对路径。
 - 不传 `path` 时多数工具回退到"当前打开的项目 / 当前活动文件"。
 
-### 3.2 工具清单(48 个,`McpTools.kt` 实测)
+### 3.2 工具清单(49 个,`McpTools.kt` 实测)
 
 **项目与文件**
 
@@ -383,6 +391,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 | `list_templates` / `create_project` | 模板 / 建项目 | `name`、`packageName`、`template`、`debugMode`、`globalUtils` |
 | `analyze_imports` | 分析所需 import | `content` |
 | `list_widgets` | 列出随 IDE 发布的内置控件(含短名/分类/可写属性) | — |
+| `list_project_libraries` | 列项目 `lib/<abi>/*.so`、`libs/*.dex\|jar`、`libs/*.so` 与设备首选 ABI | `path` |
 
 **编辑器**
 
@@ -491,7 +500,6 @@ MCP 只允许访问这些根(`McpTools.kt:1429-1443`):
 - Lua 库:`core/src/main/resources/lua/{import,loadlayout,loadmenu,loadbitmap,xml,Colors}.lua`、`app/src/main/assets/layouthelper/loadlayout2.lua`
 - Java 桥接:`app/src/main/jni/luajava/luajava.c`(void 返回 self、`ljlib` 函数表)、`core/src/main/java/com/luajava/LuaJavaAPI.java`(setter/getter 解析)
 - 模板:`app/src/main/assets/templates/Default.zip`、`app/src/main/kotlin/com/luaforge/studio/ui/project/NewProjectScreen.kt`
-- Compose 桥:`core/src/main/kotlin/com/luaforge/studio/compose/LuaCompose.kt`、注册处 `core/src/main/java/com/androlua/LuaActivity.java:1330-1335`、模板与文档 `app/src/main/assets/templates/Compose.zip`、`app/src/main/assets/doc/Compose.md`
 - MCP:`app/src/main/kotlin/com/luaforge/studio/mcp/{McpServer,McpManager,McpTools}.kt`、`docs/MCP.md`
 - 路径与日志:`app/src/main/kotlin/com/luaforge/studio/utils/{FileUtil,LogConfig}.kt`
 

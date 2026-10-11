@@ -29,7 +29,7 @@
 - 编辑器新增**符号自动补全**(设置 → 编辑器配置,默认开启)
   - 点击底部符号栏的 `(` `[` `{` `"` `'` 时自动补成对,并把光标移到括号中间;关闭后仅插入单个符号
 - 设置新增**打包设置**卡片:选择打包时保留的 CPU 架构
-  - 三选一:**通用版**(32 位 + 64 位)/ **仅 64 位**(arm64-v8a)/ **仅 32 位**(armeabi-v7a)
+  - 三选一:**通用版**(32 位 + 64 位)/ **arm64-v8a**(64 位)/ **armeabi-v7a**(32 位)
   - 清理阶段按选择裁剪 APK 的 `lib/` 目录,减小产物体积
 - **MCP 默认端口由 `8787` 改为 `9123`**
   - 代码 `McpManager.kt` / `SettingsManager.kt` 三处默认值同步;设置页仍可改(1024–65535)
@@ -50,6 +50,28 @@
   - 反射注册路径同步跳过 OkHttpUtil 的这四个方法,确保裸全局名不再注册(`registerUtilClass` / `describeFunctions` / `findUtilMethod` 共用 `skipReflectiveMethod` 规则)
   - `OkHttpUtil.kt` 重构:四处重复逻辑合并为 `applyCommonHeaders` + `execute`,`OkHttpClient` 改双重检查锁,响应体一律 `use{}` 关闭避免连接泄漏
   - 文档 `assets/doc/OkHttpUtil.md` 与 MCP 的 `note` 同步为 `Https.*`
+- 编辑器配置调整
+  - 移除「智能排序」开关(及 `SettingsManager` / `CodeEditScreen` / `DraggableSymbolPanel` 中整套频率统计逻辑)
+  - 新增「长按选中整行」开关(设置 → 编辑器配置,默认开启),关闭后长按不再整行选中
+  - 编辑器配置各项统一改为**默认开启**(`enableTabHistory` / `completionCaseSensitive` / `hexColorHighlightEnabled` 等)
+- **原生库与三方库动态加载**
+  - 新增项目 `lib/<abi>/`(`arm64-v8a` / `armeabi-v7a`)分架构加载原生库,无该 ABI 子目录时回退 `lib/*.so`;`libs/` 继续加载扁平 `.so` 与动态加载 `*.dex` / `*.jar`(`LuaDexLoader.loadArchLibs` / `loadLibs`)
+  - 加载后 `require "模块名"`(`libcjson.so` → `require "cjson"`);`libs/` 的 dex 加载后其类可按裸类名或全限定名直接在 Lua 使用
+  - MCP 新增 `list_project_libraries` 工具,列出项目 `lib/<abi>/*.so`、`libs/*.dex|jar`、`libs/*.so` 与设备首选 ABI(工具数 48 → 49)
+- **打包设置文案**:「仅 64 位」改为 `arm64-v8a`、「仅 32 位」改为 `armeabi-v7a`(中英文案同步)
+
+- **废除 Lua 侧 Jetpack Compose 桥与液态玻璃控件**
+  - 移除全局函数 `compose(tree)` / `composeContent(tree)` 与 `LuaCompose.kt`(注册处 `LuaActivity.initLua` 一并删除);Lua 项目改回 `loadlayout` / 原生 View 体系
+  - 移除内置控件 `LiquidGlassView`(`core` 的 `widget/glass`、backdrop 依赖 `io.github.kyant0:backdrop-android`);`BuiltinWidgets`、布局助手 `classes.lua` / `layoutData.lua`、白名单注释同步清理
+  - `core` 模块不再需要 Compose:移除 `kotlin.compose` 插件、`buildFeatures.compose` 与 `compose.ui` / `foundation` / `material3` 依赖(IDE 自身 UI 仍在 `app` 模块使用 Compose,不受影响)
+  - 删除模板 `Compose.zip` / `LiquidGlass.zip` 与文档 `doc/Compose.md` / `doc/LiquidGlassView.md`;`list_widgets` 示例改回 `MaterialTextField`
+- **移除 `MemUtil` 全局工具**
+  - 删除 `core` 的 `MemUtil.kt` 与底层 `libmemkit.so`(JNI 源 `app/src/main/jni/memkit/`、构建入口 `CMakeLists.txt` 一并移除)
+  - `settings.json` 的 `global_utils` 白名单由 7 项减为 6 项;`LuaFunctionRegistrar.UTIL_CLASS_MAP`、新建项目「全局工具」选项、文档 `doc/MemUtil.md` 同步清理
+  - `ApkBuilder.UTIL_NATIVE_LIBS`(用于打包时保留工具类原生库)整体移除
+- **修复调试浮窗的两个显示问题**
+  - 返回编辑器时浮窗延迟销毁:根因是浮窗走系统级悬浮窗(`TYPE_APPLICATION_OVERLAY`),独立于运行界面生命周期,要等 `LuaActivity.onDestroy` 才移除
+  - 浮窗会浮现在其他程序之上:现在浮窗始终挂到运行界面的 `DecorView`,与运行界面同窗口 —— 界面不可见即隐藏、界面销毁即移除,仅在本项目运行界面显示
 - 版本固定为 **1.6.7**(本次及以后版本);本地不构建,统一由 GitHub Actions 出包
 
 ## 1.6.5
