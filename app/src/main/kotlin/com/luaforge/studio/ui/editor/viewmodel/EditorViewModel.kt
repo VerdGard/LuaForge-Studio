@@ -824,7 +824,8 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
         val projectFunctions = runCatching {
             ProjectFunctionScanner.scan(root).functions
         }.getOrElse {
-            LogCatcher.e("EditorViewModel", "扫描项目函数失败", it)
+            // getOrElse 的 it 是 Throwable,而 LogCatcher.e 只接受 Exception?
+            LogCatcher.e("EditorViewModel", "扫描项目函数失败", it as? Exception)
             emptyMap()
         }
 
@@ -842,7 +843,7 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
                     .associate { it.name to ("全局函数(" + it.source + ")") }
             }
         }.getOrElse {
-            LogCatcher.e("EditorViewModel", "读取 global_utils 失败", it)
+            LogCatcher.e("EditorViewModel", "读取 global_utils 失败", it as? Exception)
             emptyMap()
         }
 
