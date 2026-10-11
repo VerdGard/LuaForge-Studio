@@ -2235,13 +2235,12 @@ object McpTools {
         ).put("isError", true)
     }
 
-    /**
-     * 列出项目的原生库与三方库,便于外部工具发现可复用的 .so / .dex。
-     *
-     * - `lib/<abi>/*.so`:按设备首选 ABI 分目录的原生库(运行时经 `require "模块名"` 调用)
-     * - `libs/*.dex|jar`:项目三方库,动态类加载后裸类名/FQN 均可用
-     * - `libs/*.so`:兼容的扁平原生库
-     */
+    // 列出项目的原生库与三方库,便于外部工具发现可复用的 .so / .dex。
+    // - lib/<abi>/ 下的 .so:按设备首选 ABI 分目录的原生库(运行时经 require "模块名" 调用)
+    // - libs/ 下的 .dex / .jar:项目三方库,动态类加载后裸类名/FQN 均可用
+    // - libs/ 下的 .so:兼容的扁平原生库
+    //
+    // 注:此处不用 KDoc,因为 Kotlin 块注释可嵌套,描述里的 /*.so 会再开一层注释导致无法闭合。
     private suspend fun listProjectLibraries(context: Context, args: JSONObject): JSONObject {
         val project = resolveProjectPath(context, args.optString("path", ""))
             ?: return errorResult("无法确定项目路径,请先在前台打开项目或传入 path")
