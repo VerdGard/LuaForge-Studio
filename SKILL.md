@@ -15,6 +15,7 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 | 用户目标 | 走哪条路 |
 |---|---|
 | 写/改功能代码(`main.lua`、`*.lua`) | §1 Lua 语法 → §3 改文件 → §3.3 验证闭环 |
+| 写网络请求 | §1.10 网络访问(**优先 `Http.*`**) |
 | 改界面(`layout.aly` / `layout.lua`) | §1.4 布局写法 → §3.3 验证闭环 |
 | 用 Compose 写界面(`compose` / `composeContent`) | §1.8 Jetpack Compose → §3.3 验证闭环 |
 | 让项目跑起来看效果 | §3.3 `run_project` → `wait_for_text` → `check_screen` |
@@ -151,7 +152,7 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 | `androidx.R` | AppCompat 资源 |
 | `material.R` | Material 组件资源 |
 | `luajava` | 桥接库;额外带 `luadir` / `luapath` / `luaextdir` 三个路径字段 |
-| `Https` | **仅当 `global_utils` 含 `OkHttpUtil` 时注入**:`Https.get` / `Https.post` / `Https.upload` / `Https.download` 四个网络请求函数(注册处 `LuaFunctionRegistrar.registerHttpFunctions`,`LuaActivity.java:1395-1398`)。见 `assets/doc/OkHttpUtil.md` |
+| `Https` | **仅当 `global_utils` 含 `OkHttpUtil` 时注入**:`Https.get` / `Https.post` / `Https.upload` / `Https.download` 四个网络请求函数(注册处 `LuaFunctionRegistrar.registerHttpFunctions`,`LuaActivity.java:1395-1398`)。见 §1.10 与 `assets/doc/OkHttpUtil.md` |
 | `print` | 定制打印,`print.register("print")` 注册(`LuaActivity.java:1297`),经 `sendMsg` → `RuntimeLog.logLua` 落进 `luaforge.log`(`LuaActivity.java:1687-1696`) |
 | `compose(tree)` / `composeContent(tree)` | Jetpack Compose 桥(`LuaCompose.register`,`LuaActivity.java:1333`);Lua table 描述 UI 树 → 渲染 Material3 组件,详见 §1.8 |
 | `set(name, v)` / `call(name, ...)` | 跨线程设值/调用 |
@@ -274,7 +275,44 @@ activity
 }
 ```
 
-### 1.10 易错点
+### 1.10 网络访问(优先用 `Http`)
+
+**前提**:项目 `settings.json` 的 `user_permission` 必须包含 `INTERNET`(Default 模板已含)。
+漏配时请求在网络层失败,回调里表现为 `code == -1`。
+
+**首选 Java 内置的 `Http`**(`com.androlua.Http`,基于 `HttpURLConnection`,`core/src/main/java/com/androlua/Http.java`):
+
+```lua
+require "import"   -- 之后可直接用 Http(全局表按需解析 com.androlua. 前缀)
+
+-- GET
+Http.get("https://api.example.com/data", function(code, content, cookie, headers)
+  if code == 200 then print(content) end
+end)
+
+-- POST:第二个参数可为 string,也可为 table(表单字段)
+Http.post("https://api.example.com/login", {user = "a", pass = "b"},
+  function(code, content, cookie, headers) end)
+```
+
+- `Http` 是**类**(不是全局实例),`require "import"` 后可直接写 `Http.get(...)`:
+  在 `_G` 上访问 `Http` 会经元表(`import.lua` 的 `globalMT`)依次尝试 `''`、`java.lang.`、`java.util.`、`com.androlua.` 前缀,从而绑定到 `com.androlua.Http`。
+  也可显式 `import "com.androlua.Http"` 或 `luajava.bindClass "com.androlua.Http"`。
+  ⚠️ **不要写 `import "Http"`**:`import(package)` 不做前缀补全(只按原样 `bindClass` / 查包),短名 `Http` 会直接报 `cannot find Http`;短名前缀解析只发生在 `_G` 的元表访问路径上。
+- 可用静态方法:`get` / `post` / `put` / `delete` / `download`。可选参数按位置追加:
+  `url` → `cookie`(string) → `charset`(string) → `header`(table);POST 另有 `file`(table)重载做 `multipart/form-data` 上传。
+- 回调统一为 `function(code, content, cookie, headers)`。**失败时只有两个参数** `(code, message)`,且 `code == -1`
+  (网络异常 / 被网络拦截拒绝都是 `-1`)。`Http.download(url, savePath, callback)` 回调是 `(code, path, headers)`(三个参数)。
+- 全局默认头:`Http.setHeader(table)`、`Http.setCookie(str)`、`Http.setUserAgent(str)`、`Http.setReferer(str)`。
+- 回调在 `onPostExecute`(**主线程**)触发,可直接更新 UI。
+
+**次选 `Https.*`**(OkHttp 实现):仅当 `settings.json` 的 `global_utils` 含 `OkHttpUtil` 时才有,
+只提供 `Https.get` / `Https.post` / `Https.upload` / `Https.download`。需要 OkHttp 特性时再用,详见 §1.6 与 `assets/doc/OkHttpUtil.md`。
+
+**通用注意**:两条通道在 **IDE 内运行**时都会被「网络请求拦截」拦下(见 `docs/NETWORK.md`),
+**打包成 APK 后不拦截**;开发期若请求静默返回 `-1`,先查拦截名单。
+
+### 1.11 易错点
 
 1. `main.lua` 与 `settings.json` **必须同时存在**才算合法项目(`LuaActivity.java:413` 按这两个文件识别项目)。
 2. 不 `require "import"` 就没有 `import` / `loadlayout`,连 `LinearLayoutCompat` 都解析不到。
