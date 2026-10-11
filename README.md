@@ -41,6 +41,15 @@
   - 修复:图片属性候选漏配 `.jpeg` / `.webp` / `.bmp` / `.gif`,且未做大写兼容 → `addDir` 补齐并大小写不敏感
   - 增强:项目 `libs/*.dex` 中解析出的三方 View 子类会**注册为全局控件**并加入「添加控件」列表(新增「三方控件」分类,上限 80 个);点击时若未预注册,经 `_G.__lfThirdParty` 懒解析;仍解析不出时给出明确报错而非静默失败
   - 修复:`libsDir.listFiles()` 为 nil 时不再崩溃(空目录保护)
+- **代码补全范围扩大**:新增项目函数与全局函数补全
+  - 跨文件扫描项目内 `.lua`/`.aly` 的 `function name(...)` 定义并加入补全(跳过注释、长注释与 `build`/`.git` 等目录)
+  - `function M.foo(...)` / `M:foo(...)` 归入「表名 → 成员」,输入 `M.` 时提示成员
+  - 同时把 `settings.json` 的 `global_utils` 在运行时会注册的全局函数(经 `LuaFunctionRegistrar.describeFunctions`,与运行时同源)一并补全
+  - 接入点 `EditorViewModel.refreshExtraFunctions()`(打开项目时于 IO 线程扫描并注入已打开编辑器)
+- **网络请求函数改为全局表 `Https`**:`get`/`post`/`upload`/`download` 由裸全局名改为 `Https.get` / `Https.post` / `Https.upload` / `Https.download`
+  - 反射注册路径同步跳过 OkHttpUtil 的这四个方法,确保裸全局名不再注册(`registerUtilClass` / `describeFunctions` / `findUtilMethod` 共用 `skipReflectiveMethod` 规则)
+  - `OkHttpUtil.kt` 重构:四处重复逻辑合并为 `applyCommonHeaders` + `execute`,`OkHttpClient` 改双重检查锁,响应体一律 `use{}` 关闭避免连接泄漏
+  - 文档 `assets/doc/OkHttpUtil.md` 与 MCP 的 `note` 同步为 `Https.*`
 - 版本固定为 **1.6.7**(本次及以后版本);本地不构建,统一由 GitHub Actions 出包
 
 ## 1.6.5

@@ -161,7 +161,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 
 `global_utils` 里的工具类会按规则把 `public static` 方法注册成 **Lua 全局函数**(如 `dp2px`、`parseColor`),
 因此 Lua 代码里可以直接调用。`list_global_utils` 的 `registeredFunctions` 与运行时注册共用同一套规则推导,
-不会与运行结果漂移;`overrides` 字段标出被后注册者覆盖的同名函数(`get` / `post` / `upload` / `download`)。
+不会与运行结果漂移;`overrides` 字段标出被后注册者覆盖的同名函数。OkHttpUtil 的网络方法注册在**全局表 `Https`** 下(`Https.get` / `Https.post` / `Https.upload` / `Https.download`),不再占用裸全局名。
 
 `call_global_util` 的调用方式与项目自身调用**完全同一条路径**(在运行实例主线程上执行),
 所以 `dp2px`、`statusBarHeight()` 这类需要真实 `Context` 的 UI 函数也能正常生效
@@ -170,7 +170,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 - 需要先 `run_project` 把项目跑起来;页面未运行时返回明确错误
 - 参数可用 JSON 数组(`"args": [16]`)保留类型,也可用换行/逗号分隔的字符串(自动推断 `number` / `boolean` / `null`)
 - 需要控件或 Java 对象作参数的函数(如 `GlideUtil.loadImage` 需要 `ImageView`)经 MCP 无法传参,调用会明确拒绝并给出提示
-- 网络请求函数(`get` / `post` / `upload` / `download`)与 Recycler 适配器函数需要 Lua 回调,不支持经 MCP 调用
+- 网络请求函数(`Https.get` / `Https.post` / `Https.upload` / `Https.download`)与 Recycler 适配器函数需要 Lua 回调,不支持经 MCP 调用
 - 调用在运行实例主线程排队执行,脚本繁忙时可能超时;超时会如实返回"尚未完成"而非静默成功
 
 ## 5. 运行时界面检查工作流

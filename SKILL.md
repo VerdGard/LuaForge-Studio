@@ -86,6 +86,7 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 - `global_utils` 是**要注入的 Java 工具类白名单**,可选值只有 7 个(`NewProjectScreen.kt:81-88`):
   `BitmapUtil`、`GlideUtil`、`OkHttpUtil`、`UiUtil`、`RecyclerAdapterUtil`、`ThemeUtil`、`MemUtil`。
   选中后由 `LuaFunctionRegistrar.registerSelectedFunctions()` 注入(`LuaActivity.java:1395-1398`),其函数直接成为**全局函数**。各工具类的函数清单见 `app/src/main/assets/doc/*.md`。
+  > 例外:`OkHttpUtil` 的 `get`/`post`/`upload`/`download` **不**注册为裸全局函数,而是挂在全局表 `Https` 下(`Https.get` 等);反射注册路径与 MCP 描述均跳过这四个方法(`skipReflectiveMethod`)。
 
 ### 1.4 入口与生命周期回调
 
@@ -150,6 +151,7 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 | `androidx.R` | AppCompat 资源 |
 | `material.R` | Material 组件资源 |
 | `luajava` | 桥接库;额外带 `luadir` / `luapath` / `luaextdir` 三个路径字段 |
+| `Https` | **仅当 `global_utils` 含 `OkHttpUtil` 时注入**:`Https.get` / `Https.post` / `Https.upload` / `Https.download` 四个网络请求函数(注册处 `LuaFunctionRegistrar.registerHttpFunctions`,`LuaActivity.java:1395-1398`)。见 `assets/doc/OkHttpUtil.md` |
 | `print` | 定制打印,`print.register("print")` 注册(`LuaActivity.java:1297`),经 `sendMsg` → `RuntimeLog.logLua` 落进 `luaforge.log`(`LuaActivity.java:1687-1696`) |
 | `compose(tree)` / `composeContent(tree)` | Jetpack Compose 桥(`LuaCompose.register`,`LuaActivity.java:1333`);Lua table 描述 UI 树 → 渲染 Material3 组件,详见 §1.8 |
 | `set(name, v)` / `call(name, ...)` | 跨线程设值/调用 |
