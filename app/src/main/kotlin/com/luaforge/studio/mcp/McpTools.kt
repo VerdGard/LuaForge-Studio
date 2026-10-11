@@ -2460,7 +2460,8 @@ object McpTools {
                 .put(
                     "note",
                     "registeredFunctions 按当前 settings.json 推导运行时会注册的 Lua 全局函数;" +
-                        "overrides 表示同名函数被后注册者覆盖(如 get/post/upload/download);" +
+                        "overrides 表示同名函数被后注册者覆盖;" +
+                        "http 函数注册在全局表 Https 下(Https.get/Https.post/Https.upload/Https.download);" +
                         "修改 global_utils 后需重新运行项目才生效。调用请用 call_global_util。"
                 )
                 .toString(2)

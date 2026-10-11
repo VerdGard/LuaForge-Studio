@@ -43,9 +43,26 @@ public class LuaFunctionRegistrar {
                 }
             };
 
+    /** OkHttpUtil 的网络方法改由全局表 Https 注册,反射路径需跳过,避免再污染全局命名空间。 */
+    private static final String OKHTTP_UTIL_CLASS = "com.luaforge.studio.utils.OkHttpUtil";
+
+    private static final Set<String> HTTP_TABLE_METHODS =
+            new HashSet<>(Arrays.asList("get", "post", "upload", "download"));
+
     private final LuaState L;
     private final Context context;
     private final String luaDir;
+
+    /**
+     * 反射注册/描述时是否应跳过该方法。
+     *
+     * [registerUtilClass]、[describeFunctions]、[findUtilMethod] 共用此规则,
+     * 保证「查看」结果与运行时实际注册一致。
+     */
+    private static boolean skipReflectiveMethod(String className, Method method) {
+        return OKHTTP_UTIL_CLASS.equals(className)
+                && HTTP_TABLE_METHODS.contains(method.getName());
+    }
 
     public LuaFunctionRegistrar(LuaState L, Context context, String luaDir) {
         this.L = L;
@@ -101,6 +118,11 @@ public class LuaFunctionRegistrar {
             for (final Method method : methods) {
                 // 只处理公共静态方法,并跳过 Kotlin 合成方法(规则见 isRegisterable)
                 if (!isRegisterable(method)) {
+                    continue;
+                }
+
+                // OkHttpUtil 的 get/post/upload/download 改由 Https 表注册,这里跳过
+                if (skipReflectiveMethod(className, method)) {
                     continue;
                 }
 
@@ -342,7 +364,6 @@ public class LuaFunctionRegistrar {
                             return 0;
                         }
                     };
-            httpGet.register("get");
 
             // ========== POST请求 ==========
             JavaFunction httpPost =
@@ -514,7 +535,6 @@ public class LuaFunctionRegistrar {
                             return 0;
                         }
                     };
-            httpPost.register("post");
 
             // ========== 文件下载 ==========
             JavaFunction httpDownload =
@@ -641,7 +661,6 @@ public class LuaFunctionRegistrar {
                             return 0;
                         }
                     };
-            httpDownload.register("download");
 
             // ========== 文件上传 ==========
             JavaFunction httpUpload =
@@ -775,7 +794,17 @@ public class LuaFunctionRegistrar {
                             return 0;
                         }
                     };
-            httpUpload.register("upload");
+            // 统一挂到 Https 表下,避免污染全局命名空间(与 get/post/upload/download 裸全局名解耦)
+            L.newTable();
+            L.pushJavaFunction(httpGet);
+            L.setField(-2, "get");
+            L.pushJavaFunction(httpPost);
+            L.setField(-2, "post");
+            L.pushJavaFunction(httpDownload);
+            L.setField(-2, "download");
+            L.pushJavaFunction(httpUpload);
+            L.setField(-2, "upload");
+            L.setGlobal("Https");
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -988,7 +1017,8 @@ public class LuaFunctionRegistrar {
             }
             try {
                 for (Method method : Class.forName(className).getMethods()) {
-                    if (isRegisterable(method) && method.getName().equals(functionName)) {
+                    if (isRegisterable(method) && !skipReflectiveMethod(className, method)
+                            && method.getName().equals(functionName)) {
                         return method;
                     }
                 }
@@ -1022,7 +1052,7 @@ public class LuaFunctionRegistrar {
             }
             try {
                 for (Method method : Class.forName(className).getMethods()) {
-                    if (isRegisterable(method)) {
+                    if (isRegisterable(method) && !skipReflectiveMethod(className, method)) {
                         putFunction(out, describeMethod(utilName, method));
                     }
                 }
@@ -1033,16 +1063,16 @@ public class LuaFunctionRegistrar {
 
         if (selected.contains("OkHttpUtil")) {
             String callbackNote = "回调参数 (code, content, cookie, headers)";
-            putFunction(out, handRegistered("get", "http",
+            putFunction(out, handRegistered("Https.get", "http",
                     Arrays.asList("url: string", "callback: function"), "无返回值",
                     "可选参数按类型识别:cookie / charset(string)、header(table);至少需要 url + callback。" + callbackNote));
-            putFunction(out, handRegistered("post", "http",
+            putFunction(out, handRegistered("Https.post", "http",
                     Arrays.asList("url: string", "data: table", "callback: function"), "无返回值",
                     "data 为表单字段表;可选参数同 get;至少需要 url + data + callback。" + callbackNote));
-            putFunction(out, handRegistered("download", "http",
+            putFunction(out, handRegistered("Https.download", "http",
                     Arrays.asList("url: string", "path: string", "callback: function"), "无返回值",
                     "path 相对项目目录解析;可选 cookie / header;至少需要 url + path + callback。" + callbackNote));
-            putFunction(out, handRegistered("upload", "http",
+            putFunction(out, handRegistered("Https.upload", "http",
                     Arrays.asList("url: string", "filePath: string", "callback: function"), "无返回值",
                     "表单字段名固定为 file,不支持附加字段;可选 cookie / header。" + callbackNote));
         }
@@ -1062,7 +1092,7 @@ public class LuaFunctionRegistrar {
         return new ArrayList<>(out.values());
     }
 
-    /** 同名函数以后注册者为准(get/post/upload/download 会被 registerHttpFunctions 覆盖)。 */
+    /** 同名函数以后注册者为准:后写入者覆盖先写入者,并记下被覆盖的来源。 */
     private static void putFunction(Map<String, FunctionInfo> out, FunctionInfo info) {
         FunctionInfo old = out.get(info.name);
         if (old != null) {

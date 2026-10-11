@@ -58,6 +58,9 @@ class MyIdentifierAutoComplete {
     /** 包函数映射表 */
     private val packageMap: MutableMap<String, List<String>> = HashMap()
 
+    /** 项目函数 / 全局函数补全:函数名 -> 描述。 */
+    private val extraFunctions = LinkedHashMap<String, String>()
+
     /** 类名简化缓存：全类名 -> 短类名 */
     private val classNameCache = HashMap<String, String>()
 
@@ -119,6 +122,15 @@ class MyIdentifierAutoComplete {
      */
     fun addPackage(packageName: String, functions: List<String>) {
         packageMap[packageName] = functions
+    }
+
+    /**
+     * 追加「项目函数 / 全局函数」补全项(名字 -> 描述)。
+     *
+     * 同名覆盖,因此重复调用是幂等的;不会清空已有的包映射。
+     */
+    fun addExtraFunctions(functions: Map<String, String>) {
+        extraFunctions.putAll(functions)
     }
 
     /**
@@ -477,6 +489,31 @@ class MyIdentifierAutoComplete {
                         .kind(CompletionItemKind.Identifier)
                 )
                 addedItems.add("identifier:$varName")
+            }
+        }
+
+        // 项目函数 / 全局函数补全(名字 -> 描述)
+        if (extraFunctions.isNotEmpty()) {
+            for ((fnName, fnDesc) in extraFunctions) {
+                if (fnName.count { it == '$' } >= 2) continue
+                // 已被标识符补全收录的(当前文件内的定义)不重复添加
+                if (addedItems.contains("identifier:$fnName")) continue
+
+                val matches = if (caseSensitive) {
+                    fnName.startsWith(prefix)
+                } else {
+                    fnName.startsWith(prefix, ignoreCase = true)
+                }
+                if (!matches) continue
+
+                val itemKey = "extra:$fnName"
+                if (addedItems.contains(itemKey)) continue
+
+                result.add(
+                    SimpleCompletionItem(fnName, fnDesc, prefix.length, fnName)
+                        .kind(CompletionItemKind.Function)
+                )
+                addedItems.add(itemKey)
             }
         }
 

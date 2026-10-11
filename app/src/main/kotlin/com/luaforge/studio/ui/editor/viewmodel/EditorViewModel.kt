@@ -24,10 +24,13 @@ import com.luaforge.studio.ui.editor.persistence.ProjectEditorStateManager
 import com.luaforge.studio.langs.lua.LuaIncrementalAnalyzeManager
 import com.luaforge.studio.langs.lua.LuaLanguage
 import com.luaforge.studio.langs.lua.completion.CompletionName
+import com.luaforge.studio.langs.lua.completion.ProjectFunctionScanner
 import com.luaforge.studio.ui.editor.EditorColorSchemeManager
 import com.luaforge.studio.ui.settings.FontManager
 import com.luaforge.studio.ui.settings.SettingsManager
+import com.androlua.LuaFunctionRegistrar
 import com.luaforge.studio.utils.LogCatcher
+import com.luaforge.studio.utils.JsonUtil
 import com.luaforge.studio.utils.NonBlockingToastState
 import io.github.rosemoe.sora.event.SelectionChangeEvent
 import io.github.rosemoe.sora.event.SubscriptionReceipt
@@ -113,6 +116,8 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
         )
     )
     private var currentProjectPath: String? = null
+    /** 跨文件 `function` 定义 + global_utils 注册的全局函数,注入补全。 */
+    private var extraCompletionFunctions: Map<String, String> = emptyMap()
     var completionDataLoaded by mutableStateOf(false); private set
 
     // ---------- 选中的短类名 ----------
@@ -481,6 +486,7 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
         if (!_isInitialized) throw IllegalStateException("EditorViewModel must be initialized before calling setCurrentProject")
         currentProjectPath = projectPath
         stateManager.setCurrentProject(projectPath, projectName)
+        refreshExtraFunctions()
     }
 
     suspend fun removeFileFromHistory(filePath: String) = withContext(KotlinDispatchers.IO) {
@@ -556,6 +562,7 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
         activeFileIndex = -1
         hasShownInitialLoader = false
         currentProjectPath = projectPath
+        extraCompletionFunctions = emptyMap()
     }
 
     fun onInitialLoaderShown() {
@@ -791,7 +798,7 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
 
     private fun createLuaLanguageWithCompletion(): LuaLanguage {
         val (classMap, baseMap, androidClasses) = CompletionDataManager.getCompletionData()
-        return if (classMap != null && baseMap != null && androidClasses != null) {
+        val language = if (classMap != null && baseMap != null && androidClasses != null) {
             LuaLanguage(baseMap, classMap, androidClasses.toTypedArray()).apply {
                 setCompletionCaseSensitive(SettingsManager.currentSettings.completionCaseSensitive)
                 setHighlightHexColorsEnabled(SettingsManager.currentSettings.hexColorHighlightEnabled)
@@ -800,6 +807,57 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
             LuaLanguage().apply {
                 setCompletionCaseSensitive(SettingsManager.currentSettings.completionCaseSensitive)
                 setHighlightHexColorsEnabled(SettingsManager.currentSettings.hexColorHighlightEnabled)
+            }
+        }
+        // 项目函数 / 全局函数补全
+        language.addExtraFunctions(extraCompletionFunctions)
+        return language
+    }
+
+    /**
+     * 重新扫描当前项目,汇总「跨文件 `function` 定义 + global_utils 注册的全局函数」,
+     * 并注入所有已打开编辑器。扫描在 IO 线程执行,失败时保留上一次的结果。
+     */
+    private suspend fun refreshExtraFunctions() = withContext(KotlinDispatchers.IO) {
+        val root = currentProjectPath?.let { File(it) } ?: return@withContext
+
+        val projectFunctions = runCatching {
+            ProjectFunctionScanner.scan(root).functions
+        }.getOrElse {
+            LogCatcher.e("EditorViewModel", "扫描项目函数失败", it)
+            emptyMap()
+        }
+
+        val globalFunctions = runCatching {
+            val settingsFile = File(root, "settings.json")
+            if (!settingsFile.exists()) {
+                emptyMap()
+            } else {
+                val map = JsonUtil.parseObject(settingsFile.readText())
+                val selected = (map["global_utils"] as? List<*>)
+                    ?.mapNotNull { it?.toString()?.trim() }
+                    ?.filter { it.isNotEmpty() }
+                    ?: emptyList()
+                LuaFunctionRegistrar.describeFunctions(selected)
+                    .associate { it.name to ("全局函数(" + it.source + ")") }
+            }
+        }.getOrElse {
+            LogCatcher.e("EditorViewModel", "读取 global_utils 失败", it)
+            emptyMap()
+        }
+
+        val merged = LinkedHashMap<String, String>()
+        merged.putAll(projectFunctions)
+        merged.putAll(globalFunctions) // 全局函数优先
+        extraCompletionFunctions = merged
+        LogCatcher.i(
+            "EditorViewModel",
+            "补全数据刷新:项目函数 ${projectFunctions.size} 个,全局函数 ${globalFunctions.size} 个"
+        )
+
+        withContext(KotlinDispatchers.Main) {
+            editorInstances.values.forEach { editor ->
+                (editor.editorLanguage as? LuaLanguage)?.addExtraFunctions(merged)
             }
         }
     }

@@ -8,6 +8,7 @@ import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.Response
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -21,20 +22,24 @@ object OkHttpUtil {
         val headers: Map<String, List<String>>
     )
 
+    @Volatile
     private var client: OkHttpClient? = null
 
-    // 初始化OkHttpClient
+    // 初始化OkHttpClient(双重检查锁,避免并发下重复创建)
     private fun getClient(): OkHttpClient {
-        if (client == null) {
-            client = OkHttpClient.Builder()
+        client?.let { return it }
+        synchronized(this) {
+            client?.let { return it }
+            val created = OkHttpClient.Builder()
                 // 网络请求拦截:所有 okhttp.* 调用在发出前需用户确认
                 .addInterceptor(NetworkInterceptor())
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
                 .build()
+            client = created
+            return created
         }
-        return client!!
     }
 
     // ========== GET请求 ==========
@@ -47,46 +52,14 @@ object OkHttpUtil {
         charset: String? = null,
         headers: Map<String, String>? = null
     ): HttpResponse {
-        return try {
-            val requestBuilder = Request.Builder().url(url)
-
-            // 添加自定义请求头
-            headers?.forEach { (key, value) ->
-                requestBuilder.addHeader(key, value)
-            }
-
-            // 添加Cookie
-            cookie?.let { requestBuilder.addHeader("Cookie", it) }
-
-            // 设置Charset
-            if (charset != null) {
-                requestBuilder.addHeader("Accept-Charset", charset)
-            }
-
-            val request = requestBuilder.build()
-            val response = getClient().newCall(request).execute()
-
-            // 提取Cookie
-            val responseCookies = response.headers("Set-Cookie")
-            val responseCookie = responseCookies.joinToString("; ")
-
-            // 获取响应内容
-            val content = if (charset != null) {
-                response.body?.bytes()?.toString(charset(charset)) ?: ""
-            } else {
-                response.body?.string() ?: ""
-            }
-
-            // 获取响应头
-            val responseHeaders = response.headers.toMultimap()
-
-            HttpResponse(response.code, content, responseCookie, responseHeaders)
-        } catch (e: Exception) {
-            HttpResponse(-1, "Error: ${e.message}", "", emptyMap())
-        }
+        val request = Request.Builder()
+            .url(url)
+            .applyCommonHeaders(cookie, charset, headers)
+            .build()
+        return execute(request, charset)
     }
 
-    // ========== POST请求（表单提交） ==========
+    // ========== POST请求(表单提交) ==========
 
     @JvmStatic
     fun post(
@@ -97,53 +70,16 @@ object OkHttpUtil {
         charset: String? = null,
         headers: Map<String, String>? = null
     ): HttpResponse {
-        return try {
-            val formBodyBuilder = FormBody.Builder()
+        val formBody = FormBody.Builder().apply {
+            formData?.forEach { (key, value) -> add(key, value) }
+        }.build()
 
-            // 添加表单数据（允许空表）
-            formData?.forEach { (key, value) ->
-                formBodyBuilder.add(key, value)
-            }
-
-            val formBody = formBodyBuilder.build()
-            val requestBuilder = Request.Builder()
-                .url(url)
-                .post(formBody)
-
-            // 添加自定义请求头
-            headers?.forEach { (key, value) ->
-                requestBuilder.addHeader(key, value)
-            }
-
-            // 添加Cookie
-            cookie?.let { requestBuilder.addHeader("Cookie", it) }
-
-            // 设置Charset
-            if (charset != null) {
-                requestBuilder.addHeader("Accept-Charset", charset)
-            }
-
-            val request = requestBuilder.build()
-            val response = getClient().newCall(request).execute()
-
-            // 提取Cookie
-            val responseCookies = response.headers("Set-Cookie")
-            val responseCookie = responseCookies.joinToString("; ")
-
-            // 获取响应内容
-            val content = if (charset != null) {
-                response.body?.bytes()?.toString(charset(charset)) ?: ""
-            } else {
-                response.body?.string() ?: ""
-            }
-
-            // 获取响应头
-            val responseHeaders = response.headers.toMultimap()
-
-            HttpResponse(response.code, content, responseCookie, responseHeaders)
-        } catch (e: Exception) {
-            HttpResponse(-1, "Error: ${e.message}", "", emptyMap())
-        }
+        val request = Request.Builder()
+            .url(url)
+            .post(formBody)
+            .applyCommonHeaders(cookie, charset, headers)
+            .build()
+        return execute(request, charset)
     }
 
     // ========== 文件上传 ==========
@@ -158,54 +94,29 @@ object OkHttpUtil {
         fieldName: String = "file",
         extraParams: Map<String, String>? = null
     ): HttpResponse {
-        return try {
-            val file = File(filePath)
-            if (!file.exists()) {
-                return HttpResponse(-1, "Error: File not found", "", emptyMap())
-            }
-
-            val requestBody = MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart(
-                    fieldName,
-                    file.name,
-                    file.asRequestBody("application/octet-stream".toMediaTypeOrNull())
-                )
-
-            // 添加额外参数
-            extraParams?.forEach { (key, value) ->
-                requestBody.addFormDataPart(key, value)
-            }
-
-            val requestBuilder = Request.Builder()
-                .url(url)
-                .post(requestBody.build())
-
-            // 添加自定义请求头
-            headers?.forEach { (key, value) ->
-                requestBuilder.addHeader(key, value)
-            }
-
-            // 添加Cookie
-            cookie?.let { requestBuilder.addHeader("Cookie", it) }
-
-            val request = requestBuilder.build()
-            val response = getClient().newCall(request).execute()
-
-            // 提取Cookie
-            val responseCookies = response.headers("Set-Cookie")
-            val responseCookie = responseCookies.joinToString("; ")
-
-            // 获取响应内容
-            val content = response.body?.string() ?: ""
-
-            // 获取响应头
-            val responseHeaders = response.headers.toMultimap()
-
-            HttpResponse(response.code, content, responseCookie, responseHeaders)
-        } catch (e: Exception) {
-            HttpResponse(-1, "Error: ${e.message}", "", emptyMap())
+        val file = File(filePath)
+        if (!file.exists()) {
+            return HttpResponse(-1, "Error: File not found", "", emptyMap())
         }
+
+        val multipart = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart(
+                fieldName,
+                file.name,
+                file.asRequestBody("application/octet-stream".toMediaTypeOrNull())
+            )
+            .apply {
+                extraParams?.forEach { (key, value) -> addFormDataPart(key, value) }
+            }
+            .build()
+
+        val request = Request.Builder()
+            .url(url)
+            .post(multipart)
+            .applyCommonHeaders(cookie, null, headers)
+            .build()
+        return execute(request, null)
     }
 
     // ========== 文件下载 ==========
@@ -219,39 +130,22 @@ object OkHttpUtil {
         headers: Map<String, String>? = null
     ): HttpResponse {
         return try {
-            val requestBuilder = Request.Builder().url(url)
+            val request = Request.Builder()
+                .url(url)
+                .applyCommonHeaders(cookie, null, headers)
+                .build()
 
-            // 添加自定义请求头
-            headers?.forEach { (key, value) ->
-                requestBuilder.addHeader(key, value)
-            }
-
-            // 添加Cookie
-            cookie?.let { requestBuilder.addHeader("Cookie", it) }
-
-            val request = requestBuilder.build()
-            val response = getClient().newCall(request).execute()
-
-            if (response.isSuccessful) {
-                val file = File(savePath)
-                file.parentFile?.mkdirs()
-
-                response.body?.byteStream()?.use { inputStream ->
-                    file.outputStream().use { outputStream ->
-                        inputStream.copyTo(outputStream)
+            getClient().newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val file = File(savePath)
+                    file.parentFile?.mkdirs()
+                    response.body?.byteStream()?.use { input ->
+                        file.outputStream().use { output -> input.copyTo(output) }
                     }
+                    buildResponse(response, "Download success")
+                } else {
+                    buildResponse(response, "Download failed: ${response.code}")
                 }
-
-                // 提取Cookie
-                val responseCookies = response.headers("Set-Cookie")
-                val responseCookie = responseCookies.joinToString("; ")
-
-                // 获取响应头
-                val responseHeaders = response.headers.toMultimap()
-
-                HttpResponse(response.code, "Download success", responseCookie, responseHeaders)
-            } else {
-                HttpResponse(response.code, "Download failed: ${response.code}", "", emptyMap())
             }
         } catch (e: Exception) {
             HttpResponse(-1, "Error: ${e.message}", "", emptyMap())
@@ -259,6 +153,50 @@ object OkHttpUtil {
     }
 
     // ========== 辅助方法 ==========
+
+    /** 为请求统一附加自定义请求头、Cookie 与字符集声明。 */
+    private fun Request.Builder.applyCommonHeaders(
+        cookie: String?,
+        charset: String?,
+        headers: Map<String, String>?
+    ): Request.Builder {
+        headers?.forEach { (key, value) -> addHeader(key, value) }
+        cookie?.let { addHeader("Cookie", it) }
+        charset?.let { addHeader("Accept-Charset", it) }
+        return this
+    }
+
+    /** 执行请求并读取响应体(同步);任何异常都转成 code = -1 的失败结果。 */
+    private fun execute(request: Request, charset: String?): HttpResponse {
+        return try {
+            // use{} 及时关闭响应体,避免连接泄漏
+            getClient().newCall(request).execute().use { response ->
+                val content = readBody(response, charset)
+                buildResponse(response, content)
+            }
+        } catch (e: Exception) {
+            HttpResponse(-1, "Error: ${e.message}", "", emptyMap())
+        }
+    }
+
+    /** 按指定字符集读取响应体内容;charset 为空时交给 OkHttp 依据响应头解码。 */
+    private fun readBody(response: Response, charset: String?): String {
+        return if (charset != null) {
+            response.body?.bytes()?.toString(charset(charset)) ?: ""
+        } else {
+            response.body?.string() ?: ""
+        }
+    }
+
+    /** 从响应中提取状态码、Cookie 与响应头,组装成统一结果。 */
+    private fun buildResponse(response: Response, content: String): HttpResponse {
+        return HttpResponse(
+            response.code,
+            content,
+            response.headers("Set-Cookie").joinToString("; "),
+            response.headers.toMultimap()
+        )
+    }
 
     private fun charset(charsetName: String): java.nio.charset.Charset {
         return try {

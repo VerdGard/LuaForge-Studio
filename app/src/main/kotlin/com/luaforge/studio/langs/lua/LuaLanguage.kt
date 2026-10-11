@@ -345,6 +345,16 @@ class LuaLanguage : Language {
     }
 
     /**
+     * 追加「项目函数 / 全局函数」补全项(名字 -> 描述)。
+     *
+     * 供编辑器在打开项目时注入:跨文件扫描到的 `function` 定义,
+     * 以及 settings.json 的 global_utils 在运行时会注册的全局函数。
+     */
+    fun addExtraFunctions(functions: Map<String, String>) {
+        autoComplete.addExtraFunctions(functions)
+    }
+
+    /**
      * 设置补全大小写敏感
      *
      * @param caseSensitive 是否大小写敏感

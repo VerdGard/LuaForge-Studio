@@ -26,7 +26,7 @@
 
 ### 1. get（发送GET请求）
 
-- **Lua签名**：`get(url, cookie, charset, header, callback)`
+- **Lua签名**：`Https.get(url, cookie, charset, header, callback)`
 - **功能**：发送异步GET请求，支持自定义Cookie、字符集和请求头。
 - **参数**：
     - `url` (string)：请求URL地址（必填）
@@ -39,7 +39,7 @@
 
 ```lua
 -- 简单GET请求
-get("https://api.example.com/data", function(code, content, cookie, headers)
+Https.get("https://api.example.com/data", function(code, content, cookie, headers)
     if code == 200 then
         textView.text = content
     else
@@ -48,7 +48,7 @@ get("https://api.example.com/data", function(code, content, cookie, headers)
 end)
 -- 带自定义头和Cookie的GET请求
 local headers = {["Authorization"] = "Bearer token123", ["User-Agent"] = "LuaForge/1.0"}
-get("https://api.example.com/user", "session=abc123", "UTF-8", headers, function(code, content)
+Https.get("https://api.example.com/user", "session=abc123", "UTF-8", headers, function(code, content)
     if code == 200 then
         local userData = json.decode(content)
         print(userData.username)
@@ -58,7 +58,7 @@ end)
 
 ### 2. post（发送POST表单请求）
 
-- **Lua签名**：`post(url, formData, cookie, charset, header, callback)`
+- **Lua签名**：`Https.post(url, formData, cookie, charset, header, callback)`
 - **功能**：发送异步POST请求，支持表单数据提交。
 - **参数**：
     - `url` (string)：请求URL地址（必填）
@@ -73,7 +73,7 @@ end)
 ```lua
 -- 登录请求
 local loginForm = {username = "admin", password = "123456", remember = "true"}
-post("https://api.example.com/login", loginForm, function(code, content, cookie)
+Https.post("https://api.example.com/login", loginForm, function(code, content, cookie)
     if code == 200 then
         setSharedData("session", cookie) -- 保存Cookie
         toast("登录成功")
@@ -83,12 +83,12 @@ post("https://api.example.com/login", loginForm, function(code, content, cookie)
 end)
 -- 带自定义Content-Type的POST请求
 local headers = {["Content-Type"] = "application/x-www-form-urlencoded"}
-post("https://api.example.com/update", {status = "online"}, nil, nil, headers, callback)
+Https.post("https://api.example.com/update", {status = "online"}, nil, nil, headers, callback)
 ```
 
 ### 3. download（下载文件）
 
-- **Lua签名**：`download(url, savePath, cookie, header, callback)`
+- **Lua签名**：`Https.download(url, savePath, cookie, header, callback)`
 - **功能**：异步下载文件到指定路径，支持断点续传。
 - **参数**：
     - `url` (string)：文件URL地址（必填）
@@ -101,7 +101,7 @@ post("https://api.example.com/update", {status = "online"}, nil, nil, headers, c
 
 ```lua
 -- 下载图片并显示
-download("https://example.com/wallpaper.jpg", "images/wallpaper.jpg", function(code, content)
+Https.download("https://example.com/wallpaper.jpg", "images/wallpaper.jpg", function(code, content)
     if code == 200 then
         toast("下载成功")
         local bitmap = getBitmap("images/wallpaper.jpg")
@@ -112,7 +112,7 @@ download("https://example.com/wallpaper.jpg", "images/wallpaper.jpg", function(c
 end)
 -- 带进度提示的大文件下载
 progressBar.visibility = View.VISIBLE
-download("https://example.com/bigfile.zip", "downloads/file.zip", nil, nil, function(code)
+Https.download("https://example.com/bigfile.zip", "downloads/file.zip", nil, nil, function(code)
     progressBar.visibility = View.GONE
     if code == 200 then
         toast("文件下载完成")
@@ -122,7 +122,7 @@ end)
 
 ### 4. upload（上传文件）
 
-- **Lua签名**：`upload(url, filePath, cookie, header, callback)`
+- **Lua签名**：`Https.upload(url, filePath, cookie, header, callback)`
 - **功能**：异步上传文件到服务器，支持多部分表单上传。
 - **参数**：
     - `url` (string)：上传URL地址（必填）
@@ -136,7 +136,7 @@ end)
 ```lua
 -- 上传头像
 local avatarPath = "images/avatar.jpg"
-upload("https://api.example.com/upload/avatar", avatarPath, function(code, content)
+Https.upload("https://api.example.com/upload/avatar", avatarPath, function(code, content)
     if code == 200 then
         local result = json.decode(content)
         if result.success then
@@ -149,7 +149,7 @@ end)
 -- 带认证头的文件上传
 local token = getSharedData("token")
 local headers = {["Authorization"] = "Bearer " .. token}
-upload("https://api.example.com/file", "documents/report.pdf", nil, headers, callback)
+Https.upload("https://api.example.com/file", "documents/report.pdf", nil, headers, callback)
 ```
 
 ## 四、使用示例
@@ -162,7 +162,7 @@ function fetchUserProfile(userId)
     local url = "https://api.example.com/users/" .. userId
     local sessionCookie = getSharedData("session")
     
-    get(url, sessionCookie, "UTF-8", nil, function(code, content)
+    Https.get(url, sessionCookie, "UTF-8", nil, function(code, content)
         if code == 200 then
             local userData = json.decode(content)
             -- 更新UI
@@ -199,7 +199,7 @@ function startDownload(fileUrl, fileName)
     downloadTasks[fileName] = true
     toast("开始下载: " .. fileName)
     
-    download(fileUrl, savePath, nil, nil, function(code)
+    Https.download(fileUrl, savePath, nil, nil, function(code)
         downloadTasks[fileName] = nil -- 移除任务标记
         if code == 200 then
             toast("下载完成: " .. fileName)
@@ -233,9 +233,9 @@ function requestWithRetry(method, url, data, callback, retries)
     end
     
     if method == "GET" then
-        get(url, getSharedData("cookie"), "UTF-8", nil, onResult)
+        Https.get(url, getSharedData("cookie"), "UTF-8", nil, onResult)
     elseif method == "POST" then
-        post(url, data, getSharedData("cookie"), "UTF-8", nil, onResult)
+        Https.post(url, data, getSharedData("cookie"), "UTF-8", nil, onResult)
     end
 end
 ```
@@ -251,7 +251,7 @@ function saveCookie(cookieStr)
 end
 
 -- 登录回调中保存Cookie
-post("https://api.example.com/login", loginForm, function(code, content, cookie)
+Https.post("https://api.example.com/login", loginForm, function(code, content, cookie)
     if code == 200 then
         saveCookie(cookie)
     end
@@ -267,7 +267,7 @@ local UPLOAD_DIR = "uploads/"
 local IMAGE_DIR = "images/"
 
 -- 下载文件时使用统一目录
-download(fileUrl, DOWNLOAD_DIR .. fileName, callback)
+Https.download(fileUrl, DOWNLOAD_DIR .. fileName, callback)
 ```
 
 4. **避免内存泄漏**：回调中避免直接引用Activity，必要时使用弱引用；文件操作后及时释放资源。
