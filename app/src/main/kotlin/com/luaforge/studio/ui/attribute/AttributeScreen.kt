@@ -189,6 +189,9 @@ fun AttributeScreen(
     // 构建选项：存于 settings.json 的 application 层
     var encryptEnabled by remember { mutableStateOf(true) }
     var mergeDexEnabled by remember { mutableStateOf(true) }
+    // 跳过编译(不加密)的文件:相对项目根的路径,打包时保持明文
+    val skipCompileFiles = remember { mutableStateListOf<String>() }
+    var showSkipCompilePicker by remember { mutableStateOf(false) }
 
     var minSdkMenuExpanded by remember { mutableStateOf(false) }
     var targetSdkMenuExpanded by remember { mutableStateOf(false) }
@@ -219,6 +222,10 @@ fun AttributeScreen(
                     mergeDexEnabled =
                         ((jsonMap["application"] as? Map<*, *>)?.get("mergeDex") as? Boolean)
                             ?: true
+                    skipCompileFiles.clear()
+                    ((jsonMap["application"] as? Map<*, *>)?.get("skipCompile") as? List<*>)
+                        ?.mapNotNull { it as? String }
+                        ?.forEach { skipCompileFiles.add(it) }
 
                     // 图标路径越界/绝对路径自检：回退默认并落盘，防止脏值持续生效
                     val rawIcon = (jsonMap["iconPath"] as? String ?: "icon.png").trim()
@@ -279,6 +286,7 @@ fun AttributeScreen(
                     application["debugmode"] = debugMode
                     application["encrypt"] = encryptEnabled
                     application["mergeDex"] = mergeDexEnabled
+                    application["skipCompile"] = skipCompileFiles.toList()
                     jsonMap["application"] = application
 
                     jsonMap["package"] = packageName
@@ -589,10 +597,7 @@ fun AttributeScreen(
                     SwitchBar(
                         checked = encryptEnabled,
                         onCheckedChange = { encryptEnabled = it },
-                        text = stringResource(
-                            R.string.attribute_encrypt_build,
-                            com.luaforge.studio.utils.AppInfoUtil.getAppName(context)
-                        ),
+                        text = stringResource(R.string.attribute_encrypt_build),
                         modifier = Modifier.fillMaxWidth()
                     )
                     SwitchBar(
@@ -601,6 +606,54 @@ fun AttributeScreen(
                         text = stringResource(R.string.attribute_merge_dex),
                         modifier = Modifier.fillMaxWidth()
                     )
+                }
+
+                // 跳过编译(不加密)卡片:选中的文件打包时保持明文
+                SettingsCard(
+                    title = stringResource(R.string.attribute_skip_compile_title),
+                    icon = Icons.Filled.Code
+                ) {
+                    Text(
+                        text = stringResource(R.string.attribute_skip_compile_hint),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (skipCompileFiles.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.attribute_skip_compile_empty),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline
+                        )
+                    } else {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            skipCompileFiles.toList().forEach { rel ->
+                                InputChip(
+                                    selected = false,
+                                    onClick = { skipCompileFiles.remove(rel) },
+                                    label = { Text(rel, maxLines = 1) },
+                                    trailingIcon = {
+                                        Icon(
+                                            Icons.Filled.Close,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    TextButton(onClick = { showSkipCompilePicker = true }) {
+                        Icon(
+                            Icons.Filled.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(stringResource(R.string.attribute_skip_compile_add))
+                    }
                 }
 
                 // 权限卡片
@@ -719,6 +772,28 @@ fun AttributeScreen(
                     iconPath = rel
                     iconRefreshTick++
                     toast.showToast(context.getString(R.string.attribute_icon_updated))
+                }
+            }
+        )
+    }
+
+    // 跳过编译文件选择:锁根在项目内,仅可选 lua/aly
+    if (showSkipCompilePicker) {
+        FilePickerDialog(
+            initialPath = projectPath,
+            selectionMode = SelectionMode.FILE,
+            title = stringResource(R.string.attribute_skip_compile_add),
+            allowedExtensions = listOf("lua", "aly"),
+            rootPath = projectPath,
+            onDismiss = { showSkipCompilePicker = false },
+            onFileSelected = { path ->
+                showSkipCompilePicker = false
+                val rel = runCatching {
+                    File(path).relativeTo(File(projectPath)).path.replace('\\', '/')
+                }.getOrNull()
+                // 仅接受项目内、非越界的相对路径,且去重
+                if (rel != null && !rel.contains("..") && !skipCompileFiles.contains(rel)) {
+                    skipCompileFiles.add(rel)
                 }
             }
         )

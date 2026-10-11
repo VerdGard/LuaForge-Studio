@@ -168,7 +168,9 @@ class ApkBuilder {
             /** 项目 settings.json 的 mergeDex：是否将 libs 目录下的 dex 合并至 classes 根。 */
             mergeDexEnabled: Boolean = true,
             /** 打包目标架构:通用 / 仅 64 位 / 仅 32 位。默认通用版以保持向后兼容。 */
-            abiTarget: AbiTarget = AbiTarget.UNIVERSAL
+            abiTarget: AbiTarget = AbiTarget.UNIVERSAL,
+            /** 跳过编译(不加密)的文件:相对项目根的路径,打包时保持明文。 */
+            skipCompileFiles: List<String> = emptyList()
         ): String {
             LogCatcher.i("ApkBuilder", "开始构建APK")
             LogCatcher.i("ApkBuilder", "项目路径: $projectPath")
@@ -190,6 +192,7 @@ class ApkBuilder {
                 else -> buildType.encryptLua
             }
             LogCatcher.i("ApkBuilder", "是否加密 Lua/ALY 源码: $encryptLua")
+            LogCatcher.i("ApkBuilder", "跳过编译(不加密)文件数: ${skipCompileFiles.size}")
 
             var unsignedApkPath: String? = null
 
@@ -251,7 +254,8 @@ class ApkBuilder {
                     buildType,
                     encryptLua,
                     mergeDexEnabled,
-                    abiTarget
+                    abiTarget,
+                    skipCompileFiles
                 )
 
                 if (unsignedApkPath == null) {
@@ -808,7 +812,8 @@ class ApkBuilder {
             buildType: BuildType = BuildType.PROJECT_DEFAULT,
             encryptLua: Boolean = true,
             mergeDexEnabled: Boolean = true,
-            abiTarget: AbiTarget = AbiTarget.UNIVERSAL
+            abiTarget: AbiTarget = AbiTarget.UNIVERSAL,
+            skipCompileFiles: List<String> = emptyList()
         ): String? {
             val L = getSharedLuaState()
 
@@ -856,7 +861,7 @@ class ApkBuilder {
 
                 // 9. 加密项目文件(未加密版跳过,保持明文)
                 if (encryptLua) {
-                    encryptProjectFiles(L, assetsDir)
+                    encryptProjectFiles(L, assetsDir, skipCompileFiles)
                 } else {
                     LogCatcher.i("ApkBuilder", "未加密版:跳过项目文件加密")
                 }
@@ -1004,7 +1009,11 @@ class ApkBuilder {
         }
 
         // 加密项目文件
-        private fun encryptProjectFiles(L: LuaState, assetsDir: File) {
+        private fun encryptProjectFiles(
+            L: LuaState,
+            assetsDir: File,
+            skipCompileFiles: List<String>
+        ) {
             LogCatcher.i("ApkBuilder", "开始加密项目文件")
 
             if (L.isClosed) {
@@ -1012,9 +1021,18 @@ class ApkBuilder {
                 throw RuntimeException("LuaState无效或已关闭")
             }
 
+            // 归一化跳过列表:统一用 '/' 分隔,去掉首尾空白与前导 './'
+            val skipSet = skipCompileFiles
+                .map { it.trim().replace('\\', '/').removePrefix("./") }
+                .filter { it.isNotEmpty() }
+                .toSet()
+            if (skipSet.isNotEmpty()) {
+                LogCatcher.i("ApkBuilder", "跳过编译(不加密)文件: $skipSet")
+            }
+
             val counters =
                 intArrayOf(0, 0, 0, 0) // [luaEncrypted, alyEncrypted, luaFailed, alyFailed]
-            encryptDirectoryRecursive(L, assetsDir, assetsDir, counters)
+            encryptDirectoryRecursive(L, assetsDir, assetsDir, counters, skipSet)
 
             LogCatcher.i(
                 "ApkBuilder",
@@ -1027,15 +1045,24 @@ class ApkBuilder {
             L: LuaState,
             baseDir: File,
             dir: File,
-            counters: IntArray
+            counters: IntArray,
+            skipSet: Set<String>
         ) {
             val files = dir.listFiles() ?: return
 
             for (file in files) {
                 when {
-                    file.isDirectory -> encryptDirectoryRecursive(L, baseDir, file, counters)
+                    file.isDirectory -> encryptDirectoryRecursive(
+                        L, baseDir, file, counters, skipSet
+                    )
                     file.isFile -> {
                         val fileName = file.name.lowercase(Locale.getDefault())
+
+                        // 命中「跳过编译」则保持明文原样打包
+                        if (isSkipped(file, baseDir, skipSet)) {
+                            LogCatcher.i("ApkBuilder", "跳过编译(保持明文): ${file.name}")
+                            continue
+                        }
 
                         when {
                             fileName.endsWith(".lua") -> {
@@ -1059,6 +1086,26 @@ class ApkBuilder {
                     }
                 }
             }
+        }
+
+        /**
+         * 判断文件是否在「跳过编译」列表中。
+         *
+         * 列表存的是**相对项目根**的路径;而这里遍历的是 assets 副本,
+         * 故用相对 assets 根的路径去比对(两者目录结构一致)。
+         */
+        private fun isSkipped(
+            file: File,
+            assetsRoot: File,
+            skipSet: Set<String>
+        ): Boolean {
+            if (skipSet.isEmpty()) return false
+            val rel = try {
+                file.relativeTo(assetsRoot).path.replace('\\', '/')
+            } catch (e: Exception) {
+                return false
+            }
+            return rel in skipSet
         }
 
         // 加密Lua文件

@@ -48,6 +48,7 @@ import com.luaforge.studio.utils.LogCatcher
 import com.luaforge.studio.utils.LuaParserUtil
 import io.github.rosemoe.sora.text.ContentListener
 import io.github.rosemoe.sora.event.SelectionChangeEvent
+import io.github.rosemoe.sora.event.LongPressEvent
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -300,11 +301,30 @@ fun CodeEditorView(
             }
         }
 
+        // 长按改为选中整行文字(覆盖编辑器默认的「选中单词 + 拖拽选择」)。
+        // 编辑器默认 onLongPress 会 selectWord 并进入拖拽选择;这里拦截 LongPressEvent
+        // (EditorMotionEvent.canIntercept() 为 true),阻止默认行为后自行选中整行。
+        val longPressReceipt = editor.subscribeEvent(LongPressEvent::class.java) { event, _ ->
+            val line = event.line
+            val content = editor.text
+            if (line in 0 until content.lineCount) {
+                event.intercept()
+                // 选中本行文字含行尾换行符;末行无换行则选到行尾
+                if (line < content.lineCount - 1) {
+                    editor.setSelectionRegion(line, 0, line + 1, 0)
+                } else {
+                    editor.setSelectionRegion(line, 0, line, content.getColumnCount(line))
+                }
+                editor.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            }
+        }
+
         onDispose {
             parseJob?.cancel()
             try {
                 editor.text.removeContentListener(listener)
                 selectionReceipt.unsubscribe()
+                longPressReceipt.unsubscribe()
             } catch (e: Exception) {
                 LogCatcher.e("CodeEditorView", "移除监听器失败", e)
             }

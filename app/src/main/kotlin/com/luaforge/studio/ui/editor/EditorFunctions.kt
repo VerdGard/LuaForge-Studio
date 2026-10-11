@@ -223,6 +223,14 @@ val mavenDependencies = try {
             true
         }
 
+        // 获取跳过编译(不加密)的文件列表(相对项目根路径,默认空)
+        val skipCompileFiles = try {
+            val application = settings["application"] as? Map<String, Any?>
+            (application?.get("skipCompile") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+
         // 获取minSdkVersion和targetSdkVersion
         var minSdkVersion = 21  // 默认值
         var targetSdkVersion = 29 // 默认值
@@ -318,7 +326,8 @@ val mavenDependencies = try {
                 buildType,                   // 构建类型(跟随项目 / 未加密 / Debug / Release)
                 encryptProject,              // settings.json 的 encrypt（PROJECT_DEFAULT 时生效）
                 mergeDexEnabled,             // settings.json 的 mergeDex
-                abiTarget                    // 打包目标架构(通用/仅64位/仅32位)
+                abiTarget,                   // 打包目标架构(通用/仅64位/仅32位)
+                skipCompileFiles             // 跳过编译(不加密)的文件
             )
 
             // 构建后再次检查内存

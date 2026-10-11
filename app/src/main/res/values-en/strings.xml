@@ -462,8 +462,12 @@
     <string name="attribute_save_success">Save successful</string>
     <string name="attribute_save_failed">Save failed: %s</string>
     <string name="attribute_build_options">Build options</string>
-    <string name="attribute_encrypt_build">Encrypt project of %1$s</string>
-    <string name="attribute_merge_dex">Merge libs/*.dex into classes*.dex</string>
+    <string name="attribute_encrypt_build">Encrypt project</string>
+    <string name="attribute_merge_dex">Merge dex</string>
+    <string name="attribute_skip_compile_title">Skip compile</string>
+    <string name="attribute_skip_compile_hint">Selected files stay in plaintext and are not encrypted when building</string>
+    <string name="attribute_skip_compile_add">Add file</string>
+    <string name="attribute_skip_compile_empty">No file selected</string>
     <string name="attribute_icon_path">Icon path</string>
     <string name="attribute_icon_picker_title">Select project icon</string>
     <string name="attribute_icon_updated">Icon updated</string>
