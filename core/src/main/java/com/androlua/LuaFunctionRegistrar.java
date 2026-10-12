@@ -805,12 +805,37 @@ public class LuaFunctionRegistrar {
             L.setField(-2, "upload");
             L.setGlobal("Https");
 
+            // 兼容旧写法:早期版本把 get/post/upload/download 直接注册为裸全局函数,
+            // 表化后旧项目若仍写 get(...) / post(...) 会 attempt to call a nil value。
+            // 这里只在对应全局名仍为空时补上同一实现作为别名;若已被用户或其它工具占用则不覆盖。
+            registerLegacyHttpAlias("get", httpGet);
+            registerLegacyHttpAlias("post", httpPost);
+            registerLegacyHttpAlias("upload", httpUpload);
+            registerLegacyHttpAlias("download", httpDownload);
+
         } catch (Exception e) {
             e.printStackTrace();
             Log.e(TAG, "注册HTTP函数失败: " + e.getMessage());
         }
     }
 
+
+    /**
+     * 为表化前的裸全局网络函数名注册兼容别名。
+     *
+     * <p>仅当该全局名当前为 nil 时才写入,避免覆盖用户在 Lua 侧自定义的同名函数
+     * (也不覆盖其它工具类可能注册的同名函数)。这样既让旧项目 `get(...)` 继续可用,
+     * 又不改变"名字被占用时以使用者为准"的既有语义。
+     */
+    private void registerLegacyHttpAlias(String name, JavaFunction func) throws LuaException {
+        L.getGlobal(name);
+        boolean free = L.isNil(-1);
+        L.pop(1);
+        if (free) {
+            L.pushJavaFunction(func);
+            L.setGlobal(name);
+        }
+    }
 
     private void registerRecyclerAdapterFunctions() {
         try {
@@ -1074,6 +1099,18 @@ public class LuaFunctionRegistrar {
             putFunction(out, handRegistered("Https.upload", "http",
                     Arrays.asList("url: string", "filePath: string", "callback: function"), "无返回值",
                     "表单字段名固定为 file,不支持附加字段;可选 cookie / header。" + callbackNote));
+
+            // 裸全局名兼容别名:仅当全局名未被占用时注册(见 registerLegacyHttpAlias),
+            // 因此这里没有把握时会缺失;note 里标注了这一条件。
+            String legacyNote = "旧写法兼容别名,与 Https.* 同一实现;仅当该全局名未被占用时注册。" + callbackNote;
+            putFunction(out, handRegistered("get", "http(legacy)",
+                    Arrays.asList("url: string", "callback: function"), "无返回值", legacyNote));
+            putFunction(out, handRegistered("post", "http(legacy)",
+                    Arrays.asList("url: string", "data: table", "callback: function"), "无返回值", legacyNote));
+            putFunction(out, handRegistered("download", "http(legacy)",
+                    Arrays.asList("url: string", "path: string", "callback: function"), "无返回值", legacyNote));
+            putFunction(out, handRegistered("upload", "http(legacy)",
+                    Arrays.asList("url: string", "filePath: string", "callback: function"), "无返回值", legacyNote));
         }
 
         if (selected.contains("RecyclerAdapterUtil")) {

@@ -10,6 +10,7 @@ import android.content.IntentFilter;
 import android.content.res.AssetManager;
 import android.content.res.Resources;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.Environment;
@@ -779,13 +780,31 @@ public class LuaService extends Service implements LuaContext, LuaBroadcastRecei
             fn = name.substring(0, i);
         File f = new File(libDir + "/lib" + fn + ".so");
         if (!f.exists()) {
-            f = new File(luaDir + "/lib" + fn + ".so");
-            if (!f.exists())
+            File src = resolveLibSource(fn);
+            if (src == null)
                 throw new LuaException("can not find lib " + name);
-            copyFile(luaDir + "/lib" + fn + ".so", libDir + "/lib" + fn + ".so");
+            copyFile(src.getAbsolutePath(), libDir + "/lib" + fn + ".so");
         }
         LuaObject require = L.getLuaObject("require");
         return require.call(name);
+    }
+
+    /**
+     * 按名查找项目原生库源文件。
+     *
+     * 依次查 `lib/&lt;abi&gt;/lib&lt;fn&gt;.so`(设备首选 ABI 子目录)与 `lib/lib&lt;fn&gt;.so`(扁平兜底),
+     * 与 {@link LuaDexLoader#loadArchLibs()} 的目录约定保持一致 —— 否则经
+     * `service.loadLib("x")` 按名加载时会漏掉 `lib/&lt;abi&gt;/` 下的库。
+     *
+     * @return 命中的源文件;都没有则返回 null。
+     */
+    private File resolveLibSource(String fn) {
+        String abi = Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : Build.CPU_ABI;
+        File abiLib = new File(luaDir + "/lib/" + abi + "/lib" + fn + ".so");
+        if (abiLib.exists()) return abiLib;
+        File flat = new File(luaDir + "/lib/lib" + fn + ".so");
+        if (flat.exists()) return flat;
+        return null;
     }
 
     private void copyFile(String oldPath, String newPath) {

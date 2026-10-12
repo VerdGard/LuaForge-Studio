@@ -24,6 +24,11 @@
 
 ## 三、核心函数
 
+> **调用方式**:四个函数统一挂在全局表 `Https` 下,写作 `Https.get` / `Https.post` / `Https.download` / `Https.upload`。
+> 早期版本把它们直接注册为裸全局函数(`get(...)` / `post(...)` 等),现仍保留为**兼容别名** —— 但仅在对应全局名未被占用时才注册,
+> 因此**新代码请一律写 `Https.*`**,不要依赖裸名。
+
+
 ### 1. get（发送GET请求）
 
 - **Lua签名**：`Https.get(url, cookie, charset, header, callback)`

@@ -684,11 +684,11 @@
     <string name="settings_build_abi">构件设置</string>
     <string name="settings_build_abi_desc">选择打包时保留的 CPU 架构</string>
     <string name="settings_abi_universal">通用版</string>
-    <string name="settings_abi_universal_desc">同时包含 32 位与 64 位,兼容全部设备(体积最大)</string>
+    <string name="settings_abi_universal_desc">32 位 + 64 位,兼容全部设备</string>
     <string name="settings_abi_arm64">arm64-v8a</string>
-    <string name="settings_abi_arm64_desc">只保留 arm64-v8a(64 位),适配绝大多数现代设备</string>
+    <string name="settings_abi_arm64_desc">仅 64 位,适配绝大多数现代设备</string>
     <string name="settings_abi_arm32">armeabi-v7a</string>
-    <string name="settings_abi_arm32_desc">只保留 armeabi-v7a(32 位),适配老旧 32 位设备</string>
+    <string name="settings_abi_arm32_desc">仅 32 位,适配老旧 32 位设备</string>
     <string name="code_editor_build_start">开始构建</string>
 
 </resources>

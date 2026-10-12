@@ -2,6 +2,10 @@
 
 ## 1.6.7
 
+- **Https 表化的向后兼容**:`get`/`post`/`upload`/`download` 仍注册在全局表 `Https` 下,同时把同一实现注册为**裸全局兼容别名**——仅当该全局名当前为空时注册,已被占用则不覆盖(不覆盖用户自定义函数)。旧项目 `get(...)` / `post(...)` 不再 `attempt to call a nil value`
+  - `LuaFunctionRegistrar.registerLegacyHttpAlias` 统一处理;`describeFunctions` 同步暴露这四个裸名,保持「查看=运行时」
+- **运行期按名加载接入 `lib/<abi>/`**:`LuaActivity.loadLib` / `LuaService.loadLib` 之前只查 `libDir` 与 `luaDir/lib*.so`,现按设备首选 ABI 优先查 `luaDir/lib/<abi>/lib<名>.so`,再回退 `lib/lib<名>.so`(与 `LuaDexLoader.loadArchLibs` 目录约定一致)
+- **构件设置 ABI 三模式文案精简**:`同时包含 32 位与 64 位...` 等描述缩短为一行(中英同步),导航栏三块固定等高(标题 1 行 + 说明最多 2 行、超出省略),中英文换行数不同也不参差
 - **彻底弃用旧「调试控制台」**，改用内置 `debugger.lua`（浮窗式调试器，来源 Aqora，已适配本项目 Lua 方言）
   - 删除 app 模块 `com.luaforge.studio.console.**`（约 40 文件）、core 侧 `ConsoleBridgeRef` 反射门面、MCP `ConsoleTools.kt` 与 manifest 里的 `ConsoleInitializer` 提供者
   - `core`/`a` 侧移除全部控制台埋点：`LuaActivity` 的 traced require / `onEvent` / 音量键唤回浮球 / `reportConsoleError`，`LuaJavaAPI` 的方法调用拦截与 popup 捕获，`LuaPrint` 回归原始简单实现

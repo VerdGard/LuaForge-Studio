@@ -89,7 +89,8 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 - `global_utils` 是**要注入的 Java 工具类白名单**,可选值只有 6 个(`NewProjectScreen.kt:81-88`):
   `BitmapUtil`、`GlideUtil`、`OkHttpUtil`、`UiUtil`、`RecyclerAdapterUtil`、`ThemeUtil`。
   选中后由 `LuaFunctionRegistrar.registerSelectedFunctions()` 注入(`LuaActivity.java:1395-1398`),其函数直接成为**全局函数**。各工具类的函数清单见 `app/src/main/assets/doc/*.md`。
-  > 例外:`OkHttpUtil` 的 `get`/`post`/`upload`/`download` **不**注册为裸全局函数,而是挂在全局表 `Https` 下(`Https.get` 等);反射注册路径与 MCP 描述均跳过这四个方法(`skipReflectiveMethod`)。
+  > 例外:`OkHttpUtil` 的 `get`/`post`/`upload`/`download` 挂在全局表 `Https` 下(`Https.get` 等),反射注册路径跳过这四个方法(`skipReflectiveMethod`)。
+  > **兼容别名**:为照顾表化前的旧写法,`registerHttpFunctions` 会额外把 `get`/`post`/`upload`/`download` 注册为裸全局函数 —— 但**仅当该全局名当前为空时**才注册,已被占用则不覆盖。因此新代码**一律写 `Https.*`**;裸名只作为旧项目的兜底,不保证存在。
 
 ### 1.4 入口与生命周期回调
 
@@ -153,7 +154,7 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 | `androidx.R` | AppCompat 资源 |
 | `material.R` | Material 组件资源 |
 | `luajava` | 桥接库;额外带 `luadir` / `luapath` / `luaextdir` 三个路径字段 |
-| `Https` | **仅当 `global_utils` 含 `OkHttpUtil` 时注入**:`Https.get` / `Https.post` / `Https.upload` / `Https.download` 四个网络请求函数(注册处 `LuaFunctionRegistrar.registerHttpFunctions`,`LuaActivity.java:1395-1398`)。见 §1.9 与 `assets/doc/OkHttpUtil.md` |
+| `Https` | **仅当 `global_utils` 含 `OkHttpUtil` 时注入**:`Https.get` / `Https.post` / `Https.upload` / `Https.download` 四个网络请求函数(注册处 `LuaFunctionRegistrar.registerHttpFunctions`,`LuaActivity.java:1395-1398`)。旧写法裸名 `get`/`post`/`upload`/`download` 仍会**在名字未被占用时**注册为兼容别名。见 §1.9 与 `assets/doc/OkHttpUtil.md` |
 | `print` | 定制打印,`print.register("print")` 注册(`LuaActivity.java:1297`),经 `sendMsg` → `RuntimeLog.logLua` 落进 `luaforge.log`(`LuaActivity.java:1687-1696`) |
 | `set(name, v)` / `call(name, ...)` | 跨线程设值/调用 |
 
@@ -265,6 +266,7 @@ Http.post("https://api.example.com/login", {user = "a", pass = "b"},
 
 **次选 `Https.*`**(OkHttp 实现):仅当 `settings.json` 的 `global_utils` 含 `OkHttpUtil` 时才有,
 只提供 `Https.get` / `Https.post` / `Https.upload` / `Https.download`。需要 OkHttp 特性时再用,详见 §1.6 与 `assets/doc/OkHttpUtil.md`。
+> ⚠️ 旧写法裸名 `get(...)` / `post(...)` 等**已不再是主路径**:它们仅作为兼容别名的兜底,且只有在该全局名未被占用时才注册。新代码请一律写 `Https.*`。
 
 **通用注意**:两条通道在 **IDE 内运行**时都会被「网络请求拦截」拦下(见 `docs/NETWORK.md`),
 **打包成 APK 后不拦截**;开发期若请求静默返回 `-1`,先查拦截名单。
@@ -311,6 +313,7 @@ Http.post("https://api.example.com/login", {user = "a", pass = "b"},
 #### 项目自带的原生库与三方 dex
 
 - **`lib/<abi>/libxxx.so`**:分架构原生库,只加载与设备首选 ABI(`Build.SUPPORTED_ABIS[0]`,如 `arm64-v8a` / `armeabi-v7a`)匹配的子目录;无该子目录时回退 `lib/*.so`(扁平)。加载后 `require "xxx"`(`LuaDexLoader.loadArchLibs`)。
+  运行期按名加载(`activity.loadLib("xxx")` / `service.loadLib("xxx")`)同样按此约定查找:先 `lib/<abi>/libxxx.so`,再 `lib/libxxx.so`。
 - **`libs/*.dex` / `libs/*.jar`**:三方 dex/jar,动态加载后其类可**按裸类名或全限定名**直接在 Lua 用(`LuaDexLoader.loadLibs`)。
 - **`libs/*.so`**:兼容旧版的扁平原生库(不分架构)。
 - 用 MCP `list_project_libraries` 可列出项目 `lib/<abi>/*.so`、`libs/*.dex|jar` 与设备首选 ABI。

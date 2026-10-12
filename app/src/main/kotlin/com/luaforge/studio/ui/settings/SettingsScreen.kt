@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -2456,9 +2457,12 @@ fun AbiTargetNavBar(
                         null
                     }
                 ) {
+                    // 三块固定等高(标题 1 行 + 说明 2 行,超出省略),避免中文/英文换行数不同
+                    // 导致导航栏高度参差。
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(min = 56.dp)
                             .padding(horizontal = 6.dp, vertical = 10.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
@@ -2472,7 +2476,9 @@ fun AbiTargetNavBar(
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
@@ -2483,7 +2489,9 @@ fun AbiTargetNavBar(
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                             },
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
