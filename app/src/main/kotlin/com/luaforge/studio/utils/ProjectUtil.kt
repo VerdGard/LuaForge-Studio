@@ -302,6 +302,16 @@ object ProjectUtil {
             tempZipFile.delete()
         }
 
+        // 所有模板统一补上库目录,便于直接放原生库与三方库:
+        //   libs/                  三方 dex/jar 与扁平原生库
+        //   lib/arm64-v8a/         64 位原生库
+        //   lib/armeabi-v7a/       32 位原生库
+        // 空目录无法稳定存进 zip,故在此统一创建(对全部模板生效)。
+        listOf("libs", "lib/arm64-v8a", "lib/armeabi-v7a").forEach { rel ->
+            val dir = File(projectDir, rel)
+            if (!dir.exists()) dir.mkdirs()
+        }
+
         // 清理缓存目录
         cacheDir.deleteRecursively()
     }

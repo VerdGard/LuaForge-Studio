@@ -202,7 +202,7 @@ fun AboutScreen(onBack: () -> Unit) {
                 description = "",
                 color = Color(0xFF8D4A5A),
                 iconResId = R.drawable.ic_w,
-                url = "https://github.com/wisyh"
+                url = "https://github.com/VerdGard/LuaForge-Studio"
             ),
             Developer(
                 nameResId = R.string.dev_kotlin_name,
@@ -235,6 +235,14 @@ fun AboutScreen(onBack: () -> Unit) {
                 color = Color(0xFFD97757),
                 iconResId = R.drawable.ic_compose,
                 url = "https://developer.android.com/jetpack/compose"
+            ),
+            Developer(
+                nameResId = R.string.dev_zt_name,
+                roleResId = R.string.dev_zt_role,
+                description = "",
+                color = Color(0xFF3A7D8C),
+                iconResId = 0,
+                url = "https://github.com/VerdGard/LuaForge-Studio"
             )
         )
     }

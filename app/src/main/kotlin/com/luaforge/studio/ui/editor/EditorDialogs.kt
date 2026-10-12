@@ -194,7 +194,6 @@ private fun BuildTypeOption(
 /** 构建类型标题。 */
 @Composable
 private fun buildTypeLabel(type: BuildType): String = when (type) {
-    BuildType.UNENCRYPTED -> stringResource(R.string.code_editor_build_type_unencrypted)
     BuildType.DEBUG -> stringResource(R.string.code_editor_build_type_debug)
     BuildType.RELEASE -> stringResource(R.string.code_editor_build_type_release)
     BuildType.PROJECT_DEFAULT -> stringResource(R.string.code_editor_build_type)
@@ -203,7 +202,6 @@ private fun buildTypeLabel(type: BuildType): String = when (type) {
 /** 构建类型说明。 */
 @Composable
 private fun buildTypeDescription(type: BuildType): String = when (type) {
-    BuildType.UNENCRYPTED -> stringResource(R.string.code_editor_build_type_unencrypted_desc)
     BuildType.DEBUG -> stringResource(R.string.code_editor_build_type_debug_desc)
     BuildType.RELEASE -> stringResource(R.string.code_editor_build_type_release_desc)
     BuildType.PROJECT_DEFAULT -> stringResource(R.string.code_editor_build_type_default_desc)
@@ -211,7 +209,6 @@ private fun buildTypeDescription(type: BuildType): String = when (type) {
 
 /** 构建类型图标。 */
 private fun buildTypeIcon(type: BuildType): ImageVector = when (type) {
-    BuildType.UNENCRYPTED -> Icons.Filled.Code
     BuildType.DEBUG -> Icons.Filled.Build
     BuildType.RELEASE -> Icons.Filled.CheckCircle
     BuildType.PROJECT_DEFAULT -> Icons.Filled.Build

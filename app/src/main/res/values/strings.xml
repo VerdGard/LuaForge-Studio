@@ -106,6 +106,8 @@
     <string name="dev_android_role">Platform</string>
     <string name="dev_compose_name">Jetpack Compose</string>
     <string name="dev_compose_role">UI Framework</string>
+    <string name="dev_zt_name">恣桐</string>
+    <string name="dev_zt_role">Developer</string>
 
     <!-- 版权和版本 -->
     <string name="copyright">© %s LuaForge Studio</string>
@@ -462,8 +464,8 @@
     <string name="attribute_save_success">保存成功</string>
     <string name="attribute_save_failed">保存失败: %s</string>
     <string name="attribute_build_options">构建选项</string>
-    <string name="attribute_encrypt_build">加密项目</string>
-    <string name="attribute_merge_dex">合并dex</string>
+    <string name="attribute_encrypt_build">Lua代码加密</string>
+    <string name="attribute_merge_dex">第三方库合并</string>
     <string name="attribute_skip_compile_title">跳过编译</string>
     <string name="attribute_skip_compile_hint">选中的文件打包时保持明文,不进行加密</string>
     <string name="attribute_skip_compile_add">添加文件</string>
@@ -583,6 +585,21 @@
     <string name="crash_log_cleared">已清除所有崩溃日志</string>
     <string name="crash_log_clear_failed">清除失败</string>
 
+    <!-- 错误日志(设置页) -->
+    <string name="settings_error_log">错误日志</string>
+    <string name="settings_error_log_enabled">记录错误日志</string>
+    <string name="settings_error_log_enabled_desc">将运行日志与错误写入 luaforge.log,便于排查</string>
+    <string name="settings_error_log_view">查看错误日志</string>
+    <string name="settings_error_log_view_desc">查看最近的 ERROR 级别记录</string>
+    <string name="settings_error_log_export">导出日志文件</string>
+    <string name="settings_error_log_export_desc">通过系统分享导出完整日志文件</string>
+    <string name="settings_error_log_clear">清除日志</string>
+    <string name="settings_error_log_clear_desc">删除当前日志文件内容</string>
+    <string name="settings_error_log_cleared">日志已清除</string>
+    <string name="settings_error_log_empty">暂无错误日志</string>
+    <string name="settings_error_log_dialog_title">错误日志</string>
+    <string name="settings_error_log_export_failed">导出失败</string>
+    <string name="settings_error_log_share_title">分享日志</string>
     <!-- CrashInfoScreen -->
     <string name="crash_info_title">应用崩溃</string>
     <string name="crash_info_copy_crash_log">复制崩溃信息</string>
@@ -659,14 +676,12 @@
     <string name="firewall_block_msg_self">已拦截对 %1$s 工作目录的操作。</string>
     <string name="code_editor_build_dialog_title">构建项目</string>
     <string name="code_editor_build_type">构建类型</string>
-    <string name="code_editor_build_type_unencrypted">未加密版</string>
-    <string name="code_editor_build_type_unencrypted_desc">Lua 源码不做加密处理,直接打包为明文脚本</string>
     <string name="code_editor_build_type_debug">Debug 版</string>
     <string name="code_editor_build_type_debug_desc">开启调试模式</string>
     <string name="code_editor_build_type_release">Release 版</string>
     <string name="code_editor_build_type_release_desc">关闭调试模式</string>
     <string name="code_editor_build_type_default_desc">按项目属性中的加密与调试设置构建</string>
-    <string name="settings_build_abi">打包设置</string>
+    <string name="settings_build_abi">构件设置</string>
     <string name="settings_build_abi_desc">选择打包时保留的 CPU 架构</string>
     <string name="settings_abi_universal">通用版</string>
     <string name="settings_abi_universal_desc">同时包含 32 位与 64 位,兼容全部设备(体积最大)</string>

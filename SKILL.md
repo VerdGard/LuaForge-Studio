@@ -368,7 +368,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 - 路径可为项目相对路径,或允许范围内的绝对路径。
 - 不传 `path` 时多数工具回退到"当前打开的项目 / 当前活动文件"。
 
-### 3.2 工具清单(49 个,`McpTools.kt` 实测)
+### 3.2 工具清单(50 个,`McpTools.kt` 实测)
 
 **项目与文件**
 
@@ -376,8 +376,9 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 |---|---|---|
 | `list_projects` | 列项目 | — |
 | `list_files` | 列文件树 | `path`、`recursive`、`maxEntries` |
-| `read_file` / `read_files` | 读文本 | `path` **必填** / `paths` **必填** |
-| `write_file` | 覆盖写(自动建父目录),**同步刷新已打开标签** | `path`、`content` **必填** |
+| `read_file` | 读文本;`raw=true` 直接返回**原文(不转义)**,`startLine`/`endLine` 按行读(1 起算闭区间) | `path` **必填**、`startLine`、`endLine`、`raw`、`withMd5` |
+| `read_files` | 一次读多个文本文件,支持按行读与 MD5 | `paths` **必填**、`startLine`、`endLine`、`withMd5` |
+| `write_file` | 写文本(自动建父目录),**同步刷新已打开标签**;`mode`=overwrite/replaceLines/append,`expectedMd5`/`expectedLines` 做写入前校验 | `path`、`content` **必填**、`mode`、`startLine`、`endLine`、`expectedMd5`、`expectedLines` |
 | `create_file` | 新建(默认不覆盖) | `path` **必填**、`content`、`overwrite` |
 | `delete_file` | 删文件或**空**目录 | `path` **必填** |
 | `rename_file` | 重命名/移动 | `from`、`to` **必填**、`overwrite` |
@@ -399,7 +400,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 
 **构建与运行**
 
-`compile_file`(`path`、`keepOutput`)、`clean_compiled`、`build_apk`(`path`)、`run_project`、`install_apk`(`path` **必填**)
+`compile_file`(`path`、`keepOutput`)、`clean_compiled`、`build_apk`(`path`)、`run_project`(`path`、`waitMs`、`capture`、`stop`、`clearLogs`、`captureLines`、`returnToEditor`)、`stop_project`(`page`/`path`、`returnToEditor`)、`install_apk`(`path` **必填**)
 
 **运行时界面检查**
 
@@ -449,6 +450,21 @@ get_runtime_errors             # 6. 失败时读 Lua 报错
 
 `check_screen` 的文本匹配是**子串**匹配:`expectTexts` 需全部出现,`expectAnyOf` 命中其一,`absentTexts` 必须都不出现。未通过时返回 `{"passed": false, "isError": true, "failures": [...], "detectedErrorMarkers": [...]}`。`detectedErrorMarkers` 会自动识别 `runtime error`、`is not a field`、`layout loading error`、`traceback` 等错误弹窗特征——**这是判断"代码真跑起来了"的关键信号**。
 
+**一次性运行取信息(MCP 场景推荐)**
+
+只需"跑一下、拿到输出、回到编辑界面"时,不必走上面的多步:
+
+```text
+run_project stop=true waitMs=2000 capture="debugger,errors" clearLogs=true
+# → 启动后等 2s,抓取调试浮窗缓冲 + 日志错误,然后结束运行并退回编辑界面
+# 返回: { started, entry, output:{debugger,errorCount,errors,...}, stopped, returnedToEditor }
+stop_project                  # 若上一步没结束运行(如 stop=false),用这个收尾
+```
+
+- `capture` 取值:`debugger`(调试浮窗缓冲,需项目 debugmode=true)/ `errors`(日志错误行)/ `log`(日志尾部)。
+- `stop=true` 时默认 `waitMs=1500`,让脚本有执行机会;要精确等待请显式传 `waitMs`。
+- `stop_project` 也可单独用来关闭残留运行实例,`returnToEditor=true` 会回到编辑界面。
+
 **出包**
 
 ```text
@@ -467,6 +483,9 @@ MCP 只允许访问这些根(`McpTools.kt:1429-1443`):
 路径经 `canonicalPath` 归一化后做前缀匹配,空值与文件系统根 `/` 被过滤。
 
 日志:`/storage/emulated/0/LuaForge-Studio/luaforge.log`。`get_logs` 读取上限 512KB,`read_file` 上限 2MB。
+超过 2MB 的文件用 `read_file startLine/endLine` 按行读,并配合 `file_info` 的 `md5`/`lines` 做完整性校验;
+写回用 `write_file mode=replaceLines startLine/endLine` + `expectedMd5`(或 `expectedLines`)防止并发覆盖。
+需要文件**原文**(不要把 `\n` 当转义处理)时传 `read_file raw=true`。
 
 ### 3.5 已知限制
 
@@ -476,6 +495,9 @@ MCP 只允许访问这些根(`McpTools.kt:1429-1443`):
 - 单次 `dump_screen` 最多 3000 节点,超出截断并置 `truncated=true`。
 - `resolveProjectPath`:未传 `path` 且未打开项目时,仅当项目根**只有一个子目录**才自动选中。
 - `delete_file` 只能删空目录;递归删除需客户端先列目录再逐个删。
+- `run_project stop=true` 结束运行依赖实例能从运行表中移除;若脚本卡死,`stop_project` 的 `timeoutMs` 到点仍会尝试回到编辑界面。
+- `capture=debugger` 只对 debugmode 项目有效;非 debug 项目会在 `output.debuggerNote` 里说明未注入浮窗。
+- 错误日志已可在 **设置 → 错误日志** 里查看/导出(记录开关默认开启);日志路径仍为 `luaforge.log`。
 
 ---
 

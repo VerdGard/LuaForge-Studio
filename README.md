@@ -1,79 +1,97 @@
 # 更新日志
 
 ## 1.6.7
-- **彻底弃用旧「调试控制台」**,改用内置 `debugger.lua`(浮窗式调试器,来源 Aqora,已适配本项目 Lua 方言)
-  - 删除 app 模块 `com.luaforge.studio.console.**`(约 40 文件)、core 侧 `ConsoleBridgeRef` 反射门面、MCP `ConsoleTools.kt` 与 manifest 里的 `ConsoleInitializer` 提供者
-  - `core`/`a` 侧移除全部控制台埋点:`LuaActivity` 的 traced require / `onEvent` / 音量键唤回浮球 / `reportConsoleError`,`LuaJavaAPI` 的方法调用拦截与 popup 捕获,`LuaPrint` 回归原始简单实现
-  - 适配点:本项目把 `lambda` 作为**解析器保留字**(`lambda(params) -> expr`),`debugger.lua` 原用的 `lambda(t):method(...)` 无法编译 → 改写为普通 `SimpleClass(t)`;不替换 `_G.error`(避免破坏 `pcall`/`assert`),仅接管 `_G.onError`;浮窗 `LayoutParams` 补 `type`(API≥26 用 `TYPE_APPLICATION_OVERLAY` 并查 `Settings.canDrawOverlays`,否则 `TYPE_PHONE`,无权限时回退挂 `decorView`);颜色优先 `require "Colors"`,失败回退内置色
-  - 加载源**内置到 assets**:`app/src/main/assets/debugger.lua`,由 `DebuggerHost`(LuaSessionHook)在会话启动时注入
+
+- **彻底弃用旧「调试控制台」**，改用内置 `debugger.lua`（浮窗式调试器，来源 Aqora，已适配本项目 Lua 方言）
+  - 删除 app 模块 `com.luaforge.studio.console.**`（约 40 文件）、core 侧 `ConsoleBridgeRef` 反射门面、MCP `ConsoleTools.kt` 与 manifest 里的 `ConsoleInitializer` 提供者
+  - `core`/`a` 侧移除全部控制台埋点：`LuaActivity` 的 traced require / `onEvent` / 音量键唤回浮球 / `reportConsoleError`，`LuaJavaAPI` 的方法调用拦截与 popup 捕获，`LuaPrint` 回归原始简单实现
+  - 适配点：本项目把 `lambda` 作为**解析器保留字**（`lambda(params) -> expr`），`debugger.lua` 原用的 `lambda(t):method(...)` 无法编译 → 改写为普通 `SimpleClass(t)`；不替换 `_G.error`（避免破坏 `pcall`/`assert`），仅接管 `_G.onError`；浮窗 `LayoutParams` 补 `type`（API≥26 用 `TYPE_APPLICATION_OVERLAY` 并查 `Settings.canDrawOverlays`，否则 `TYPE_PHONE`，无权限时回退挂 `decorView`）；颜色优先 `require "Colors"`，失败回退内置色
+  - 加载源**内置到 assets**：`app/src/main/assets/debugger.lua`，由 `DebuggerHost`（LuaSessionHook）在会话启动时注入
 - **所有 print 与调试信息统一走 debugger**
-  - `debugger.lua` 覆盖全局 `print`:写入浮窗缓冲,并 `pcall(context.sendMsg)` 保留 `luaforge.log` 落盘
-  - Lua 报错经 `_G.onError` 进入浮窗;`LuaActivity.sendError` 改为 `runFunc("onError", ...)` 未接管时才回退 `sendMsg`
-  - `core` 的 `LuaSessionHook` 改为多槽接口并新增 `onSessionEnd(LuaState)`,`onSessionStart` 增加 `boolean toolLaunch` 形参;`LuaActivity` 提供 `addSessionHook`/`removeSessionHook`,工具型启动(布局助手)经 `debugger_disable` extra 抑制注入
-- **MCP**:移除 6 个 `console_*` 工具,新增 3 个 debugger 工具
-  - `debugger_status`:当前运行页面 / 项目 / 浮窗是否注入 / 缓冲条数
-  - `debugger_outputs`:读取浮窗缓冲(print / 报错),支持 `limit`、`keyword` 过滤
-  - `debugger_clear`:清空浮窗缓冲
-  - 数据源为运行中 LuaState 暴露的只读全局 `__lfDebugger`,与浮窗展示同源
-- print/报错只进调试浮窗,不再在屏幕重复弹 Toast
-  - 浮窗接管 `print`/`onError` 后调用 `LuaActivity.setDebuggerActive(true)`,
-    `MainHandler` 在该标记期间跳过旧 Toast 回显(仅落盘 `luaforge.log`)
-  - 浮窗销毁时复位标记,非调试运行保持原有 Toast 行为
-- 浮窗与 PopupMenu 弹窗改用圆角(20dp):浮窗底色随模式在 `Colors.colorPrimary` /
-  报错红之间切换,PopupMenu 经 `mPopup` 反射铺圆角背景
-- **Jetpack Compose 支持(方案 A)**:Lua 用 table 描述 UI 树,由 Kotlin 桥渲染为 Material3 组件
-  - 新增全局函数 `compose(tree)`(返回可挂载的 `ComposeView`)/ `composeContent(tree)`(直接设为当前页面内容视图),由 `LuaActivity.initLua` 注册
-  - 支持标签:`Column` / `Row` / `Box` / `Card` / `Text` / `Button` / `Spacer` / `Divider`;通用属性 `padding` / `fillMaxWidth` / `width` / `height` / `background` / `corner`;颜色写作 `0xAARRGGBB`
-  - 不直接调用 `@Composable`:`@Composable` 函数签名被编译器改写(注入 `Composer`)且必须在 composition 上下文执行,Lua 无法直接调用,故采用「描述树 → 渲染」形态
-  - 新增模板 `templates/Compose.zip`(可直接运行的最小示例)与文档 `assets/doc/Compose.md`
-- 编辑器新增**符号自动补全**(设置 → 编辑器配置,默认开启)
-  - 点击底部符号栏的 `(` `[` `{` `"` `'` 时自动补成对,并把光标移到括号中间;关闭后仅插入单个符号
-- 设置新增**打包设置**卡片:选择打包时保留的 CPU 架构
-  - 三选一:**通用版**(32 位 + 64 位)/ **arm64-v8a**(64 位)/ **armeabi-v7a**(32 位)
-  - 清理阶段按选择裁剪 APK 的 `lib/` 目录,减小产物体积
+  - `debugger.lua` 覆盖全局 `print`：写入浮窗缓冲，并 `pcall(context.sendMsg)` 保留 `luaforge.log` 落盘
+  - Lua 报错经 `_G.onError` 进入浮窗；`LuaActivity.sendError` 改为 `runFunc("onError", ...)` 未接管时才回退 `sendMsg`
+  - `core` 的 `LuaSessionHook` 改为多槽接口并新增 `onSessionEnd(LuaState)`，`onSessionStart` 增加 `boolean toolLaunch` 形参；`LuaActivity` 提供 `addSessionHook`/`removeSessionHook`，工具型启动（布局助手）经 `debugger_disable` extra 抑制注入
+- **MCP**：移除 6 个 `console_*` 工具，新增 3 个 debugger 工具
+  - `debugger_status`：当前运行页面 / 项目 / 浮窗是否注入 / 缓冲条数
+  - `debugger_outputs`：读取浮窗缓冲（print / 报错），支持 `limit`、`keyword` 过滤
+  - `debugger_clear`：清空浮窗缓冲
+  - 数据源为运行中 LuaState 暴露的只读全局 `__lfDebugger`，与浮窗展示同源
+- print/报错只进调试浮窗，不再在屏幕重复弹 Toast
+  - 浮窗接管 `print`/`onError` 后调用 `LuaActivity.setDebuggerActive(true)`，`MainHandler` 在该标记期间跳过旧 Toast 回显（仅落盘 `luaforge.log`）
+  - 浮窗销毁时复位标记，非调试运行保持原有 Toast 行为
+- 浮窗与 PopupMenu 弹窗改用圆角（20dp）：浮窗底色随模式在 `Colors.colorPrimary` / 报错红之间切换，PopupMenu 经 `mPopup` 反射铺圆角背景
+- **Jetpack Compose 支持（方案 A）**：Lua 用 table 描述 UI 树，由 Kotlin 桥渲染为 Material3 组件
+  - 新增全局函数 `compose(tree)`（返回可挂载的 `ComposeView`）/ `composeContent(tree)`（直接设为当前页面内容视图），由 `LuaActivity.initLua` 注册
+  - 支持标签：`Column` / `Row` / `Box` / `Card` / `Text` / `Button` / `Spacer` / `Divider`；通用属性 `padding` / `fillMaxWidth` / `width` / `height` / `background` / `corner`；颜色写作 `0xAARRGGBB`
+  - 不直接调用 `@Composable`：`@Composable` 函数签名被编译器改写（注入 `Composer`）且必须在 composition 上下文执行，Lua 无法直接调用，故采用「描述树 → 渲染」形态
+  - 新增模板 `templates/Compose.zip`（可直接运行的最小示例）与文档 `assets/doc/Compose.md`
+- 编辑器新增**符号自动补全**（设置 → 编辑器配置，默认开启）
+  - 点击底部符号栏的 `(` `[` `{` `"` `'` 时自动补成对，并把光标移到括号中间；关闭后仅插入单个符号
+- 设置新增**打包设置**卡片：选择打包时保留的 CPU 架构
+  - 三选一：**通用版**（32 位 + 64 位）/ **arm64-v8a**（64 位）/ **armeabi-v7a**（32 位）
+  - 清理阶段按选择裁剪 APK 的 `lib/` 目录，减小产物体积
 - **MCP 默认端口由 `8787` 改为 `9123`**
-  - 代码 `McpManager.kt` / `SettingsManager.kt` 三处默认值同步;设置页仍可改(1024–65535)
+  - 代码 `McpManager.kt` / `SettingsManager.kt` 三处默认值同步；设置页仍可改（1024–65535）
   - 文档 `docs/MCP.md`、`SKILL.md` 中示例地址一并更新
-- 设置 → 编辑器配置:移除「滑动手势」开关及其在编辑器中的上下滑动显隐快捷功能栏逻辑
+- 设置 → 编辑器配置：移除「滑动手势」开关及其在编辑器中的上下滑动显隐快捷功能栏逻辑
   - 同步清理 `CodeEditorView` 的触摸监听、`EditorTabs`/`CodeEditScreen` 的透传链路、`SettingsManager` 字段与 `get_settings` 暴露项
-- 修复与增强**布局助手**(`assets/layouthelper/main.lua`)
-  - 修复:启动诊断误报。无三方库的项目(N 三方库)本应 `dex_loaders=0 scanned=0`,旧实现却把这条无害统计经 `Error()` 记为 `[ERROR]`,且日志出现 `[Layouthelper] [Layouthelper]` 双前缀 → 现统一日志出口(仅本函数补标签),诊断降级为 `INFO`,并追加 `libs_exists` / `lib_files` / `third_party_views` 便于判断
-  - 修复:图片属性候选漏配 `.jpeg` / `.webp` / `.bmp` / `.gif`,且未做大写兼容 → `addDir` 补齐并大小写不敏感
-  - 增强:项目 `libs/*.dex` 中解析出的三方 View 子类会**注册为全局控件**并加入「添加控件」列表(新增「三方控件」分类,上限 80 个);点击时若未预注册,经 `_G.__lfThirdParty` 懒解析;仍解析不出时给出明确报错而非静默失败
-  - 修复:`libsDir.listFiles()` 为 nil 时不再崩溃(空目录保护)
-- **代码补全范围扩大**:新增项目函数与全局函数补全
-  - 跨文件扫描项目内 `.lua`/`.aly` 的 `function name(...)` 定义并加入补全(跳过注释、长注释与 `build`/`.git` 等目录)
-  - `function M.foo(...)` / `M:foo(...)` 归入「表名 → 成员」,输入 `M.` 时提示成员
-  - 同时把 `settings.json` 的 `global_utils` 在运行时会注册的全局函数(经 `LuaFunctionRegistrar.describeFunctions`,与运行时同源)一并补全
-  - 接入点 `EditorViewModel.refreshExtraFunctions()`(打开项目时于 IO 线程扫描并注入已打开编辑器)
-- **网络请求函数改为全局表 `Https`**:`get`/`post`/`upload`/`download` 由裸全局名改为 `Https.get` / `Https.post` / `Https.upload` / `Https.download`
-  - 反射注册路径同步跳过 OkHttpUtil 的这四个方法,确保裸全局名不再注册(`registerUtilClass` / `describeFunctions` / `findUtilMethod` 共用 `skipReflectiveMethod` 规则)
-  - `OkHttpUtil.kt` 重构:四处重复逻辑合并为 `applyCommonHeaders` + `execute`,`OkHttpClient` 改双重检查锁,响应体一律 `use{}` 关闭避免连接泄漏
+- 修复与增强**布局助手**（`assets/layouthelper/main.lua`）
+  - 修复：启动诊断误报。无三方库的项目（N 三方库）本应 `dex_loaders=0 scanned=0`，旧实现却把这条无害统计经 `Error()` 记为 `[ERROR]`，且日志出现 `[Layouthelper] [Layouthelper]` 双前缀 → 现统一日志出口（仅本函数补标签），诊断降级为 `INFO`，并追加 `libs_exists` / `lib_files` / `third_party_views` 便于判断
+  - 修复：图片属性候选漏配 `.jpeg` / `.webp` / `.bmp` / `.gif`，且未做大写兼容 → `addDir` 补齐并大小写不敏感
+  - 增强：项目 `libs/*.dex` 中解析出的三方 View 子类会**注册为全局控件**并加入「添加控件」列表（新增「三方控件」分类，上限 80 个）；点击时若未预注册，经 `_G.__lfThirdParty` 懒解析；仍解析不出时给出明确报错而非静默失败
+  - 修复：`libsDir.listFiles()` 为 nil 时不再崩溃（空目录保护）
+- **代码补全范围扩大**：新增项目函数与全局函数补全
+  - 跨文件扫描项目内 `.lua`/`.aly` 的 `function name(...)` 定义并加入补全（跳过注释、长注释与 `build`/`.git` 等目录）
+  - `function M.foo(...)` / `M:foo(...)` 归入「表名 → 成员」，输入 `M.` 时提示成员
+  - 同时把 `settings.json` 的 `global_utils` 在运行时会注册的全局函数（经 `LuaFunctionRegistrar.describeFunctions`，与运行时同源）一并补全
+  - 接入点 `EditorViewModel.refreshExtraFunctions()`（打开项目时于 IO 线程扫描并注入已打开编辑器）
+- **网络请求函数改为全局表 `Https`**：`get`/`post`/`upload`/`download` 由裸全局名改为 `Https.get` / `Https.post` / `Https.upload` / `Https.download`
+  - 反射注册路径同步跳过 OkHttpUtil 的这四个方法，确保裸全局名不再注册（`registerUtilClass` / `describeFunctions` / `findUtilMethod` 共用 `skipReflectiveMethod` 规则）
+  - `OkHttpUtil.kt` 重构：四处重复逻辑合并为 `applyCommonHeaders` + `execute`，`OkHttpClient` 改双重检查锁，响应体一律 `use{}` 关闭避免连接泄漏
   - 文档 `assets/doc/OkHttpUtil.md` 与 MCP 的 `note` 同步为 `Https.*`
 - 编辑器配置调整
-  - 移除「智能排序」开关(及 `SettingsManager` / `CodeEditScreen` / `DraggableSymbolPanel` 中整套频率统计逻辑)
-  - 新增「长按选中整行」开关(设置 → 编辑器配置,默认开启),关闭后长按不再整行选中
-  - 编辑器配置各项统一改为**默认开启**(`enableTabHistory` / `completionCaseSensitive` / `hexColorHighlightEnabled` 等)
+  - 移除「智能排序」开关（及 `SettingsManager` / `CodeEditScreen` / `DraggableSymbolPanel` 中整套频率统计逻辑）
+  - 新增「长按选中整行」开关（设置 → 编辑器配置，默认开启），关闭后长按不再整行选中
+  - 编辑器配置各项统一改为**默认开启**（`enableTabHistory` / `completionCaseSensitive` / `hexColorHighlightEnabled` 等）
 - **原生库与三方库动态加载**
-  - 新增项目 `lib/<abi>/`(`arm64-v8a` / `armeabi-v7a`)分架构加载原生库,无该 ABI 子目录时回退 `lib/*.so`;`libs/` 继续加载扁平 `.so` 与动态加载 `*.dex` / `*.jar`(`LuaDexLoader.loadArchLibs` / `loadLibs`)
-  - 加载后 `require "模块名"`(`libcjson.so` → `require "cjson"`);`libs/` 的 dex 加载后其类可按裸类名或全限定名直接在 Lua 使用
-  - MCP 新增 `list_project_libraries` 工具,列出项目 `lib/<abi>/*.so`、`libs/*.dex|jar`、`libs/*.so` 与设备首选 ABI(工具数 48 → 49)
-- **打包设置文案**:「仅 64 位」改为 `arm64-v8a`、「仅 32 位」改为 `armeabi-v7a`(中英文案同步)
-
+  - 新增项目 `lib/<abi>/`（`arm64-v8a` / `armeabi-v7a`）分架构加载原生库，无该 ABI 子目录时回退 `lib/*.so`；`libs/` 继续加载扁平 `.so` 与动态加载 `*.dex` / `*.jar`（`LuaDexLoader.loadArchLibs` / `loadLibs`）
+  - 加载后 `require "模块名"`（`libcjson.so` → `require "cjson"`）；`libs/` 的 dex 加载后其类可按裸类名或全限定名直接在 Lua 使用
+  - MCP 新增 `list_project_libraries` 工具，列出项目 `lib/<abi>/*.so`、`libs/*.dex|jar`、`libs/*.so` 与设备首选 ABI（工具数 48 → 49）
+- **错误日志:记录 / 查看 / 导出 + Lua 错误不再拖崩编辑器**
+  - `LuaActivity` 的错误出口统一收敛为 `sendError(String, Throwable)` 并加**重入守卫**:`onError` 回调自身再报错时只落盘、不再递归(此前会 StackOverflow 把整个进程带崩)
+  - `runFunc` / `doString` 的 catch 从 `LuaException` 放宽到 `Throwable`;`MainHandler` 的 case 1/2/3 加兜底,主线程 Handler 抛出的异常不再直接终止进程
+  - 设置页新增「错误日志」卡片:记录开关(`webide_log_config`,默认开)、查看(只读 `[ERROR]` 行)、导出(FileProvider 分享 `luaforge.log`)、清除
+  - 新增 `LogFileAccess`(读/清空日志),开关状态经 `LogConfigRepository.isLogEnabled()` 读取
+- **编辑器 ViewModel 泄漏修复**:`EditorViewModel.onCleared()` 原来用 `removeListener { }` 移除设置监听器 —— 传入的是新 lambda,`equals` 不成立,原监听器一直留在 `SettingsManager`(单例)里持有已销毁的 ViewModel。改为保存同一引用后按引用移除
+- **构建类型精简**:删除「未加密版」(`BuildType.UNENCRYPTED`),构建对话框只剩 跟随项目设置 / Debug / Release
+- **项目属性文案**:「加密项目」→「Lua代码加密」,「合并dex」→「第三方库合并」(中英同步)
+- **设置页合并与改造**
+  - 「打包设置」与「编辑器配置」合并进同一张卡片,并更名为**构件设置**
+  - ABI 选择改为**导航栏样式**:三种模式横排、选中高亮、必选其一(`AbiTargetNavBar` 取代原 `AbiTargetOption` 单选列)
+- **关于页**:新增开发者「恣桐」,并将 GitHub 仓库地址统一为 https://github.com/VerdGard/LuaForge-Studio
+- **模板统一补齐目录**:`ProjectUtil.extractTemplate()` 解包后为所有模板创建 `libs/`、`lib/arm64-v8a/`、`lib/armeabi-v7a/`
+- **core / core-apk 只出 Release 变体**:`androidComponents { beforeVariants(debug) { it.enable = false } }`;`app` 的 `debug` 构建补 `matchingFallbacks += listOf("release")`
+- **MCP:运行完成后取信息并退回编辑界面**
+  - `run_project` 新增 `waitMs` / `capture`(`debugger`/`errors`/`log`) / `clearLogs` / `captureLines` / `stop` / `returnToEditor`:`stop=true` 时在 `waitMs` 后抓取运行输出、结束运行并回到编辑界面
+  - 新增 `stop_project` 工具,用于单独关闭残留运行实例并回编辑界面(工具数 49 → 50)
+- **MCP:读文件不转义 + 大文件按行读写与校验**
+  - `read_file` 新增 `raw=true`(直接返回文件原文,不包 JSON、不做转义)、`startLine`/`endLine`(1 起算闭区间)、`withMd5`;`read_files` 同步
+  - `write_file` 新增 `mode`(`overwrite`/`replaceLines`/`append`) 与 `expectedMd5`/`expectedLines` 写入前校验;返回带 `lines`/`md5` 便于比对
+- **文档**:`SKILL.md` 工具数同步 50 并补「一次性运行取信息」流程、大文件读写校验、错误日志入口;`docs/MCP.md` 同步工具清单与 `run_project`/`stop_project`/`read_file`/`write_file` 说明
+- **打包设置文案**：「仅 64 位」改为 `arm64-v8a`、「仅 32 位」改为 `armeabi-v7a`（中英文案同步）
 - **废除 Lua 侧 Jetpack Compose 桥与液态玻璃控件**
-  - 移除全局函数 `compose(tree)` / `composeContent(tree)` 与 `LuaCompose.kt`(注册处 `LuaActivity.initLua` 一并删除);Lua 项目改回 `loadlayout` / 原生 View 体系
-  - 移除内置控件 `LiquidGlassView`(`core` 的 `widget/glass`、backdrop 依赖 `io.github.kyant0:backdrop-android`);`BuiltinWidgets`、布局助手 `classes.lua` / `layoutData.lua`、白名单注释同步清理
-  - `core` 模块不再需要 Compose:移除 `kotlin.compose` 插件、`buildFeatures.compose` 与 `compose.ui` / `foundation` / `material3` 依赖(IDE 自身 UI 仍在 `app` 模块使用 Compose,不受影响)
-  - 删除模板 `Compose.zip` / `LiquidGlass.zip` 与文档 `doc/Compose.md` / `doc/LiquidGlassView.md`;`list_widgets` 示例改回 `MaterialTextField`
+  - 移除全局函数 `compose(tree)` / `composeContent(tree)` 与 `LuaCompose.kt`（注册处 `LuaActivity.initLua` 一并删除）；Lua 项目改回 `loadlayout` / 原生 View 体系
+  - 移除内置控件 `LiquidGlassView`（`core` 的 `widget/glass`、backdrop 依赖 `io.github.kyant0:backdrop-android`）；`BuiltinWidgets`、布局助手 `classes.lua` / `layoutData.lua`、白名单注释同步清理
+  - `core` 模块不再需要 Compose：移除 `kotlin.compose` 插件、`buildFeatures.compose` 与 `compose.ui` / `foundation` / `material3` 依赖（IDE 自身 UI 仍在 `app` 模块使用 Compose，不受影响）
+  - 删除模板 `Compose.zip` / `LiquidGlass.zip` 与文档 `doc/Compose.md` / `doc/LiquidGlassView.md`；`list_widgets` 示例改回 `MaterialTextField`
 - **移除 `MemUtil` 全局工具**
-  - 删除 `core` 的 `MemUtil.kt` 与底层 `libmemkit.so`(JNI 源 `app/src/main/jni/memkit/`、构建入口 `CMakeLists.txt` 一并移除)
-  - `settings.json` 的 `global_utils` 白名单由 7 项减为 6 项;`LuaFunctionRegistrar.UTIL_CLASS_MAP`、新建项目「全局工具」选项、文档 `doc/MemUtil.md` 同步清理
-  - `ApkBuilder.UTIL_NATIVE_LIBS`(用于打包时保留工具类原生库)整体移除
+  - 删除 `core` 的 `MemUtil.kt` 与底层 `libmemkit.so`（JNI 源 `app/src/main/jni/memkit/`、构建入口 `CMakeLists.txt` 一并移除）
+  - `settings.json` 的 `global_utils` 白名单由 7 项减为 6 项；`LuaFunctionRegistrar.UTIL_CLASS_MAP`、新建项目「全局工具」选项、文档 `doc/MemUtil.md` 同步清理
+  - `ApkBuilder.UTIL_NATIVE_LIBS`（用于打包时保留工具类原生库）整体移除
 - **修复调试浮窗的两个显示问题**
-  - 返回编辑器时浮窗延迟销毁:根因是浮窗走系统级悬浮窗(`TYPE_APPLICATION_OVERLAY`),独立于运行界面生命周期,要等 `LuaActivity.onDestroy` 才移除
-  - 浮窗会浮现在其他程序之上:现在浮窗始终挂到运行界面的 `DecorView`,与运行界面同窗口 —— 界面不可见即隐藏、界面销毁即移除,仅在本项目运行界面显示
-- 版本固定为 **1.6.7**(本次及以后版本);本地不构建,统一由 GitHub Actions 出包
-
+  - 返回编辑器时浮窗延迟销毁：根因是浮窗走系统级悬浮窗（`TYPE_APPLICATION_OVERLAY`），独立于运行界面生命周期，要等 `LuaActivity.onDestroy` 才移除
+  - 浮窗会浮现在其他程序之上：现在浮窗始终挂到运行界面的 `DecorView`，与运行界面同窗口 —— 界面不可见即隐藏、界面销毁即移除，仅在本项目运行界面显示
+  
 ## 1.6.5
 - 新增 `MemUtil` 全局工具类与底层 `libmemkit.so`(C 实现,内存**读写 / 搜索**,风格接近 GameGuardian)
   - 在项目 `settings.json` 的 `global_utils` 加入 `MemUtil` 即注册为 Lua 全局函数;也可 `require "memkit"` 直接用原生接口(可选参数语义更完整)
@@ -87,103 +105,101 @@
   - 现在新增 `UTIL_NATIVE_LIBS`(工具类名 → 其 `loadLibrary` 的原生库)映射,清理阶段显式保留;清理策略仍是「引用才保留」,非工具类项目体积不受影响
 
 ## 1.6.4
-- 构建项目支持选择构建类型(构建时弹出 MD3 对话框)
-  - **跟随项目设置**(默认):加密与调试模式均取项目属性里的设置
-  - **未加密版**:Lua / ALY 源码不做加密处理,以明文脚本打包
-  - **Debug 版**:开启调试模式(打包内 `settings.json` 的 `debugmode` 置为 true)
-  - **Release 版**:关闭调试模式(`debugmode` 置为 false)
-  - 未加密与调试模式是两个独立维度:只有「未加密版」会关掉加密,调试模式默认仍沿用项目自身设置
-- 设置 → MCP 服务:每个访问地址独立一行并带**复制按钮**,一键复制到剪贴板
-- 设置 → 安全防护 → 网络请求拦截:允许 / 拒绝主机名单支持**单条删除**与**清空全部**,列表行改为卡片式并配删除按钮
-  - 名单超过 5 条时自动折叠,可展开查看并逐条清理
-- MCP:新增 `global_utils` 工具类的查看与调用能力,工具总数 42 → 44
-  - `list_global_utils`:查看项目 `global_utils` 配置,以及这些工具类在**运行时会实际注册**的 Lua 全局函数(参数、返回类型、context 注入、同名覆盖)
-    - 注册清单与运行时反射注册共用同一套规则,不会与运行结果漂移
-    - 顺带暴露 `unknown`(settings.json 里拼错的名字,运行时只会静默跳过)
-    - 同时返回当前正在运行的页面(`runningPages`),便于确认调用目标
-  - `call_global_util`:在**运行中**的项目里调用 `global_utils` 注册的 Lua 全局函数(如 `dp2px`、`parseColor`)
-    - 与项目自身调用**同一条路径**(运行实例主线程执行),`dp2px`、`statusBarHeight()` 这类需要真实 `Context` 的 UI 函数也生效(首个 `Context` / `Activity` 形参由框架自动注入)
-    - 参数支持 JSON 数组或分隔字符串(自动推断 number / boolean / null),并按形参类型做个数与类型校验
-    - 需要控件 / Java 对象 / Lua 回调的函数(如 `GlideUtil.loadImage` 需 `ImageView`、网络请求、Recycler 适配器)会明确拒绝并说明原因
-- 新增「调试控制台」(浮球 + 非全屏面板,竖屏 BottomSheet / 横屏侧栏两种形态)
-  - 浮球:自适应长方形胶囊,支持拖动与点击,未读 Lua 错误以内嵌计数芯片呈现;崩溃时转为 error 色
-  - 面板 6 页签:输出 / 结构 / 环境 / Logcat / 调试 / 设置(页签由左侧竖排导航承担)
-    - 输出:print / Lua 报错 / Toast / Snackbar,按文件分组,含逐参 Lua 类型与真实类型
-    - 结构:当前项目文件树(惰性展开),选中 `.lua` 显示悬浮操作栏
-    - 环境:环境信息 / Lua 模块 / 原生库 / Java 类库 四类折叠卡
-    - Logcat:按等级(V / D / I / W / E / F / S)过滤,日志分块懒加载、主线程只增量追加
-    - 调试:重启项目 / 重建当前文件
-    - 设置:输出 / 拦截 / 报错 分组开关(默认全折叠)
-  - 面板不占满全屏(内容区固定高度),关闭重开保留上次页签
-  - 仅在**调试运行(debugmode 项目)**时激活捕获;从隐藏 / 关闭状态按音量下键可唤回浮球
-- MCP:适配调试控制台,新增 6 个只读工具,工具总数 44 → 50
-  - `console_status`:控制台状态(会话 / 面板 / 当前文件与布局 / 捕获开关 / 缓冲与错误计数)
-  - `console_outputs`:控制台「输出」缓冲(print / 报错 / Toast / Snackbar,含逐参 Lua 类型与真实类型)
-  - `console_events`:控制台事件条目(Lua 侧被实际调用的函数及参数摘要)
-  - `console_modules`:控制台「环境」信息(require 模块 / bindClass 类 / `libs/*.dex` 方法签名)
-  - `console_logcat`:本调试会话 logcat(与控制台「Logcat」页同源)
-  - `console_clear`:清空控制台输出缓冲(与 `clear_logs` 清 `luaforge.log` 互补)
-  - 与 MCP 既有 `get_logs` / `get_runtime_errors`(读 `luaforge.log` 文本)不同,这批工具读的是控制台的**结构化缓冲**,与浮窗展示同源
-  - 仅在**调试运行(debugmode 项目)**时产生数据;详见 [docs/MCP.md](docs/MCP.md)
+
+- 构建项目支持选择构建类型（构建时弹出 MD3 对话框）
+  - **跟随项目设置**（默认）：加密与调试模式均取项目属性里的设置
+  - **未加密版**：Lua / ALY 源码不做加密处理，以明文脚本打包
+  - **Debug 版**：开启调试模式（打包内 `settings.json` 的 `debugmode` 置为 true）
+  - **Release 版**：关闭调试模式（`debugmode` 置为 false）
+  - 未加密与调试模式是两个独立维度：只有「未加密版」会关掉加密，调试模式默认仍沿用项目自身设置
+- 设置 → MCP 服务：每个访问地址独立一行并带**复制按钮**，一键复制到剪贴板
+- 设置 → 安全防护 → 网络请求拦截：允许 / 拒绝主机名单支持**单条删除**与**清空全部**，列表行改为卡片式并配删除按钮
+  - 名单超过 5 条时自动折叠，可展开查看并逐条清理
+- MCP：新增 `global_utils` 工具类的查看与调用能力，工具总数 42 → 44
+  - `list_global_utils`：查看项目 `global_utils` 配置，以及这些工具类在**运行时会实际注册**的 Lua 全局函数（参数、返回类型、context 注入、同名覆盖）
+    - 注册清单与运行时反射注册共用同一套规则，不会与运行结果漂移
+    - 顺带暴露 `unknown`（settings.json 里拼错的名字，运行时只会静默跳过）
+    - 同时返回当前正在运行的页面（`runningPages`），便于确认调用目标
+  - `call_global_util`：在**运行中**的项目里调用 `global_utils` 注册的 Lua 全局函数（如 `dp2px`、`parseColor`）
+    - 与项目自身调用**同一条路径**（运行实例主线程执行），`dp2px`、`statusBarHeight()` 这类需要真实 `Context` 的 UI 函数也生效（首个 `Context` / `Activity` 形参由框架自动注入）
+    - 参数支持 JSON 数组或分隔字符串（自动推断 number / boolean / null），并按形参类型做个数与类型校验
+    - 需要控件 / Java 对象 / Lua 回调的函数（如 `GlideUtil.loadImage` 需 `ImageView`、网络请求、Recycler 适配器）会明确拒绝并说明原因
+- 新增「调试控制台」（浮球 + 非全屏面板，竖屏 BottomSheet / 横屏侧栏两种形态）
+  - 浮球：自适应长方形胶囊，支持拖动与点击，未读 Lua 错误以内嵌计数芯片呈现；崩溃时转为 error 色
+  - 面板 6 页签：输出 / 结构 / 环境 / Logcat / 调试 / 设置（页签由左侧竖排导航承担）
+    - 输出：print / Lua 报错 / Toast / Snackbar，按文件分组，含逐参 Lua 类型与真实类型
+    - 结构：当前项目文件树（惰性展开），选中 `.lua` 显示悬浮操作栏
+    - 环境：环境信息 / Lua 模块 / 原生库 / Java 类库 四类折叠卡
+    - Logcat：按等级（V / D / I / W / E / F / S）过滤，日志分块懒加载、主线程只增量追加
+    - 调试：重启项目 / 重建当前文件
+    - 设置：输出 / 拦截 / 报错 分组开关（默认全折叠）
+  - 面板不占满全屏（内容区固定高度），关闭重开保留上次页签
+  - 仅在**调试运行（debugmode 项目）**时激活捕获；从隐藏 / 关闭状态按音量下键可唤回浮球
+- MCP：适配调试控制台，新增 6 个只读工具，工具总数 44 → 50
+  - `console_status`：控制台状态（会话 / 面板 / 当前文件与布局 / 捕获开关 / 缓冲与错误计数）
+  - `console_outputs`：控制台「输出」缓冲（print / 报错 / Toast / Snackbar，含逐参 Lua 类型与真实类型）
+  - `console_events`：控制台事件条目（Lua 侧被实际调用的函数及参数摘要）
+  - `console_modules`：控制台「环境」信息（require 模块 / bindClass 类 / `libs/*.dex` 方法签名）
+  - `console_logcat`：本调试会话 logcat（与控制台「Logcat」页同源）
+  - `console_clear`：清空控制台输出缓冲（与 `clear_logs` 清 `luaforge.log` 互补）
+  - 与 MCP 既有 `get_logs` / `get_runtime_errors`（读 `luaforge.log` 文本）不同，这批工具读的是控制台的**结构化缓冲**，与浮窗展示同源
+  - 仅在**调试运行（debugmode 项目）**时产生数据；详见 [docs/MCP.md](docs/MCP.md)
 - 修复 `global_utils` 注册函数的小数入参调用失败
-  - 之前 `LuaState.toJavaObject` 得到的 `Double` 直接传给 `Float` / `Int` 形参会抛 `argument type mismatch`(如 `dp2px(16.5)`)
-  - 现在按形参类型做数值收窄,不再依赖 Java 的自动转换
-- `LuaActivity` 新增运行实例定位能力(`getPageName` / `getRunningActivities` / `getActivityByLuaDir`),并给 `sLuaActivityMap` 的读写加同步
-- 新增 `memory` 库(`core/src/main/resources/lua/memory.lua`),纯 Lua 内存管理,`require "memory"` 即可使用
-  - `start(cfg)`:自动模式,内部用 `Handler` + 协程定时巡检,不额外起线程
-  - `start_manual(cfg)` + `tick()`:手动模式,由项目自己驱动巡检节奏
-  - 自适应 GC:按当前用量与峰值比例动态调 `setpause` / `setstepmul`
-  - 泄漏检测:滚动窗口采样(最多 10 次)统计平均增长,持续增长即告警并回收;回落则进入冷却或分步 GC
+  - 之前 `LuaState.toJavaObject` 得到的 `Double` 直接传给 `Float` / `Int` 形参会抛 `argument type mismatch`（如 `dp2px(16.5)`）
+  - 现在按形参类型做数值收窄，不再依赖 Java 的自动转换
+- `LuaActivity` 新增运行实例定位能力（`getPageName` / `getRunningActivities` / `getActivityByLuaDir`），并给 `sLuaActivityMap` 的读写加同步
+- 新增 `memory` 库（`core/src/main/resources/lua/memory.lua`），纯 Lua 内存管理，`require "memory"` 即可使用
+  - `start(cfg)`：自动模式，内部用 `Handler` + 协程定时巡检，不额外起线程
+  - `start_manual(cfg)` + `tick()`：手动模式，由项目自己驱动巡检节奏
+  - 自适应 GC：按当前用量与峰值比例动态调 `setpause` / `setstepmul`
+  - 泄漏检测：滚动窗口采样（最多 10 次）统计平均增长，持续增长即告警并回收；回落则进入冷却或分步 GC
   - `stop()` / `monitoring()` / `force_gc()` / `get_status()` / `on_destroy()` / `help()`
-  - 入参越界(如 `pause`、`stepmul`、`interval`)自动收敛到合法默认值
-- 新增**液态玻璃控件** `LiquidGlassView`(基于 [Kyant0/AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass) 的 backdrop 效果)
-  - 用 `ComposeView` 把 Compose 侧效果包成普通 Android View,使 `loadlayout` / 布局助手能像普通控件一样使用
-  - 属性:`cornerRadius`(圆角 px)、`blurRadius`(背景模糊 px)、`glassColor`(玻璃底色 ARGB)
-  - 已同步:布局助手控件清单(`classes.lua` 短名 + `layoutData.lua`「特殊视图」分类)、白名单放行 `com.luaforge.studio.`、文档 `assets/doc/LiquidGlassView.md`
-  - MCP 新增 `list_widgets`,列出内置控件及其可写属性
-  - 低端 / 旧版本设备由库自行降级(跳过不支持的 RenderEffect / RuntimeShader),不崩溃
-- 三方控件支持(设置 → 编辑器配置,默认开启)
-  - 使用 `.aly` 布局前预载项目 `libs/*.dex|jar`,并把 `DexClassLoader` 链路打通到裸类名解析
-    - 背景:`luajava.bindClass` 走 `Class.forName`,只看宿主 classpath,看不到 `activity.loadDex` 追加的装载器
-  - 关闭后仅允许系统与官方控件(布局助手按白名单门控)
-- 项目属性新增「图标路径」(`settings.json` 顶层 `iconPath`)
-  - 路径框只读 + 文件夹按钮:仅改引用路径,不复制文件,文件选择器锁根在项目内
-  - 点击大图更换图片:走内置文件选择器(默认 `/sdcard/DCIM`),选中即复制到项目根并保持原名
-  - 路径自检:绝对路径 / 含 `..` / 空值一律回退 `icon.png` 并回写修正
-  - 项目卡片缩略图跟随 `iconPath`,保存后即时刷新
-- 项目属性新增「构建选项」:`encrypt`(加密项目)与 `mergeDex`(合并 `libs/*.dex`),存于 `settings.json` 的 `application` 层
-  - `mergeDex` 开启时把 `libs/*.dex` 移出 `assets`,并按现有 `classes*.dex` 续号重命名到 APK 根
-- 新增「防火墙」(设置 → 安全防护,两项默认开启)
-  - 越级写入拦截:运行中的项目写入 / 删除 / 重命名其它项目目录时拦截,读取不受影响
-  - 自我守护:拦截项目删除或移动 LuaForge-Studio 工作目录的行为
-  - Lua 侧改写写入入口:`io.open` / `io.output`、`os.remove` / `os.rename`、`os.execute` / `io.popen`(含危险命令词法判定)、`lfs.remove` / `rmdir` / `rename`
+  - 入参越界（如 `pause`、`stepmul`、`interval`）自动收敛到合法默认值
+- 新增**液态玻璃控件** `LiquidGlassView`（基于 [Kyant0/AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass) 的 backdrop 效果）
+  - 用 `ComposeView` 把 Compose 侧效果包成普通 Android View，使 `loadlayout` / 布局助手能像普通控件一样使用
+  - 属性：`cornerRadius`（圆角 px）、`blurRadius`（背景模糊 px）、`glassColor`（玻璃底色 ARGB）
+  - 已同步：布局助手控件清单（`classes.lua` 短名 + `layoutData.lua`「特殊视图」分类）、白名单放行 `com.luaforge.studio.`、文档 `assets/doc/LiquidGlassView.md`
+  - MCP 新增 `list_widgets`，列出内置控件及其可写属性
+  - 低端 / 旧版本设备由库自行降级（跳过不支持的 RenderEffect / RuntimeShader），不崩溃
+- 三方控件支持（设置 → 编辑器配置，默认开启）
+  - 使用 `.aly` 布局前预载项目 `libs/*.dex|jar`，并把 `DexClassLoader` 链路打通到裸类名解析
+    - 背景：`luajava.bindClass` 走 `Class.forName`，只看宿主 classpath，看不到 `activity.loadDex` 追加的装载器
+  - 关闭后仅允许系统与官方控件（布局助手按白名单门控）
+- 项目属性新增「图标路径」（`settings.json` 顶层 `iconPath`）
+  - 路径框只读 + 文件夹按钮：仅改引用路径，不复制文件，文件选择器锁根在项目内
+  - 点击大图更换图片：走内置文件选择器（默认 `/sdcard/DCIM`），选中即复制到项目根并保持原名
+  - 路径自检：绝对路径 / 含 `..` / 空值一律回退 `icon.png` 并回写修正
+  - 项目卡片缩略图跟随 `iconPath`，保存后即时刷新
+- 项目属性新增「构建选项」：`encrypt`（加密项目）与 `mergeDex`（合并 `libs/*.dex`），存于 `settings.json` 的 `application` 层
+  - `mergeDex` 开启时把 `libs/*.dex` 移出 `assets`，并按现有 `classes*.dex` 续号重命名到 APK 根
+- 新增「防火墙」（设置 → 安全防护，两项默认开启）
+  - 越级写入拦截：运行中的项目写入 / 删除 / 重命名其它项目目录时拦截，读取不受影响
+  - 自我守护：拦截项目删除或移动 LuaForge-Studio 工作目录的行为
+  - Lua 侧改写写入入口：`io.open` / `io.output`、`os.remove` / `os.rename`、`os.execute` / `io.popen`（含危险命令词法判定）、`lfs.remove` / `rmdir` / `rename`
   - Java 侧同步拦截 `File`、`LuaUtil`、`Runtime.exec`、`ProcessBuilder` 与输出流构造
-  - 命中时弹 MD3 对话框说明,并按项目累计「已守护 N 次」,计数显示在设置页
-  - 仅在编辑器内运行项目时生效(需项目开启调试模式);打包成 APK 后不含防火墙逻辑
-- 设置 → 安全防护:由原「网络请求拦截」卡片扩展而来,内含「网络请求拦截」「防火墙」两个分区标题
-
-### 其他
-- 布局助手(`loadlayout`):修复 `@id/xxx`、`@+id/xxx` 形式的控件引用
+  - 命中时弹 MD3 对话框说明，并按项目累计「已守护 N 次」，计数显示在设置页
+  - 仅在编辑器内运行项目时生效（需项目开启调试模式）；打包成 APK 后不含防火墙逻辑
+- 设置 → 安全防护：由原「网络请求拦截」卡片扩展而来，内含「网络请求拦截」「防火墙」两个分区标题
+- 布局助手（`loadlayout`）：修复 `@id/xxx`、`@+id/xxx` 形式的控件引用
   - 之前引用未在 `views` 表注册的 id 会直接抛 `attempt to index a nil value`
-  - 现在先剥离 `@id/` / `@+id/` 前缀再查表,仍找不到时给出可读报错(`deferred attribute references undefined id: xxx`)
+  - 现在先剥离 `@id/` / `@+id/` 前缀再查表，仍找不到时给出可读报错（`deferred attribute references undefined id: xxx`）
   - 核心库 `core/src/main/resources/lua/loadlayout.lua` 与布局助手 `app/src/main/assets/layouthelper/loadlayout2.lua` 双源同步
-- 布局助手:控件清单移除 9 个易混淆 / 已废弃控件,并加入容错合并
+- 布局助手：控件清单移除 9 个易混淆 / 已废弃控件，并加入容错合并
   - 移除 `AppCompatImageButton`、`AppCompatCheckedTextView`、`AppCompatRatingBar`、`AppCompatToggleButton`、`AbsoluteLayout`、`CheckedTextView`、`ImageButton`、`RatingBar`、`ToggleButton`
-  - 类名表与中文名表改为按表长容错合并,两表长度不一致时不再因 `nil` 拼接崩溃
-- 文件树:文件/文件夹长按菜单新增「复制相对路径」(相对项目根目录)
-- 编辑器:自动换行支持**按项目独立**(设置 → 编辑器配置可开关,默认开启)
-  - 关闭时所有项目共用同一个全局换行设置;切换项目 / 文件后立即应用,无需手动再切一次
-- 编辑器:长按顶部运行按钮可「运行当前文件」(当前标签为 `.lua` 时展开菜单)
-  - 单击运行按钮行为不变,仍运行项目入口 `main.lua`
-- 崩溃页:新增崩溃现场诊断 `[Diagnostics]`,分区展示
-  - 全线程 dump:标注非 `RUNNABLE` 线程状态,便于交叉定位卡死线程与持锁线程
-  - `LuaState Registry`:`LuaStateFactory.snapshotStates()` 列出所有注册过的 native 指针及 wrapper 是否已关闭
-    - 只读裸指针字段,不调用 `LuaState` 的同步方法,避免在「LuaState monitor 卡死」现场让采集线程自锁
-  - `Running Lua`:列出当前运行中的 Lua 页面及其 `luaDir`
-  - 完整诊断同时落盘 `filesDir/crash_report/`,文件名带毫秒时间戳,供 adb pull 挖掘
-  - 采集上限 300 KB,超限截断,避免 dump 撑爆 Binder Intent
-
-
+  - 类名表与中文名表改为按表长容错合并，两表长度不一致时不再因 `nil` 拼接崩溃
+- 文件树：文件/文件夹长按菜单新增「复制相对路径」（相对项目根目录）
+- 编辑器：自动换行支持**按项目独立**（设置 → 编辑器配置可开关，默认开启）
+  - 关闭时所有项目共用同一个全局换行设置；切换项目 / 文件后立即应用，无需手动再切一次
+- 编辑器：长按顶部运行按钮可「运行当前文件」（当前标签为 `.lua` 时展开菜单）
+  - 单击运行按钮行为不变，仍运行项目入口 `main.lua`
+- 崩溃页：新增崩溃现场诊断 `[Diagnostics]`，分区展示
+  - 全线程 dump：标注非 `RUNNABLE` 线程状态，便于交叉定位卡死线程与持锁线程
+  - `LuaState Registry`：`LuaStateFactory.snapshotStates()` 列出所有注册过的 native 指针及 wrapper 是否已关闭
+    - 只读裸指针字段，不调用 `LuaState` 的同步方法，避免在「LuaState monitor 卡死」现场让采集线程自锁
+  - `Running Lua`：列出当前运行中的 Lua 页面及其 `luaDir`
+  - 完整诊断同时落盘 `filesDir/crash_report/`，文件名带毫秒时间戳，供 adb pull 挖掘
+  - 采集上限 300 KB，超限截断，避免 dump 撑爆 Binder Intent
+  
 ## 1.6.3
 - 新增「网络请求拦截」(设置 → 网络请求拦截,默认关闭)
   - 所有网络请求在真正发出前弹出 MD3 对话框展示方法、主机、完整地址、请求头、请求体与来源,用户允许后才放行

@@ -62,6 +62,12 @@ android {
     }
 }
 
+// 只产出 release 变体:core 是打包产物(core-apk)的唯一依赖,统一按 release 构建。
+// 依赖本模块的 debug 变体需经 matchingFallbacks 回退(app/build.gradle.kts)。
+androidComponents {
+    beforeVariants(selector().withBuildType("debug")) { it.enable = false }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)

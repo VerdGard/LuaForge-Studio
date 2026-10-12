@@ -26,6 +26,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -34,7 +36,6 @@ import androidx.compose.material.icons.automirrored.filled.Comment
 import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
 import androidx.compose.material.icons.automirrored.filled.MergeType
 import androidx.compose.material.icons.automirrored.filled.TextSnippet
-import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Code
@@ -43,6 +44,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DataArray
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.ExpandLess
@@ -61,6 +63,7 @@ import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -75,7 +78,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -110,6 +112,8 @@ import com.luaforge.studio.ui.components.AppIconGrid
 import com.luaforge.studio.ui.components.ColorPickerDialog
 import com.luaforge.studio.ui.theme.ThemeType
 import com.luaforge.studio.utils.IconManager
+import com.luaforge.studio.utils.LogConfigRepository
+import com.luaforge.studio.utils.LogFileAccess
 import com.luaforge.studio.utils.NonBlockingToastState
 import kotlinx.coroutines.launch
 import java.io.File
@@ -228,8 +232,11 @@ fun SettingsScreen(
     var mcpTokenText by remember { mutableStateOf(currentSettingsState.mcpToken) }
     // 安全防护卡片(网络拦截 + 防火墙合并)展开态
     var securityExpanded by remember { mutableStateOf(false) }
-    // 打包设置卡片展开态
-    var buildAbiExpanded by remember { mutableStateOf(false) }
+    // 错误日志卡片展开态
+    var errorLogExpanded by remember { mutableStateOf(false) }
+    var logEnabled by remember { mutableStateOf(LogConfigRepository(context).isLogEnabled()) }
+    var showErrorLogDialog by remember { mutableStateOf(false) }
+    var errorLogText by remember { mutableStateOf("") }
 
     var fontMenuExpanded by remember { mutableStateOf(false) }
     var editorFontMenuExpanded by remember { mutableStateOf(false) }
@@ -1005,6 +1012,32 @@ Column(
                                     thirdPartyWidgetSupport = !currentSettingsState.thirdPartyWidgetSupport
                                 )
                             )
+                        }
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                    )
+
+                    Text(
+                        text = stringResource(R.string.settings_build_abi),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Text(
+                        text = stringResource(R.string.settings_build_abi_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    AbiTargetNavBar(
+                        selected = currentSettingsState.abiTarget,
+                        onSelect = { target ->
+                            updateSettingsWithSave(currentSettingsState.copy(abiTarget = target))
                         }
                     )
 
@@ -1887,30 +1920,150 @@ Column(
 
             item {
                 SettingsCardGroup(
-                    title = stringResource(R.string.settings_build_abi),
-                    icon = Icons.Filled.Android,
-                    initiallyExpanded = buildAbiExpanded,
-                    onExpandedChange = { buildAbiExpanded = it }
+                    title = stringResource(R.string.settings_error_log),
+                    icon = Icons.Filled.Description,
+                    initiallyExpanded = errorLogExpanded,
+                    onExpandedChange = { errorLogExpanded = it }
                 ) {
-                    Text(
-                        text = stringResource(R.string.settings_build_abi_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 4.dp)
+                    SettingsListItem(
+                        title = stringResource(R.string.settings_error_log_enabled),
+                        subtitle = stringResource(R.string.settings_error_log_enabled_desc),
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Description,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = logEnabled,
+                                onCheckedChange = { checked ->
+                                    logEnabled = checked
+                                    LogConfigRepository(context).saveLogConfig(checked)
+                                }
+                            )
+                        },
+                        onClick = {
+                            logEnabled = !logEnabled
+                            LogConfigRepository(context).saveLogConfig(logEnabled)
+                        }
                     )
 
-                    AbiTarget.entries.forEach { target ->
-                        AbiTargetOption(
-                            target = target,
-                            selected = currentSettingsState.abiTarget == target,
-                            onSelect = {
-                                updateSettingsWithSave(currentSettingsState.copy(abiTarget = target))
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                    )
+
+                    SettingsListItem(
+                        title = stringResource(R.string.settings_error_log_view),
+                        subtitle = stringResource(R.string.settings_error_log_view_desc),
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Info,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        onClick = {
+                            errorLogText = LogFileAccess.readLog(errorsOnly = true)
+                            showErrorLogDialog = true
+                        }
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                    )
+
+                    SettingsListItem(
+                        title = stringResource(R.string.settings_error_log_export),
+                        subtitle = stringResource(R.string.settings_error_log_export_desc),
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.ContentCopy,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        onClick = {
+                            val ok = exportLogFile(context)
+                            if (!ok) {
+                                toast.showToast(
+                                    context.getString(R.string.settings_error_log_export_failed)
+                                )
                             }
-                        )
-                    }
+                        }
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                    )
+
+                    SettingsListItem(
+                        title = stringResource(R.string.settings_error_log_clear),
+                        subtitle = stringResource(R.string.settings_error_log_clear_desc),
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Delete,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        onClick = {
+                            LogFileAccess.clear()
+                            toast.showToast(
+                                context.getString(R.string.settings_error_log_cleared)
+                            )
+                        }
+                    )
                 }
             }
         }
+    }
+
+    if (showErrorLogDialog) {
+        AlertDialog(
+            onDismissRequest = { showErrorLogDialog = false },
+            title = { Text(stringResource(R.string.settings_error_log_dialog_title)) },
+            text = {
+                val content = errorLogText.ifBlank {
+                    stringResource(R.string.settings_error_log_empty)
+                }
+                Box(modifier = Modifier.height(360.dp)) {
+                    Text(
+                        text = content,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = FontFamily.Monospace
+                        ),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    copyToClipboard(
+                        context,
+                        context.getString(R.string.settings_error_log_dialog_title),
+                        errorLogText
+                    )
+                    showErrorLogDialog = false
+                }) {
+                    Text(stringResource(R.string.crash_info_copy_crash_log))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showErrorLogDialog = false }) {
+                    Text(stringResource(R.string.close))
+                }
+            }
+        )
     }
 
     // 颜色选择器对话框
@@ -2262,47 +2415,78 @@ fun SettingsCardGroup(
     }
 }
 
-/** 打包目标架构单选项。 */
+/**
+ * 打包目标架构选择器:导航栏样式。
+ *
+ * 三种模式横排铺满一行,选中项高亮;必选其一,再次点击选中项不会取消。
+ */
 @Composable
-fun AbiTargetOption(
-    target: AbiTarget,
-    selected: Boolean,
-    onSelect: () -> Unit
+fun AbiTargetNavBar(
+    selected: AbiTarget,
+    onSelect: (AbiTarget) -> Unit
 ) {
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 2.dp)
-            .clickable(onClick = onSelect),
-        shape = MaterialTheme.shapes.medium,
-        color = if (selected) {
-            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
-        } else {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-        },
-        border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 10.dp),
+                .padding(2.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            RadioButton(selected = selected, onClick = onSelect)
-
-            Column(modifier = Modifier.padding(start = 2.dp)) {
-                Text(
-                    text = abiTargetLabel(target),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = abiTargetDescription(target),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            AbiTarget.entries.forEach { target ->
+                val isSelected = selected == target
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(MaterialTheme.shapes.medium)
+                        .clickable { onSelect(target) },
+                    shape = MaterialTheme.shapes.medium,
+                    color = if (isSelected) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        Color.Transparent
+                    },
+                    border = if (isSelected) {
+                        BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+                    } else {
+                        null
+                    }
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 6.dp, vertical = 10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = abiTargetLabel(target),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (isSelected) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = abiTargetDescription(target),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isSelected) {
+                                MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            },
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
             }
         }
     }
@@ -2458,6 +2642,33 @@ fun DarkModeOption(
 private const val HOST_COLLAPSE_THRESHOLD = 5
 
 /** 复制文本到系统剪贴板;系统服务不可用时静默忽略。 */
+/** 通过系统分享导出 luaforge.log;文件不存在或分享失败返回 false。 */
+private fun exportLogFile(context: Context): Boolean {
+    return try {
+        val file = File(LogFileAccess.LOG_FILE_PATH)
+        if (!file.exists() || !file.canRead()) return false
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "${'$'}{context.packageName}.fileprovider",
+            file
+        )
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(
+            android.content.Intent.createChooser(
+                intent,
+                context.getString(R.string.settings_error_log_share_title)
+            )
+        )
+        true
+    } catch (_: Throwable) {
+        false
+    }
+}
+
 private fun copyToClipboard(context: Context, label: String, text: String) {
     try {
         val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)

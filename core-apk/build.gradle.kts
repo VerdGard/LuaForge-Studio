@@ -101,6 +101,11 @@ android {
     }
 }
 
+// 只产出 release 变体:core-apk 是用户 APK 的模板,始终按 release 构建。
+androidComponents {
+    beforeVariants(selector().withBuildType("debug")) { it.enable = false }
+}
+
 dependencies {
     api(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
 

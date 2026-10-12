@@ -106,6 +106,8 @@
     <string name="dev_android_role">Platform</string>
     <string name="dev_compose_name">Jetpack Compose</string>
     <string name="dev_compose_role">UI Framework</string>
+    <string name="dev_zt_name">恣桐</string>
+    <string name="dev_zt_role">Developer</string>
 
     <!-- Copyright and version -->
     <string name="copyright">© %s LuaForge Studio</string>
@@ -462,8 +464,8 @@
     <string name="attribute_save_success">Save successful</string>
     <string name="attribute_save_failed">Save failed: %s</string>
     <string name="attribute_build_options">Build options</string>
-    <string name="attribute_encrypt_build">Encrypt project</string>
-    <string name="attribute_merge_dex">Merge dex</string>
+    <string name="attribute_encrypt_build">Lua code encryption</string>
+    <string name="attribute_merge_dex">Third-party library merge</string>
     <string name="attribute_skip_compile_title">Skip compile</string>
     <string name="attribute_skip_compile_hint">Selected files stay in plaintext and are not encrypted when building</string>
     <string name="attribute_skip_compile_add">Add file</string>
@@ -583,6 +585,21 @@
     <string name="crash_log_cleared">All crash logs cleared</string>
     <string name="crash_log_clear_failed">Clear failed</string>
 
+    <!-- Error log (settings) -->
+    <string name="settings_error_log">Error Log</string>
+    <string name="settings_error_log_enabled">Record error log</string>
+    <string name="settings_error_log_enabled_desc">Write runtime output and errors to luaforge.log for troubleshooting</string>
+    <string name="settings_error_log_view">View error log</string>
+    <string name="settings_error_log_view_desc">Show recent ERROR level entries</string>
+    <string name="settings_error_log_export">Export log file</string>
+    <string name="settings_error_log_export_desc">Share the full log file via the system share sheet</string>
+    <string name="settings_error_log_clear">Clear log</string>
+    <string name="settings_error_log_clear_desc">Delete the current log file content</string>
+    <string name="settings_error_log_cleared">Log cleared</string>
+    <string name="settings_error_log_empty">No error log entries</string>
+    <string name="settings_error_log_dialog_title">Error Log</string>
+    <string name="settings_error_log_export_failed">Export failed</string>
+    <string name="settings_error_log_share_title">Share log</string>
     <!-- CrashInfoScreen -->
     <string name="crash_info_title">App Crashed</string>
     <string name="crash_info_copy_crash_log">Copy crash info</string>
@@ -658,12 +675,10 @@
     <string name="firewall_block_msg_self">An operation on the %1$s work directory was blocked.</string>
     <string name="code_editor_build_dialog_title">Build Project</string>
     <string name="code_editor_build_type">Build type</string>
-    <string name="code_editor_build_type_unencrypted">Unencrypted</string>
-    <string name="code_editor_build_type_unencrypted_desc">Package Lua sources as plain scripts without encryption</string>
     <string name="code_editor_build_type_debug">Debug</string>
     <string name="code_editor_build_type_debug_desc">Enable debug mode</string>
     <string name="code_editor_build_type_release">Release</string>
-    <string name="settings_build_abi">Packaging</string>
+    <string name="settings_build_abi">Build Artifacts</string>
     <string name="settings_build_abi_desc">Choose the CPU architectures kept when packaging</string>
     <string name="settings_abi_universal">Universal</string>
     <string name="settings_abi_universal_desc">Include both 32-bit and 64-bit, compatible with all devices (largest size)</string>

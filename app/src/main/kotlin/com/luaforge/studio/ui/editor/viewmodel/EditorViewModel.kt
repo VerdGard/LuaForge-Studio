@@ -22,6 +22,7 @@ import com.luaforge.studio.langs.lua.completion.CompletionName
 import com.luaforge.studio.langs.lua.completion.ProjectFunctionScanner
 import com.luaforge.studio.ui.editor.EditorColorSchemeManager
 import com.luaforge.studio.ui.settings.FontManager
+import com.luaforge.studio.ui.settings.SettingsData
 import com.luaforge.studio.ui.settings.SettingsManager
 import com.androlua.LuaFunctionRegistrar
 import com.luaforge.studio.utils.LogCatcher
@@ -105,6 +106,15 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
             "selectedLine" to SettingsManager.currentSettings.selectedLineColor
         )
     )
+    /**
+     * 设置变化监听器引用。
+     *
+     * 之前 onCleared 里用 `removeListener { }` 移除 —— 传入的是新 lambda,equals 不成立,
+     * 原监听器始终留在 SettingsManager(单例)里,持续持有已销毁的 EditorViewModel,
+     * 造成每次进/出编辑器就泄漏一个 ViewModel。改为保存同一引用后按引用移除。
+     */
+    private var settingsListener: ((SettingsData) -> Unit)? = null
+
     private var currentProjectPath: String? = null
     /** 跨文件 `function` 定义 + global_utils 注册的全局函数,注入补全。 */
     private var extraCompletionFunctions: Map<String, String> = emptyMap()
@@ -264,7 +274,7 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
             CompletionDataManager.initialize(context)
         }
 
-        SettingsManager.addListener { newSettings ->
+        val listener: (SettingsData) -> Unit = { newSettings ->
             val fontChanged = newSettings.editorFontType != currentEditorFontType ||
                     newSettings.customFontPath != currentCustomFontPath
             if (fontChanged) {
@@ -295,6 +305,8 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
                 ?.setHighlightHexColorsEnabled(SettingsManager.currentSettings.hexColorHighlightEnabled)
             }
         }
+        settingsListener = listener
+        SettingsManager.addListener(listener)
 
         _isInitialized = true
         LogCatcher.i("EditorViewModel", "initialize 完成")
@@ -786,7 +798,8 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
         super.onCleared()
         LogCatcher.i("EditorViewModel", "onCleared")
         cleanupEditors()
-        SettingsManager.removeListener { }
+        settingsListener?.let { SettingsManager.removeListener(it) }
+        settingsListener = null
         CompletionDataManager.removeListener(this)
         editorInstances.values.forEach { (it.editorLanguage as? LuaLanguage)?.releaseMemory() }
         isCompletionDataLoading = false

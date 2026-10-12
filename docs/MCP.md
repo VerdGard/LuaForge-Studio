@@ -49,7 +49,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 { "headers": { "Authorization": "Bearer <你的令牌>" } }
 ```
 
-## 4. 工具清单(49 个)
+## 4. 工具清单(50 个)
 
 参数均为可选,除非标 **必填**。带 `array` 的参数可传 JSON 数组,也可传换行/逗号分隔的字符串。
 
@@ -59,9 +59,9 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 | --- | --- | --- |
 | `list_projects` | 列出所有项目(名称与路径) | — |
 | `list_files` | 列出项目或指定目录的文件树 | `path`、`recursive`(默认 true)、`maxEntries`(默认 500) |
-| `read_file` | 读取文本文件内容 | `path` **必填** |
-| `read_files` | 一次读取多个文本文件 | `paths` **必填**(数组) |
-| `write_file` | 覆盖写入文本文件(自动创建父目录),并刷新编辑器中已打开的同名标签 | `path` **必填**、`content` **必填** |
+| `read_file` | 读取文本文件内容。默认返回 JSON(含 `size`/`totalLines`/`md5`/`content`);`raw=true` 直接返回文件原文(**不转义**,换行保持原样);`startLine`/`endLine` 按行读取(1 起算、闭区间),大文件不必整读 | `path` **必填**、`startLine`、`endLine`、`raw`、`withMd5` |
+| `read_files` | 一次读取多个文本文件,支持按行读取与 MD5 | `paths` **必填**(数组)、`startLine`、`endLine`、`withMd5` |
+| `write_file` | 写入文本文件(自动创建父目录),并刷新编辑器中已打开的同名标签。`mode=overwrite`(默认)整体覆盖 / `replaceLines` 按 `startLine`/`endLine` 闭区间替换 / `append` 追加;`expectedMd5`、`expectedLines` 做写入前完整性校验,不符则拒绝写入 | `path` **必填**、`content` **必填**、`mode`、`startLine`、`endLine`、`expectedMd5`、`expectedLines` |
 | `create_file` | 新建文件,已存在时默认不覆盖 | `path` **必填**、`content`、`overwrite` |
 | `delete_file` | 删除文件或**空**目录,并关闭对应编辑器标签 | `path` **必填** |
 | `rename_file` | 重命名/移动文件或目录,并同步编辑器标签 | `from` **必填**、`to` **必填**、`overwrite` |
@@ -105,14 +105,15 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 | `compile_file` | 编译单个 `.lua`/`.aly`;默认在验证成功后**删除** `.luac`/`.alyc` 产物 | `path`(缺省用活动文件)、`keepOutput`(true 时保留产物) |
 | `clean_compiled` | 清理项目内的编译产物(历史残留) | `path`、`dryRun` |
 | `build_apk` | 构建并签名 APK,返回输出路径(等价于编辑器「构建项目」的**默认构建类型**:加密打包) | `path` |
-| `run_project` | 调试运行项目(启动 `LuaActivity` 加载 `main.lua`) | `path` |
+| `run_project` | 调试运行项目(启动 `LuaActivity` 加载 `main.lua`)。默认只启动;传 `stop=true` 则在 `waitMs` 后抓取 `capture` 指定内容、结束运行并退回编辑界面,一次性拿到本次运行信息 | `path`、`waitMs`、`capture`(`debugger`/`errors`/`log`)、`clearLogs`、`captureLines`、`stop`、`returnToEditor` |
+| `stop_project` | 结束运行中的项目并回到编辑界面(可 `page`/`path` 指定实例) | `page`、`path`、`returnToEditor`、`timeoutMs` |
 | `install_apk` | 唤起系统安装器安装 APK | `path` **必填** |
 
 > `compile_file` 的产物命名规则:`main.lua` → `main.luac`,`main.aly` → `main.alyc`。
 > 需求是“只验证能否编译”时保持默认即可;需要产物时显式传 `keepOutput=true`。
 
-编辑器里「构建项目」会先弹出构建类型选择对话框(未加密版 / Debug 版 / Release 版,详见 [README](../README.md) 的 1.6.4 条目)。
-`build_apk` 走的是 `BuildType.PROJECT_DEFAULT`,即加密打包且调试模式沿用项目设置,与对话框中三个选项均不相同;
+编辑器里「构建项目」会先弹出构建类型选择对话框(跟随项目设置 / Debug 版 / Release 版,详见 [README](../README.md) 的 1.6.4 条目)。
+`build_apk` 走的是 `BuildType.PROJECT_DEFAULT`,即加密打包且调试模式沿用项目设置;
 需要指定构建类型时请在编辑器界面构建。
 
 ### 运行时界面检查

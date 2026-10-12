@@ -32,6 +32,9 @@ class LogConfigRepository(private val context: Context) {
         )
     }
 
+    /** 读取当前开关状态(供设置页 Switch 使用)。 */
+    fun isLogEnabled(): Boolean = sharedPreferences.getBoolean(LOG_ENABLED_KEY, true)
+
     fun saveLogConfig(isEnabled: Boolean) {
         sharedPreferences.edit()
             .putBoolean(LOG_ENABLED_KEY, isEnabled)
@@ -205,6 +208,53 @@ object LogCatcher {
             } catch (e: Exception) {
                 android.util.Log.e("LogCatcher", "写入日志文件失败: ${e.message}")
             }
+        }
+    }
+}
+
+/**
+ * 日志文件的读取/清空/导出辅助(与 [LogCatcher]、core 的 RuntimeLog 共用同一文件)。
+ *
+ * 只读取不写入;所有异常都吞掉并返回可判定的结果,避免设置页因日志问题崩溃。
+ */
+object LogFileAccess {
+
+    /** 与 LogCatcher / RuntimeLog 保持一致的日志路径。 */
+    const val LOG_FILE_PATH = "/storage/emulated/0/LuaForge-Studio/luaforge.log"
+
+    /**
+     * 读取日志文本。
+     *
+     * @param errorsOnly 为 true 时只返回含 [ERROR] 级别的行(用于「查看错误日志」)。
+     * @param maxChars   截取的最大字符数(从尾部保留最新内容)。
+     */
+    fun readLog(errorsOnly: Boolean = false, maxChars: Int = 200_000): String {
+        return try {
+            val file = File(LOG_FILE_PATH)
+            if (!file.exists()) return ""
+            var text = file.readText(Charsets.UTF_8)
+            if (errorsOnly) {
+                text = text.lineSequence()
+                    .filter { it.contains("[ERROR]") }
+                    .joinToString("\n")
+            }
+            if (text.length > maxChars) {
+                text = "...(较早内容已省略)\n" + text.takeLast(maxChars)
+            }
+            text
+        } catch (_: Throwable) {
+            ""
+        }
+    }
+
+    /** 清空日志文件内容(保留文件本身)。 */
+    fun clear(): Boolean {
+        return try {
+            val file = File(LOG_FILE_PATH)
+            if (file.exists()) file.writeText("", Charsets.UTF_8) else file.createNewFile()
+            true
+        } catch (_: Throwable) {
+            false
         }
     }
 }

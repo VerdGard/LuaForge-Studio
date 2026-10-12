@@ -135,6 +135,11 @@ public class LuaActivity extends AppCompatActivity
    * 为 true 时 print 输出只进浮窗,不再在屏幕回显 Toast(避免同一份信息重复展示)。
    */
   private boolean debuggerActive = false;
+  /**
+   * 错误下发重入守卫:onError 回调自身再次报错时,runFunc 会再次调用 sendError,
+   * 若不加锁会无限递归直至 StackOverflowError,把整个进程(含编辑器)带崩。
+   */
+  private boolean inSendError = false;
   private LuaResources mResources;
   private final ArrayList<LuaGcable> gclist = new ArrayList<LuaGcable>();
   private String pageName = "main";
@@ -1497,6 +1502,9 @@ public class LuaActivity extends AppCompatActivity
           }
         } catch (LuaException e) {
           sendError(funcName, e);
+        } catch (Throwable t) {
+          // Java 侧桥接异常(如 LuaJava 反射失败)同样不能逃逸
+          sendError(funcName, t);
         }
       }
     }
@@ -1527,6 +1535,8 @@ public class LuaActivity extends AppCompatActivity
       throw new LuaException(errorReason(ok) + ": " + L.toString(-1));
     } catch (LuaException e) {
       sendMsg(e.getMessage());
+    } catch (Throwable t) {
+      sendError("doString", t);
     }
     return null;
   }
@@ -1580,12 +1590,43 @@ public class LuaActivity extends AppCompatActivity
 
   @Override
   public void sendError(String title, Exception msg) {
-    RuntimeLog.error(pageName + "." + title, title + ": " + msg.getMessage(), msg);
-    Object ret = runFunc("onError", title, msg);
-    if (ret != null && ret.getClass() == Boolean.class && (Boolean) ret) {
-    } else {
-      sendMsg(title + ": " + msg.getMessage());
+    sendError(title, (Throwable) msg);
+  }
+
+  /**
+   * 统一错误出口(接收 Throwable)。
+   *
+   * 相比只接收 Exception,这里还能拦下 Error(如 StackOverflowError / OutOfMemoryError
+   * 在 Lua 回调里抛出),避免其逃逸成未捕获异常触发全局 CrashManager 结束进程,
+   * 从而连带正在编辑的项目一起被关掉。
+   *
+   * 带重入守卫:onError 回调又报错时会再次进入本方法,此时只落盘、不再回调,防止递归。
+   */
+  public void sendError(String title, Throwable msg) {
+    String detail = errorDetail(msg);
+    RuntimeLog.error(pageName + "." + title, title + ": " + detail, msg);
+    if (inSendError) {
+      return;
     }
+    inSendError = true;
+    try {
+      Object ret = runFunc("onError", title, msg);
+      if (ret != null && ret.getClass() == Boolean.class && (Boolean) ret) {
+      } else {
+        sendMsg(title + ": " + detail);
+      }
+    } catch (Throwable t) {
+      // 回退路径本身出错也不能再抛,否则等于没兜住
+      RuntimeLog.error(pageName + ".sendError", "下发错误失败: " + errorDetail(t), t);
+    } finally {
+      inSendError = false;
+    }
+  }
+
+  private static String errorDetail(Throwable t) {
+    if (t == null) return "unknown error";
+    String m = t.getMessage();
+    return m != null ? m : t.getClass().getSimpleName();
   }
 
   /*
@@ -1763,21 +1804,34 @@ public class LuaActivity extends AppCompatActivity
           break;
         case 1:
           {
-            Bundle data = msg.getData();
-            setField(data.getString(DATA), ((Object[]) data.getSerializable("args"))[0]);
+            try {
+              Bundle data = msg.getData();
+              setField(data.getString(DATA), ((Object[]) data.getSerializable("args"))[0]);
+            } catch (Throwable t) {
+              // 主线程 Handler 里抛出的异常会直接终止进程,这里必须兜住
+              sendError("setField", t);
+            }
           }
           break;
         case 2:
           {
-            String src = msg.getData().getString(DATA);
-            runFunc(src);
+            try {
+              String src = msg.getData().getString(DATA);
+              runFunc(src);
+            } catch (Throwable t) {
+              sendError("MainHandler", t);
+            }
           }
           break;
         case 3:
           {
-            String src = msg.getData().getString(DATA);
-            Serializable args = msg.getData().getSerializable("args");
-            runFunc(src, (Object[]) args);
+            try {
+              String src = msg.getData().getString(DATA);
+              Serializable args = msg.getData().getSerializable("args");
+              runFunc(src, (Object[]) args);
+            } catch (Throwable t) {
+              sendError("MainHandler", t);
+            }
           }
       }
     }

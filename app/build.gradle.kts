@@ -100,6 +100,8 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             isDebuggable = true
             isJniDebuggable = true
+            // core / core-apk 只产出 release 变体,debug 变体回退匹配 release
+            matchingFallbacks += listOf("release")
 
             externalNativeBuild {
                 cmake {

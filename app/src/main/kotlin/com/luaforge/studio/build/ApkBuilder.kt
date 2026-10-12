@@ -39,9 +39,6 @@ enum class BuildType(
      */
     PROJECT_DEFAULT(true, null),
 
-    /** 未加密版:Lua 源码不做加密处理。 */
-    UNENCRYPTED(false, null),
-
     /** Debug 版:调试模式开启。 */
     DEBUG(true, true),
 
@@ -50,7 +47,7 @@ enum class BuildType(
 
     companion object {
         /** 供构建对话框展示的可选类型。 */
-        val selectable: List<BuildType> = listOf(PROJECT_DEFAULT, UNENCRYPTED, DEBUG, RELEASE)
+        val selectable: List<BuildType> = listOf(PROJECT_DEFAULT, DEBUG, RELEASE)
     }
 }
 

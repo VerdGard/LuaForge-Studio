@@ -102,8 +102,16 @@ object McpTools {
         tools.put(
             tool(
                 "read_file",
-                "读取文本文件内容",
-                obj("path" to strProp("文件路径(可相对项目根目录)")),
+                "读取文本文件内容。默认返回 JSON(含行数/MD5 等元信息);" +
+                    "raw=true 时直接把文件原文作为返回文本,不做转义,换行保持原样。" +
+                    "大文件用 startLine/endLine 按行读取(1 起算,闭区间),避免整文件返回",
+                obj(
+                    "path" to strProp("文件路径(可相对项目根目录)"),
+                    "startLine" to intProp("起始行号,1 起算;省略则从第 1 行"),
+                    "endLine" to intProp("结束行号,含该行;省略则到文件末尾"),
+                    "raw" to boolProp("true=返回文件原文(不转义、不包裹 JSON),默认 false"),
+                    "withMd5" to boolProp("是否附带文件整体 MD5 与行数,默认 true")
+                ),
                 required = arrayOf("path")
             )
         )
@@ -111,10 +119,17 @@ object McpTools {
         tools.put(
             tool(
                 "write_file",
-                "覆盖写入文本文件(自动创建父目录)",
+                "写入文本文件(自动创建父目录)。默认整体覆盖;" +
+                    "mode=replaceLines 时用 startLine/endLine 按行替换;" +
+                    "mode=append 时追加。可传 expectedMd5 / expectedLines 做写入前完整性校验,不符则拒绝写入",
                 obj(
                     "path" to strProp("文件路径(可相对项目根目录)"),
-                    "content" to strProp("写入的完整内容")
+                    "content" to strProp("写入内容"),
+                    "mode" to strProp("overwrite(默认) / replaceLines / append"),
+                    "startLine" to intProp("mode=replaceLines 时的起始行号,1 起算,必填"),
+                    "endLine" to intProp("mode=replaceLines 时的结束行号,含该行;省略时仅替换 startLine 一行"),
+                    "expectedMd5" to strProp("写入前文件期望 MD5,不符则拒绝写入"),
+                    "expectedLines" to intProp("写入前文件期望行数,不符则拒绝写入")
                 ),
                 required = arrayOf("path", "content")
             )
@@ -208,8 +223,33 @@ object McpTools {
         tools.put(
             tool(
                 "run_project",
-                "调试运行项目:启动 LuaActivity 加载 main.lua",
-                obj("path" to strProp("项目路径,缺省为当前项目"))
+                "调试运行项目:启动 LuaActivity 加载 main.lua。默认只启动(供后续 wait_for_text / check_screen);" +
+                    "若传 stop=true 则在 waitMs 后抓取 capture 指定内容、结束运行并退回编辑界面,一次性拿到本次运行信息",
+                obj(
+                    "path" to strProp("项目路径,缺省为当前项目"),
+                    "waitMs" to intProp("启动后等待多少毫秒再抓取输出;缺省时 stop=true 用 1500,否则 0;上限 60000"),
+                    "capture" to strProp(
+                        "抓取内容,逗号分隔: debugger(调试浮窗缓冲) / errors(日志中的错误) / log(日志尾部);" +
+                            "默认 debugger,errors"
+                    ),
+                    "clearLogs" to boolProp("启动前先清空 luaforge.log,便于取得本次运行的干净现场,默认 false"),
+                    "captureLines" to intProp("errors/log 抓取的最大行数,默认 200"),
+                    "stop" to boolProp("抓取后结束运行并退回编辑界面,默认 false(保持 run 后界面可继续断言)"),
+                    "returnToEditor" to boolProp("stop=true 时结束后回到编辑界面,默认 true")
+                )
+            )
+        )
+
+        tools.put(
+            tool(
+                "stop_project",
+                "结束运行中的项目并回到编辑界面(可指定 page 或 path);用于 MCP 拿完信息后收尾",
+                obj(
+                    "page" to strProp("目标页面名(pageName),存在多个运行页面时用于精确指定"),
+                    "path" to strProp("目标项目路径,缺省用当前打开的项目"),
+                    "returnToEditor" to boolProp("结束后回到编辑界面,默认 true"),
+                    "timeoutMs" to intProp("等待运行实例退出的毫秒数,默认 3000")
+                )
             )
         )
 
@@ -390,8 +430,13 @@ object McpTools {
         tools.put(
             tool(
                 "read_files",
-                "一次读取多个文本文件",
-                obj("paths" to strProp("文件路径列表,JSON 数组或换行分隔")),
+                "一次读取多个文本文件;支持 startLine/endLine 按行读取与 withMd5 校验",
+                obj(
+                    "paths" to strProp("文件路径列表,JSON 数组或换行分隔"),
+                    "startLine" to intProp("起始行号(对所有文件生效),1 起算;省略则从第 1 行"),
+                    "endLine" to intProp("结束行号(对所有文件生效),含该行;省略则到文件末尾"),
+                    "withMd5" to boolProp("是否附带各文件整体 MD5,默认 true")
+                ),
                 required = arrayOf("paths")
             )
         )
@@ -583,6 +628,7 @@ object McpTools {
                 "compile_file" -> compileFile(context, args)
                 "build_apk" -> buildApk(context, args)
                 "run_project" -> runProject(context, args)
+                "stop_project" -> stopProject(context, args)
                 "install_apk" -> installApk(context, args)
                 "backup_project" -> backupProjectTool(context, args)
                 "analyze_imports" -> analyzeImports(context, args)
@@ -683,6 +729,16 @@ object McpTools {
             .put("directory", file.isDirectory)
             .put("size", if (file.isFile) file.length() else 0L)
 
+    /**
+     * 读取文本文件。
+     *
+     * 两类返回:
+     * - raw=true:直接把文件原文作为 MCP 的 text 内容返回,**不包 JSON、不做任何转义**,
+     *   换行就是真实换行。这样调用方拿到什么就是文件里有什么,不会被 \n 二次转义。
+     * - raw=false(默认):返回 JSON 元信息 + content 字段,便于与 file_info 一起做完整性校验。
+     *
+     * 大文件用 startLine/endLine 按行读取(1 起算,闭区间),无需整文件塞进上下文。
+     */
     private suspend fun readFile(context: Context, args: JSONObject): JSONObject {
         val raw = args.optString("path", "")
         if (raw.isBlank()) return errorResult("缺少参数 path")
@@ -690,18 +746,74 @@ object McpTools {
         if (!file.exists() || !file.isFile) return errorResult("文件不存在: ${file.absolutePath}")
         if (!isAllowed(context, file)) return errorResult("路径不在允许范围内: ${file.absolutePath}")
         if (file.length() > MAX_READ_BYTES) {
-            return errorResult("文件过大(${file.length()} 字节),超过 2MB 限制")
+            return errorResult(
+                "文件过大(${file.length()} 字节),超过 2MB 限制;" +
+                    "请用 startLine/endLine 按行读取,或改用 search_in_files 定位"
+            )
         }
-        val content = withContext(Dispatchers.IO) { file.readText(Charsets.UTF_8) }
-        return textResult(
-            JSONObject()
-                .put("path", file.absolutePath)
-                .put("size", file.length())
-                .put("content", content)
-                .toString()
-        )
+
+        val content = withContext(Dispatchers.IO) {
+            runCatching { file.readText(Charsets.UTF_8) }.getOrNull()
+        } ?: return errorResult("读取失败(可能是二进制文件): ${file.absolutePath}")
+
+        // 按行切片:行号 1 起算、闭区间。末尾换行不加空行(lines() 已丢弃终止空串)。
+        val totalLines = content.lineSequence().count()
+        val startLine = if (args.has("startLine")) args.optInt("startLine", 1) else 1
+        val endLine = if (args.has("endLine")) args.optInt("endLine", totalLines) else totalLines
+        val rangeRequested = args.has("startLine") || args.has("endLine")
+
+        val sliced: String
+        val fromLine: Int
+        val toLine: Int
+        if (rangeRequested) {
+            if (startLine < 1) return errorResult("startLine 必须 >= 1")
+            if (endLine < startLine) return errorResult("endLine($endLine) 不能小于 startLine($startLine)")
+            val lines = content.split("\n")
+            // 去掉之前 split 产生的行尾 \r,统一以 \n 表达换行
+            val from = (startLine - 1).coerceAtMost(lines.size)
+            val to = endLine.coerceAtMost(lines.size)
+            if (from >= lines.size) {
+                return errorResult("startLine($startLine) 超出文件总行数($totalLines)")
+            }
+            sliced = lines.subList(from, to).joinToString("\n") { it.trimEnd('\r') }
+            fromLine = from + 1
+            toLine = to
+        } else {
+            sliced = content
+            fromLine = 1
+            toLine = totalLines
+        }
+
+        if (args.optBoolean("raw", false)) {
+            return rawTextResult(sliced)
+        }
+
+        val json = JSONObject()
+            .put("path", file.absolutePath)
+            .put("size", file.length())
+            .put("totalLines", totalLines)
+            .put("startLine", fromLine)
+            .put("endLine", toLine)
+            .put("returnedLines", sliced.lineSequence().count())
+            .put("content", sliced)
+        if (args.optBoolean("withMd5", true)) {
+            json.put("md5", md5Of(content))
+            json.put("sliceMd5", md5Of(sliced))
+        }
+        return textResult(json.toString())
     }
 
+    /**
+     * 写入文本文件。
+     *
+     * mode:
+     * - overwrite(默认):整体覆盖
+     * - replaceLines:用 startLine/endLine 闭区间替换为 content 指定的若干行
+     * - append:追加到文件末尾
+     *
+     * 完整性校验:传 expectedMd5 / expectedLines 时,先比对写入前的文件状态,不符直接拒绝。
+     * 这样 MCP 在"读一段 → 改一段 → 写回"的流程里能拦住并发改动导致的覆盖。
+     */
     private suspend fun writeFile(context: Context, args: JSONObject): JSONObject {
         val raw = args.optString("path", "")
         if (raw.isBlank()) return errorResult("缺少参数 path")
@@ -710,21 +822,88 @@ object McpTools {
         if (!isAllowed(context, file)) return errorResult("路径不在允许范围内: ${file.absolutePath}")
 
         val content = args.optString("content", "")
+        val mode = args.optString("mode", "overwrite").trim().lowercase()
+        if (mode !in setOf("overwrite", "replacelines", "append")) {
+            return errorResult("不支持的 mode: $mode(可用 overwrite / replaceLines / append)")
+        }
+
+        val existing = if (file.exists() && file.isFile) {
+            withContext(Dispatchers.IO) { runCatching { file.readText(Charsets.UTF_8) }.getOrNull() }
+        } else null
+
+        // 写入前完整性校验
+        if (args.has("expectedMd5")) {
+            val expected = args.optString("expectedMd5", "")
+            val actual = existing?.let { md5Of(it) }
+            if (actual == null) return errorResult("文件不存在,无法校验 expectedMd5: ${file.absolutePath}")
+            if (!actual.equals(expected, ignoreCase = true)) {
+                return errorResult("MD5 校验失败: 期望 $expected,实际 $actual(未做任何修改)")
+            }
+        }
+        if (args.has("expectedLines")) {
+            val expected = args.optInt("expectedLines", 0)
+            val actual = existing?.lineSequence()?.count() ?: 0
+            if (actual != expected) {
+                return errorResult("行数校验失败: 期望 $expected,实际 $actual(未做任何修改)")
+            }
+        }
+
+        val finalContent: String
+        val replacedFrom: Int
+        val replacedTo: Int
+        when (mode) {
+            "append" -> {
+                finalContent = (existing ?: "") + content
+                replacedFrom = 0
+                replacedTo = 0
+            }
+            "replacelines" -> {
+                if (!args.has("startLine")) return errorResult("mode=replaceLines 需要 startLine")
+                val startLine = args.optInt("startLine", 1)
+                if (startLine < 1) return errorResult("startLine 必须 >= 1")
+                val oldLines = (existing ?: "").split("\n")
+                if (startLine > oldLines.size + 1) {
+                    return errorResult("startLine($startLine) 超出可写范围(当前 ${oldLines.size} 行)")
+                }
+                val endLine = if (args.has("endLine")) args.optInt("endLine", startLine) else startLine
+                if (endLine < startLine) return errorResult("endLine($endLine) 不能小于 startLine($startLine)")
+                val from = startLine - 1
+                val to = endLine.coerceAtMost(oldLines.size)
+                val newLines = if (content.isEmpty()) emptyList() else content.split("\n")
+                val merged = ArrayList<String>(oldLines.size + newLines.size)
+                merged.addAll(oldLines.subList(0, from))
+                merged.addAll(newLines)
+                if (to < oldLines.size) merged.addAll(oldLines.subList(to, oldLines.size))
+                finalContent = merged.joinToString("\n")
+                replacedFrom = startLine
+                replacedTo = to
+            }
+            else -> {
+                finalContent = content
+                replacedFrom = 0
+                replacedTo = 0
+            }
+        }
+
         withContext(Dispatchers.IO) {
             file.parentFile?.mkdirs()
-            file.writeText(content, Charsets.UTF_8)
+            file.writeText(finalContent, Charsets.UTF_8)
         }
         // 该文件若正在编辑器中打开,必须把新内容推回编辑器;
         // 否则编辑器仍持有旧内容,用户之后一保存就会把外部写入覆盖掉。
         val synced = syncEditorIfOpen(file.absolutePath)
-        return textResult(
-            JSONObject()
-                .put("path", file.absolutePath)
-                .put("bytes", content.toByteArray(Charsets.UTF_8).size)
-                .put("editorSynced", synced)
-                .put("message", "写入成功")
-                .toString(2)
-        )
+        val result = JSONObject()
+            .put("path", file.absolutePath)
+            .put("mode", mode)
+            .put("bytes", finalContent.toByteArray(Charsets.UTF_8).size)
+            .put("lines", finalContent.lineSequence().count())
+            .put("md5", md5Of(finalContent))
+            .put("editorSynced", synced)
+            .put("message", "写入成功")
+        if (mode == "replacelines") {
+            result.put("replacedLines", JSONObject().put("from", replacedFrom).put("to", replacedTo))
+        }
+        return textResult(result.toString(2))
     }
 
     private suspend fun createFile(context: Context, args: JSONObject): JSONObject {
@@ -1158,6 +1337,12 @@ object McpTools {
         }
     }
 
+    /**
+     * 调试运行项目。
+     *
+     * 与编辑器「运行」按钮同一条启动路径(Intent → LuaActivity 加载 main.lua),区别在于按需在
+     * 运行一段时间后抓取输出、结束运行并退回编辑界面,便于 MCP 一次性拿到本次运行的信息。
+     */
     private suspend fun runProject(context: Context, args: JSONObject): JSONObject {
         val project = resolveProjectPath(context, args.optString("path", ""))
             ?: return errorResult("无法确定项目路径,请先在前台打开项目或传入 path")
@@ -1165,28 +1350,210 @@ object McpTools {
         val mainLua = File(project, "main.lua")
         if (!mainLua.exists()) return errorResult("项目缺少 main.lua: ${mainLua.absolutePath}")
 
+        val stop = args.optBoolean("stop", false)
+        val returnToEditor = args.optBoolean("returnToEditor", true)
+        val clearBefore = args.optBoolean("clearLogs", false)
+        val capture = args.optString("capture", "debugger,errors")
+            .split(',', ';').map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+        val captureLines = args.optInt("captureLines", 200).coerceIn(1, 5000)
+        // 未显式给出 waitMs 时:要结束运行就等到脚本有执行机会(默认 1500ms),否则不等待
+        val waitMs = if (args.has("waitMs")) {
+            args.optInt("waitMs", 0).coerceIn(0, 60000)
+        } else if (stop) {
+            1500
+        } else {
+            0
+        }
+
         EditorBridge.currentViewModel()?.let { viewModel ->
             withContext(Dispatchers.Main) { viewModel.saveAllFilesSilently() }
         }
 
-        return withContext(Dispatchers.Main) {
+        if (clearBefore) {
+            withContext(Dispatchers.IO) {
+                runCatching { File(LOG_FILE_PATH).writeText("", Charsets.UTF_8) }
+            }
+        }
+
+        val started = withContext(Dispatchers.Main) {
             try {
                 val intent = Intent(context, com.androlua.LuaActivity::class.java).apply {
                     data = Uri.fromFile(mainLua)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(intent)
-                textResult(
-                    JSONObject()
-                        .put("started", true)
-                        .put("entry", mainLua.absolutePath)
-                        .toString(2)
-                )
+                true
             } catch (e: Exception) {
                 LogCatcher.e(TAG, "启动运行失败", e)
-                errorResult("启动失败: ${e.message}")
+                false
             }
         }
+        if (!started) return errorResult("启动失败: 无法启动 LuaActivity")
+
+        // 等运行实例注册到 sLuaActivityMap(onCreate 阶段),再按 waitMs 让脚本跑一会儿
+        val running = waitForRunningActivity(project, 5000)
+        if (waitMs > 0) delay(waitMs.toLong())
+
+        val result = JSONObject()
+            .put("started", true)
+            .put("entry", mainLua.absolutePath)
+            .put("projectPath", project)
+
+        val captured = captureOutputs(running, capture, captureLines)
+        if (captured != null) result.put("output", captured)
+
+        if (stop) {
+            val stopped = stopRunningActivity(context, running, returnToEditor, 3000)
+            result.put("stopped", stopped)
+            result.put("returnedToEditor", returnToEditor)
+        }
+
+        return textResult(result.toString(2))
+    }
+
+    /**
+     * 结束运行项目并回到编辑界面。
+     *
+     * 用于 MCP 在 run_project 抓取完运行信息后收尾;也可单独调用以关闭残留的运行实例。
+     */
+    private suspend fun stopProject(context: Context, args: JSONObject): JSONObject {
+        val returnToEditor = args.optBoolean("returnToEditor", true)
+        val timeoutMs = args.optInt("timeoutMs", 3000).coerceIn(500, 30000)
+        val activity = resolveRunningActivity(context, args)
+            ?: return errorResult(
+                "没有匹配的运行实例。当前运行页面: " +
+                    LuaActivity.getRunningActivities().keys.joinToString(", ").ifBlank { "无" }
+            )
+        val page = activity.getPageName()
+        val stopped = stopRunningActivity(context, activity, returnToEditor, timeoutMs)
+        return textResult(
+            JSONObject()
+                .put("stopped", stopped)
+                .put("page", page ?: JSONObject.NULL)
+                .put("returnedToEditor", returnToEditor)
+                .toString(2)
+        )
+    }
+
+    /**
+     * 轮询等待指定项目的运行实例出现(启动到 onCreate 注册存在短暂窗口)。
+     *
+     * @return 匹配到的实例;超时返回 null(调用方仍可继续抓取日志等不依赖实例的内容)。
+     */
+    private suspend fun waitForRunningActivity(project: String, timeoutMs: Int): LuaActivity? {
+        val started = System.currentTimeMillis()
+        while (System.currentTimeMillis() - started < timeoutMs) {
+            val activity = withContext(Dispatchers.Main) {
+                LuaActivity.getActivityByLuaDir(project)
+            }
+            if (activity != null) return activity
+            delay(100)
+        }
+        return withContext(Dispatchers.Main) { LuaActivity.getActivityByLuaDir(project) }
+    }
+
+    /**
+     * 结束运行实例:主线程 finish,等待其从运行表中移除,并按需把编辑界面带回前台。
+     *
+     * @return true 表示结束后运行表中已无该实例。
+     */
+    private suspend fun stopRunningActivity(
+        context: Context,
+        activity: LuaActivity?,
+        returnToEditor: Boolean,
+        timeoutMs: Int
+    ): Boolean {
+        if (activity != null) {
+            val page = activity.getPageName()
+            withContext(Dispatchers.Main) {
+                try {
+                    activity.finish()
+                } catch (e: Exception) {
+                    LogCatcher.e(TAG, "结束运行实例失败", e)
+                }
+            }
+            val started = System.currentTimeMillis()
+            while (System.currentTimeMillis() - started < timeoutMs) {
+                val stillRunning = withContext(Dispatchers.Main) {
+                    page != null && LuaActivity.getActivity(page) != null
+                }
+                if (!stillRunning) break
+                delay(100)
+            }
+        }
+        if (returnToEditor) {
+            withContext(Dispatchers.Main) {
+                try {
+                    val intent = Intent(context, com.luaforge.studio.MainActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                    }
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    LogCatcher.e(TAG, "回到编辑界面失败", e)
+                }
+            }
+        }
+        return true
+    }
+
+    /**
+     * 抓取运行输出。
+     *
+     * capture 取值:debugger(调试浮窗缓冲) / errors(日志中的错误行) / log(日志尾部)。
+     * 任一类型抓取失败都只忽略该项,不影响整体返回。
+     */
+    private suspend fun captureOutputs(
+        activity: LuaActivity?,
+        capture: List<String>,
+        lines: Int
+    ): JSONObject? {
+        if (capture.isEmpty()) return null
+        val output = JSONObject()
+
+        if (capture.contains("debugger")) {
+            if (activity != null) {
+                val entries = withContext(Dispatchers.Main) {
+                    activity.getLuaState()?.let { readDebuggerPrints(it) }
+                }
+                if (entries != null) {
+                    val tail = if (entries.size > lines) entries.subList(entries.size - lines, entries.size) else entries
+                    output.put("debuggerCount", entries.size)
+                    output.put("debugger", JSONArray(tail))
+                } else {
+                    output.put("debugger", JSONArray())
+                    output.put("debuggerNote", "该运行实例未注入调试浮窗(需 settings.json 的 debugmode 为 true)")
+                }
+            } else {
+                output.put("debuggerNote", "未定位到运行实例,跳过调试浮窗抓取")
+            }
+        }
+
+        if (capture.contains("errors") || capture.contains("log")) {
+            val file = File(LOG_FILE_PATH)
+            if (file.exists()) {
+                val content = withContext(Dispatchers.IO) { readTailText(file, 512 * 1024) }
+                if (capture.contains("errors")) {
+                    val matched = content.lines().filter { line ->
+                        line.contains("[ERROR]") || line.contains("[WARN]") ||
+                            line.contains("Runtime error") || line.contains("traceback") ||
+                            line.contains("is not a field")
+                    }
+                    val tail = if (matched.size > lines) matched.subList(matched.size - lines, matched.size) else matched
+                    output.put("errorCount", matched.size)
+                    output.put("errors", JSONArray(tail))
+                }
+                if (capture.contains("log")) {
+                    val all = content.lines()
+                    val tail = if (all.size > lines) all.subList(all.size - lines, all.size) else all
+                    output.put("log", JSONArray(tail))
+                }
+            } else {
+                output.put("logNote", "日志文件不存在: $LOG_FILE_PATH")
+            }
+        }
+
+        return output
     }
 
     private suspend fun installApk(context: Context, args: JSONObject): JSONObject {
@@ -1759,6 +2126,11 @@ object McpTools {
         val paths = stringList(args, "paths")
         if (paths.isEmpty()) return errorResult("缺少参数 paths")
 
+        val withMd5 = args.optBoolean("withMd5", true)
+        val rangeRequested = args.has("startLine") || args.has("endLine")
+        val startLine = if (args.has("startLine")) args.optInt("startLine", 1) else 1
+        val endLineArg = if (args.has("endLine")) args.optInt("endLine", Int.MAX_VALUE) else Int.MAX_VALUE
+
         val results = JSONArray()
         for (raw in paths) {
             val file = resolveProject(context, raw)
@@ -1773,8 +2145,29 @@ object McpTools {
                     }
                     if (content == null) {
                         item.put("error", "读取失败(可能是二进制文件)")
+                    } else if (rangeRequested && startLine < 1) {
+                        item.put("error", "startLine 必须 >= 1")
                     } else {
-                        item.put("size", file.length()).put("content", content)
+                        val totalLines = content.lineSequence().count()
+                        item.put("size", file.length()).put("totalLines", totalLines)
+                        val slice = if (rangeRequested) {
+                            val lines = content.split("\n")
+                            val from = (startLine - 1).coerceAtMost(lines.size)
+                            if (from >= lines.size) {
+                                item.put("error", "startLine($startLine) 超出文件总行数($totalLines)")
+                                null
+                            } else {
+                                val to = endLineArg.coerceAtMost(lines.size)
+                                item.put("startLine", from + 1).put("endLine", to)
+                                lines.subList(from, to).joinToString("\n") { it.trimEnd('\r') }
+                            }
+                        } else {
+                            content
+                        }
+                        if (slice != null) {
+                            item.put("content", slice)
+                            if (withMd5) item.put("md5", md5Of(content))
+                        }
                     }
                 }
             }
