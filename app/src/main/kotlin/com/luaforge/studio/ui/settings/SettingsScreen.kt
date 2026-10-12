@@ -2641,7 +2641,6 @@ fun DarkModeOption(
 /** 记录条数超过该值时默认折叠,避免列表过长。 */
 private const val HOST_COLLAPSE_THRESHOLD = 5
 
-/** 复制文本到系统剪贴板;系统服务不可用时静默忽略。 */
 /** 通过系统分享导出 luaforge.log;文件不存在或分享失败返回 false。 */
 private fun exportLogFile(context: Context): Boolean {
     return try {
@@ -2649,7 +2648,7 @@ private fun exportLogFile(context: Context): Boolean {
         if (!file.exists() || !file.canRead()) return false
         val uri = androidx.core.content.FileProvider.getUriForFile(
             context,
-            "${'$'}{context.packageName}.fileprovider",
+            "${context.packageName}.fileprovider",
             file
         )
         val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
@@ -2669,6 +2668,7 @@ private fun exportLogFile(context: Context): Boolean {
     }
 }
 
+/** 复制文本到系统剪贴板;系统服务不可用时静默忽略。 */
 private fun copyToClipboard(context: Context, label: String, text: String) {
     try {
         val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)

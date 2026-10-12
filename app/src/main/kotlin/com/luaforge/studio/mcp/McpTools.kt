@@ -785,7 +785,7 @@ object McpTools {
         }
 
         if (args.optBoolean("raw", false)) {
-            return rawTextResult(sliced)
+            return textResult(sliced)
         }
 
         val json = JSONObject()
