@@ -2,6 +2,9 @@
 
 ## 1.6.7
 
+- **修复日志 "失败 0" 被误记为 ERROR**:`RuntimeLog.logLua` 原按关键词(失败/错误/error...)判级别,把 `[svg] 校验失败 0`、`校验失败总数 = 0`、`23 items, 0 errors` 这类"零失败"的成功播报也记成 `[ERROR]`
+  - 现改为:先查强错误信号(`traceback`/`attempt to`/`nil value`/`layout loading error`...),再对**以「关键词...0」或「0...关键词」收尾**的消息抑制为 INFO;关键词与 0 之间只允许分隔符与有限计数标签,`错误: 除数为 0` 这类真错误不受影响
+  - 强错误信号优先于零计数抑制,避免真错误被误判为成功
 - **Https 表化的向后兼容**:`get`/`post`/`upload`/`download` 仍注册在全局表 `Https` 下,同时把同一实现注册为**裸全局兼容别名**——仅当该全局名当前为空时注册,已被占用则不覆盖(不覆盖用户自定义函数)。旧项目 `get(...)` / `post(...)` 不再 `attempt to call a nil value`
   - `LuaFunctionRegistrar.registerLegacyHttpAlias` 统一处理;`describeFunctions` 同步暴露这四个裸名,保持「查看=运行时」
 - **运行期按名加载接入 `lib/<abi>/`**:`LuaActivity.loadLib` / `LuaService.loadLib` 之前只查 `libDir` 与 `luaDir/lib*.so`,现按设备首选 ABI 优先查 `luaDir/lib/<abi>/lib<名>.so`,再回退 `lib/lib<名>.so`(与 `LuaDexLoader.loadArchLibs` 目录约定一致)

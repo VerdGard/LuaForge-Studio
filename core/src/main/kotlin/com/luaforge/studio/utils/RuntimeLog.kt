@@ -73,9 +73,51 @@ object RuntimeLog {
         "错误", "失败", "异常"
     )
 
+    /**
+     * 强错误信号:命中即为错误,不再做任何"零计数"抑制判断。
+     *
+     * 这些是明确的失败特征(异常回溯、空引用、字段/布局解析失败等),
+     * 即使消息里同时出现 "0" 也必须判为 ERROR。
+     */
+    private val strongErrorKeywords = arrayOf(
+        "traceback", "exception", "attempt to", "nil value",
+        "syntax error", "is not a field", "layout loading error",
+        "cannot", "can not", "no such", "unexpected"
+    )
+
+    /**
+     * 「关键词 + 数量 0」的**成功性播报**,不应记成 ERROR。
+     *
+     * 例:`校验失败 0`、`校验失败总数 = 0`、`23 items, 0 errors`、`0 failed`。
+     * 这些消息虽含「失败/错误」等词,但结论是"零失败"。
+     *
+     * 判定刻意**锚定在消息结尾**(允许结尾标点/空白),即"关键词...0"或"0...关键词"收尾才算数。
+     * 关键词与 0 之间只允许出现分隔符(空白 / 半角冒号 / 全角冒号 / 等号)与有限计数标签
+     * (总数/数量/次数/个数/条数/count/total),因此 `错误: 除数为 0` 这类真错误不会被误抑制。
+     */
+    // 关键词:中英,英文含复数(errors/failures/exceptions)
+    private const val ZERO_KW = "失败|错误|异常|failed|failures|errors|exceptions|failure|error|exception"
+    // 分隔符:空白 + 半角冒号 + 全角冒号 + 等号
+    private const val ZERO_SEP = "[\\s:\\uFF1A=]*"
+    // 计数标签
+    private const val ZERO_CNT = "(?:总数|数量|次数|个数|条数|count|total)?"
+    // 独立的 0:前后都不能是数字,且排除 0x 十六进制
+    private const val ZERO_NUM = "(?<![0-9])0(?![0-9xX])"
+    // 结尾:仅允许收尾空白与标点
+    private const val ZERO_TAIL = "[\\s.,!?;:\\u3002\\uFF0C\\uFF01\\uFF1B\\uFF1F\\u3001\\u2026]*$"
+    private val zeroCountPattern = Regex(
+        "(?:" + ZERO_KW + ")" + ZERO_SEP + ZERO_CNT + ZERO_SEP + ZERO_NUM + ZERO_TAIL +
+            "|" + ZERO_NUM + ZERO_SEP + ZERO_CNT + ZERO_SEP + "(?:" + ZERO_KW + ")" + ZERO_TAIL
+    )
+
     private fun looksLikeError(message: String): Boolean {
         val lower = message.lowercase(Locale.getDefault())
-        return errorKeywords.any { lower.contains(it) }
+        if (errorKeywords.none { lower.contains(it) }) return false
+        // 强错误信号优先:即便同时含 "0" 也仍是错误
+        if (strongErrorKeywords.any { lower.contains(it) }) return true
+        // 含「失败/错误」等词但伴随 0 计数 -> 成功播报,抑制为 INFO
+        if (zeroCountPattern.containsMatchIn(lower)) return false
+        return true
     }
 
     @JvmStatic
