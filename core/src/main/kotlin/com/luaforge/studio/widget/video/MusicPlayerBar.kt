@@ -95,10 +95,10 @@ class MusicPlayerBar @JvmOverloads constructor(
     init {
         // 背景
         background = GradientDrawable().apply {
-            cornerRadius = dp(12f)
+            cornerRadius = dp(12).toFloat()
             setColor(Color.parseColor("#1F1F1F"))
         }
-        padding = dp(8)
+        setPadding(dp(8), dp(8), dp(8), dp(8))
 
         val row = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -306,8 +306,8 @@ class MusicPlayerBar @JvmOverloads constructor(
         return if (hasScheme) Uri.parse(path) else Uri.fromFile(File(path))
     }
 
-    private fun dp(v: Float): Int =
-        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics).toInt()
+    private fun dp(v: Number): Int =
+        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()
 
     private fun fmt(ms: Long): String {
         val total = ms / 1000

@@ -47,7 +47,7 @@ class SimpleVideoView @JvmOverloads constructor(
         // 默认关掉内置控制器,交由使用方自定义
         useController = false
         // 点击画面(内层播放视图或自身)触发回调
-        val clicker = OnClickListener { onToggleCallback?.invoke() }
+        val clicker = android.view.View.OnClickListener { onToggleCallback?.invoke() }
         setOnClickListener(clicker)
         playerView.setOnClickListener(clicker)
     }

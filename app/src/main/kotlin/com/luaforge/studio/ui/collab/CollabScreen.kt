@@ -496,11 +496,9 @@ fun CollabScreen(
                     showSnapshotDialog = false
                     if (repo == null) return@TextButton
                     scope.launch {
+                        val author = com.luaforge.studio.utils.AppInfoUtil.getVersionName(context)
                         withContext(Dispatchers.IO) {
-                            repo.snapshot(
-                                snapshotMessage.ifBlank { "快照" },
-                                com.luaforge.studio.utils.AppInfoUtil.getPackageInfo()?.versionName ?: "LuaForge"
-                            )
+                            repo.snapshot(snapshotMessage.ifBlank { "快照" }, author)
                         }
                         refreshHistory()
                     }
