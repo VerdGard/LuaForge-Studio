@@ -732,6 +732,37 @@ fun MainScreen(
 
                     NavigationDrawerItem(
                         label = {
+                            Text(stringResource(R.string.collab_title), fontWeight = FontWeight.Medium)
+                        },
+                        selected = currentContentType == MainContentType.COLLAB,
+                        onClick = {
+                            currentContentType = MainContentType.COLLAB
+                            scope.launch { drawerState.close() }
+                        },
+                        icon = {
+                            Icon(
+                                Icons.Filled.Share,
+                                contentDescription = stringResource(R.string.collab_title),
+                                tint = if (currentContentType == MainContentType.COLLAB)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        colors = NavigationDrawerItemDefaults.colors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                            unselectedContainerColor = Color.Transparent,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        shape = MaterialTheme.shapes.medium,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+
+                    NavigationDrawerItem(
+                        label = {
                             Text(stringResource(R.string.about), fontWeight = FontWeight.Medium)
                         },
                         selected = currentContentType == MainContentType.ABOUT,
