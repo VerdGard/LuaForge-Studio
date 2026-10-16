@@ -200,6 +200,8 @@ wds = {
   {
     "VideoView",
     "ExoVideoView",
+    "SimpleVideoView",
+    "MusicPlayerBar",
     "ExoAudioPlayer",
     "WebView",
     "AnalogClock",
@@ -340,6 +342,10 @@ wds2 = {
   },
   {
     "视频视图",
+    "Exo 视频播放器",
+    "无控制器视频",
+    "音乐播放条",
+    "Exo 音频播放器",
     "网页视图",
     "模拟时钟",
     "下拉布局",

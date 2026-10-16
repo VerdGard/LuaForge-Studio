@@ -9,6 +9,7 @@ import androidx.annotation.Keep
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import java.io.File
 
@@ -22,7 +23,7 @@ import java.io.File
  * 生命周期:内部持有一个 [ExoPlayer] 实例,页面销毁时应调用 [release] 释放。
  */
 @Keep
-class ExoVideoView @JvmOverloads constructor(
+open class ExoVideoView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
@@ -36,14 +37,14 @@ class ExoVideoView @JvmOverloads constructor(
         )
     }
 
-    private var player: ExoPlayer? = null
+    protected var player: ExoPlayer? = null
 
     init {
         addView(playerView)
     }
 
     /** 懒创建播放器,避免仅作为布局占位时也占用解码资源。 */
-    private fun ensurePlayer(): ExoPlayer {
+    protected fun ensurePlayer(): ExoPlayer {
         player?.let { return it }
         val created = ExoPlayer.Builder(context).build()
         created.repeatMode = Player.REPEAT_MODE_OFF
@@ -127,6 +128,33 @@ class ExoVideoView @JvmOverloads constructor(
         playerView.player = null
     }
 
+    /**
+     * 画面缩放模式:`fit`(默认,完整显示留黑边)/ `fill`(拉伸铺满)/ `zoom`(裁剪铺满)/
+     * `fixed_width`(固定宽度)/ `fixed_height`(固定高度)。
+     */
+    var resizeMode: String
+        get() = when (playerView.resizeMode) {
+            AspectRatioFrameLayout.RESIZE_MODE_FILL -> "fill"
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "zoom"
+            AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH -> "fixed_width"
+            AspectRatioFrameLayout.RESIZE_MODE_FIXED_HEIGHT -> "fixed_height"
+            else -> "fit"
+        }
+        set(value) {
+            playerView.resizeMode = when (value.trim().lowercase()) {
+                "fill", "stretch" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                "zoom", "crop" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                "fixed_width", "fixedwidth", "width" -> AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH
+                "fixed_height", "fixedheight", "height" -> AspectRatioFrameLayout.RESIZE_MODE_FIXED_HEIGHT
+                else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+            }
+        }
+
+    /** 在播放 / 暂停之间切换(供自定义控件或单击画面调用)。 */
+    fun toggle() {
+        if (isPlaying()) pause() else play()
+    }
+
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         // 视图脱离窗口时释放,避免句柄泄漏导致的黑屏/音频残留
@@ -134,7 +162,7 @@ class ExoVideoView @JvmOverloads constructor(
     }
 
     /** 普通路径视为本地文件;带协议头的按 URI 处理。 */
-    private fun toUri(path: String): Uri {
+    protected fun toUri(path: String): Uri {
         val lowered = path.lowercase()
         val hasScheme = lowered.startsWith("http://") || lowered.startsWith("https://") ||
             lowered.startsWith("rtsp://") || lowered.startsWith("rtmp://") ||

@@ -70,9 +70,63 @@ object BuiltinWidgets {
                 "getCurrentPosition" to "Function():Long	当前播放位置(毫秒)",
                 "getDuration" to "Function():Long	媒体总时长(毫秒)",
                 "isPlaying" to "Function():Boolean	是否正在播放",
+                "resizeMode" to "String	缩放模式 fit/fill/zoom/fixed_width/fixed_height",
+                "toggle" to "Function()	在播放/暂停之间切换",
                 "onPause" to "Function()	暂停(供页面生命周期调用)",
                 "release" to "Function()	释放播放器资源"
-            )
+            ),
+            doc = "ExoVideoView.md"
+        ),
+        Widget(
+            className = "com.luaforge.studio.widget.video.SimpleVideoView",
+            shortName = "SimpleVideoView",
+            displayName = "无控制器视频播放器",
+            group = "Video & Media",
+            properties = linkedMapOf(
+                "videoPath" to "String	本地文件路径(相对项目或绝对路径)",
+                "videoUrl" to "String	网络地址(http/https/rtsp/rtmp)",
+                "loop" to "Boolean	是否循环播放",
+                "autoPlay" to "Boolean	准备完成后是否自动播放(默认 true)",
+                "muted" to "Boolean	是否静音",
+                "volume" to "Float	音量 0.0-1.0",
+                "resizeMode" to "String	缩放模式 fit/fill/zoom/fixed_width/fixed_height",
+                "setOnToggleCallback" to "Function(Function)	点击画面回调(自行弹控制条)",
+                "play" to "Function()	开始播放",
+                "pause" to "Function()	暂停",
+                "toggle" to "Function()	在播放/暂停之间切换",
+                "stop" to "Function()	停止并清空媒体",
+                "seekTo" to "Function(Long)	跳转到指定毫秒位置",
+                "getCurrentPosition" to "Function():Long	当前播放位置(毫秒)",
+                "getDuration" to "Function():Long	媒体总时长(毫秒)",
+                "isPlaying" to "Function():Boolean	是否正在播放",
+                "release" to "Function()	释放播放器资源"
+            ),
+            doc = "SimpleVideoView.md"
+        ),
+        Widget(
+            className = "com.luaforge.studio.widget.video.MusicPlayerBar",
+            shortName = "MusicPlayerBar",
+            displayName = "音乐播放条(含控制条)",
+            group = "Video & Media",
+            properties = linkedMapOf(
+                "setPlaylist" to "Function(table)	设置播放列表(条目含 title/path/url)",
+                "shuffle" to "Boolean	是否随机播放",
+                "loop" to "Boolean	是否单曲循环",
+                "autoPlay" to "Boolean	准备完成后是否自动播放(默认 true)",
+                "onStateChanged" to "Function(Function)	播放状态变化回调",
+                "play" to "Function()	开始播放",
+                "pause" to "Function()	暂停",
+                "toggle" to "Function()	在播放/暂停之间切换",
+                "playNext" to "Function()	下一首",
+                "playPrev" to "Function()	上一首",
+                "stop" to "Function()	停止并清空媒体",
+                "seekTo" to "Function(Long)	跳转到指定毫秒位置",
+                "getCurrentPosition" to "Function():Long	当前播放位置(毫秒)",
+                "getDuration" to "Function():Long	媒体总时长(毫秒)",
+                "isPlaying" to "Function():Boolean	是否正在播放",
+                "release" to "Function()	释放播放器资源"
+            ),
+            doc = "MusicPlayerBar.md"
         ),
         Widget(
             className = "com.luaforge.studio.widget.video.ExoAudioPlayer",
@@ -93,7 +147,8 @@ object BuiltinWidgets {
                 "getDuration" to "Function():Long	媒体总时长(毫秒)",
                 "isPlaying" to "Function():Boolean	是否正在播放",
                 "release" to "Function()	释放播放器资源"
-            )
+            ),
+            doc = "ExoAudioPlayer.md"
         )
     )
 }

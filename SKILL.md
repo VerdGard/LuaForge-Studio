@@ -1,6 +1,6 @@
 ---
 name: luaforge-studio
-description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaForge-Studio 内置 MCP 服务(HTTP JSON-RPC, 默认端口 9123)驱动编辑器:读写源码、语法检查、编译验证、构建并安装 APK、调试运行并用控件树断言界面。关键词: LuaForge-Studio、Lua、ALY、loadlayout、import、luajava、global_utils、MCP、tools/call、run_project、check_screen、build_apk、check_syntax、debugger_status、debugger_outputs。"
+description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaForge-Studio 内置 MCP 服务(HTTP JSON-RPC, 默认端口 9123)驱动编辑器:读写源码、语法检查、编译验证、构建并安装 APK、调试运行并用控件树断言界面。核心原则:优先复用内置控件与现成 Java 能力(底部导航/标签页/抽屉/列表/播放器/工具类),禁止用 ImageView+LinearLayout 手画已有控件。关键词: LuaForge-Studio、Lua、ALY、loadlayout、import、luajava、global_utils、MCP、tools/call、run_project、check_screen、build_apk、check_syntax、debugger_status、debugger_outputs、BottomNavigationView、RecyclerView、ExoVideoView。"
 ---
 
 # LuaForge-Studio 技能
@@ -16,13 +16,42 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 |---|---|
 | 写/改功能代码(`main.lua`、`*.lua`) | §1 Lua 语法 → §3 改文件 → §3.3 验证闭环 |
 | 写网络请求 | §1.9 网络访问(**优先 `Http.*`**) |
-| 改界面(`layout.aly` / `layout.lua`) | §1.4 布局写法 → §3.3 验证闭环 |
+| 改界面(`layout.aly` / `layout.lua`) | **§0.5 控件复用铁律 → §1.5.1 控件速查** → §1.4 布局写法 → §3.3 验证闭环 |
+| 需要某种 UI(底部导航/标签/抽屉/列表/卡片/播放器...) | **§0.5 + §1.5.1**,现成控件直接用,附 `WidgetsCatalog.md` 可复制配方 |
 | 让项目跑起来看效果 | §3.3 `run_project` → `wait_for_text` → `check_screen` |
 | 出安装包 | §3.3 `build_apk` → `install_apk` |
 | 只想知道代码对不对 | §3.3 `check_syntax` + `compile_file`(只验证,不留产物) |
 | 需要 JSON/正则/压缩/加密/文件遍历等**通用能力** | §1.10 内置原生库与可复用 Java 能力 —— **优先复用 `require` 现成库,别无脑用纯 Lua 重写** |
 
 **铁律:凡"改了代码"的请求,必须用 `check_syntax` 或 `compile_file` 收尾;凡"改了界面/逻辑"的请求,必须 `run_project` + `check_screen` 收尾。** 不做验证等于没做完。
+
+---
+
+## 0.5 控件复用铁律(最重要,先读这条)
+
+> **宁可多花十秒查控件,也不要手写一个假的。** 本项目内置了大量 Material / AndroidX 控件,
+> 以及 IDE 随附的自有控件与 Java 工具类。**遇到下面这些需求,必须先查控件目录,直接复用:**
+>
+> | 需求 | ❌ 不要这么干 | ✅ 应该用 |
+> |---|---|---|
+> | 底部导航栏 | `ImageView` 画图标 + `LinearLayout` 手拼 | **`BottomNavigationView`** + `.Menu.add(...)` |
+> | 顶部标签切换 | 一排 `Button` 自己写选中态 | **`TabLayout` + `ViewPager2` + `TabLayoutMediator`** |
+> | 侧滑菜单 | 自己写位移动画 | **`DrawerLayout` + `NavigationView`** |
+> | 顶部栏 / 折叠栏 | `LinearLayout` 塞标题 | **`MaterialToolbar` / `AppBarLayout` / `CollapsingToolbarLayout`** |
+> | 列表 | `ScrollView` 里堆 `LinearLayout` | **`RecyclerView`**(+ `RecyclerAdapterUtil` 一行建适配器) |
+> | 卡片 | `FrameLayout` 加背景色手画圆角 | **`MaterialCardView`** |
+> | 文本输入 | 裸 `EditText` | **`MaterialTextField`**(自带 error/helper/圆角) |
+> | 进度 | 自己画进度条 | **`LinearProgressIndicator` / `CircularProgressIndicator`** |
+> | 浮动按钮 | `ImageView` 摆右下角 | **`FloatingActionButton`** |
+> | 下拉刷新 / 芯片 / 滑块 | 手写 | **`SwipeRefreshLayout` / `ChipGroup` / `Slider`** |
+> | 视频/音频播放 | `VideoView` 或将就 | **`ExoVideoView` / `SimpleVideoView` / `MusicPlayerBar` / `ExoAudioPlayer`** |
+> | 图标 | 自己塞 PNG | **系统/主题资源** `androidx.R.drawable.abc_ic_search_api_material` 等 |
+>
+> **控件全清单与逐条可复制配方见 `app/src/main/assets/doc/WidgetsCatalog.md`**(底部导航/标签页/抽屉/工具栏/卡片/进度/FAB/输入/列表等
+> 每种需求都有现成代码,直接抄)。**能用现成 Java 能力(网络 `Http`、图片 `GlideUtil`、JSON `cjson`、
+> 压缩 `zip`、摘要 `crypt/md5`、文件遍历 `lfs`、列表 `RecyclerAdapterUtil`)就不要用纯 Lua 重写。**
+>
+> 判断标准:如果你正准备"用若干基础 View 拼出一个本来就有专用控件的界面",立即停下,去查目录。
 
 ---
 
@@ -138,8 +167,39 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 - **延迟属性**:ConstraintLayout 约束与 RelativeLayout 规则延后到子控件都建好后统一应用(`loadlayout.lua:1201-1213`)。
 - **`.aly` 可被 `require`**:`loadlayout.lua` 往 `package.searchers` 注入 `alyloader`(430-447),识别 `\27Lua` 预编译签名,否则按 `return <内容>` 当表达式加载。
 - **两套实现**:`core/src/main/resources/lua/loadlayout.lua`(运行时,1223 行)与 `app/src/main/assets/layouthelper/loadlayout2.lua`(布局助手用,1262 行,支持 `pagesWithTitle` 等扩展)。语法一致,写项目用前者。
-- **内置控件**(随 IDE 发布,编译进 `core`,非三方库):`MaterialTextField`。直接写短名即可,属性名 = 去掉 `set` 前缀首字母小写。
-  清单见 MCP `list_widgets`。
+- **内置控件**(随 IDE 发布,编译进 `core`,非三方库):`MaterialTextField`、`ExoVideoView`、`SimpleVideoView`、`MusicPlayerBar`、`ExoAudioPlayer`。直接写短名即可,属性名 = 去掉 `set` 前缀首字母小写。
+  完整清单见 MCP `list_widgets`,或文档 `app/src/main/assets/doc/WidgetsCatalog.md`。
+
+#### 1.5.1 控件速查:先查这里,再动手
+
+**任何时候要写界面,先在下表找到对应控件;有专用控件就绝不手拼。**
+
+| 需求 | 用哪个控件 | 详见 |
+|---|---|---|
+| 底部导航栏 | `BottomNavigationView` | `WidgetsCatalog.md` 配方 1 |
+| 顶部标签页切换 | `TabLayout` + `ViewPager2` + `TabLayoutMediator` | 配方 2 |
+| 侧滑抽屉菜单 | `DrawerLayout` + `NavigationView` | 配方 3 |
+| 顶部栏 / 折叠标题栏 | `MaterialToolbar` / `AppBarLayout` / `CollapsingToolbarLayout` | 配方 4 |
+| 卡片 | `MaterialCardView` | 配方 5 |
+| 进度条 / 加载圈 | `LinearProgressIndicator` / `CircularProgressIndicator` | 配方 6 |
+| 浮动按钮 | `FloatingActionButton` / `ExtendedFloatingActionButton` | 配方 7 |
+| 文本输入 | `MaterialTextField`(或 `TextInputLayout`+`TextInputEditText`) | 配方 8 / `MaterialTextField.md` |
+| 下拉刷新 + 列表 | `SwipeRefreshLayout` + `RecyclerView` | 配方 9 / `RecyclerAdapterUtil.md` |
+| 芯片/标签选择 | `ChipGroup` + `Chip` | 配方 10 |
+| 滑块 / 区间滑块 | `Slider` / `RangeSlider` | WidgetsCatalog §一 |
+| 开关 / 复选 / 单选 | `MaterialSwitch` / `MaterialCheckBox` / `MaterialRadioButton` | WidgetsCatalog §一 |
+| 视频播放 | `ExoVideoView`(自带控制器)/ `SimpleVideoView`(自定义控制器) | `ExoVideoView.md` / `SimpleVideoView.md` |
+| 音乐播放条 | `MusicPlayerBar`(上/播/下/进度一体) | `MusicPlayerBar.md` |
+| 纯音频 / 音效 | `ExoAudioPlayer` | `ExoAudioPlayer.md` |
+| 列表适配器 | `RecyclerAdapterUtil`(一行建)或 `LuaAdapter` | `RecyclerAdapterUtil.md` / `RuntimeAPI.md` §六 |
+| 网络请求 | `Http.*`(优先)/ `Https.*` | `RuntimeAPI.md` §四 / `OkHttpUtil.md` |
+| JSON / 压缩 / 摘要 / 文件遍历 | `cjson` / `zip` / `crypt`+`md5` / `lfs` | §1.10 / `RuntimeAPI.md` §十 |
+| 弹窗 | `MaterialAlertDialogBuilder` | `RuntimeAPI.md` §七 |
+| 图片加载 | `loadbitmap` / `GlideUtil` | `RuntimeAPI.md` §五 / `GlideUtil.md` |
+
+> **控件目录**(完整短名清单 + 每种 UI 的可复制配方)在 `app/src/main/assets/doc/WidgetsCatalog.md`;
+> **运行时全局对象/函数/Java 类速查**在 `app/src/main/assets/doc/RuntimeAPI.md`。写代码前先翻这两份。
+> 模板项目(`assets/templates/*.zip`:BottomNavigationView、TabLayout、DrawerLayout、FloatingActionButton、Default)就是现成范例,可对照。
 
 ### 1.6 全局对象与函数
 
@@ -371,7 +431,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 - 路径可为项目相对路径,或允许范围内的绝对路径。
 - 不传 `path` 时多数工具回退到"当前打开的项目 / 当前活动文件"。
 
-### 3.2 工具清单(50 个,`McpTools.kt` 实测)
+### 3.2 工具清单(51 个,`McpTools.kt` 实测)
 
 **项目与文件**
 
@@ -384,6 +444,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 | `write_file` | 写文本(自动建父目录),**同步刷新已打开标签**;`mode`=overwrite/replaceLines/append,`expectedMd5`/`expectedLines` 做写入前校验 | `path`、`content` **必填**、`mode`、`startLine`、`endLine`、`expectedMd5`、`expectedLines` |
 | `create_file` | 新建(默认不覆盖) | `path` **必填**、`content`、`overwrite` |
 | `delete_file` | 删文件或**空**目录 | `path` **必填** |
+| `copy_file` | 复制文件/目录到**当前项目内**(跨项目复制) | `source` **必填**、`target`、`overwrite`、`recursive` |
 | `rename_file` | 重命名/移动 | `from`、`to` **必填**、`overwrite` |
 | `make_directory` | 递归建目录 | `path` **必填** |
 | `file_info` | 大小/时间/行数/MD5 | `path` **必填** |
@@ -524,6 +585,8 @@ MCP 只允许访问这些根(`McpTools.kt:1429-1443`):
 - 语言扩展:`app/src/main/jni/lua/llex.h`(保留字枚举)、`llex.c`(字面量)、`lparser.c`(try/switch/when/defer/continue/lambda/`?.`/`??`/`|>`/复合赋值)
 - Lua 库:`core/src/main/resources/lua/{import,loadlayout,loadmenu,loadbitmap,xml,Colors}.lua`、`app/src/main/assets/layouthelper/loadlayout2.lua`
 - Java 桥接:`app/src/main/jni/luajava/luajava.c`(void 返回 self、`ljlib` 函数表)、`core/src/main/java/com/luajava/LuaJavaAPI.java`(setter/getter 解析)
+- 内置控件:`core/src/main/kotlin/com/luaforge/studio/widget/BuiltinWidgets.kt`(注册表)、`widget/textfield/MaterialTextField.kt`、`widget/video/{ExoVideoView,SimpleVideoView,MusicPlayerBar,ExoAudioPlayer}.kt`;模板 `app/src/main/assets/templates/{Default,BottomNavigationView,TabLayout,DrawerLayout,FloatingActionButton}.zip`
+- 控件与运行时文档:`app/src/main/assets/doc/`(`WidgetsCatalog.md`、`RuntimeAPI.md`、`MaterialTextField.md`、`ExoVideoView.md`、`SimpleVideoView.md`、`MusicPlayerBar.md`、`ExoAudioPlayer.md` 及各 `*Util.md`)
 - 模板:`app/src/main/assets/templates/Default.zip`、`app/src/main/kotlin/com/luaforge/studio/ui/project/NewProjectScreen.kt`
 - MCP:`app/src/main/kotlin/com/luaforge/studio/mcp/{McpServer,McpManager,McpTools}.kt`、`docs/MCP.md`
 - 路径与日志:`app/src/main/kotlin/com/luaforge/studio/utils/{FileUtil,LogConfig}.kt`
