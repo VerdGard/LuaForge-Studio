@@ -49,7 +49,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 { "headers": { "Authorization": "Bearer <你的令牌>" } }
 ```
 
-## 4. 工具清单(50 个)
+## 4. 工具清单(53 个)
 
 参数均为可选,除非标 **必填**。带 `array` 的参数可传 JSON 数组,也可传换行/逗号分隔的字符串。
 
@@ -78,6 +78,8 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 | `analyze_imports` | 分析代码用到的类,生成 import 列表 | `content`(缺省用当前活动文件) |
 | `list_widgets` | 列出随 IDE 发布的内置控件(如 `MaterialTextField`),含短名、分类与可写属性 | — |
 | `list_project_libraries` | 列出项目的原生库与三方库:`lib/<abi>/*.so`(按 ABI 分组 + 设备匹配)与 `libs/*.dex\|jar`/`libs/*.so`,并返回设备首选 ABI | `path` |
+| `list_lib_classes` | 列出用户导入 `libs/*.dex\|jar` **内含的类**(解析 dex/jar 字符串池,离线可用;`filter` 子串过滤,`className` 时额外返回该类的构造器/方法/字段) | `path`、`lib`、`filter`、`className`、`page`、`maxResults` |
+| `invoke_lib_method` | 反射调用项目 `libs/` 库内类的**静态方法**或**构造器**(仅标量参数) | `className` **必填**、`method`、`args`、`constructor`、`page`、`path`、`timeoutMs`(默认 5000) |
 
 > `delete_file` 只能删空目录,递归删除请由客户端先列目录再逐个删除。
 

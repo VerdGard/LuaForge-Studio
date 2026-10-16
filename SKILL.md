@@ -431,7 +431,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 - 路径可为项目相对路径,或允许范围内的绝对路径。
 - 不传 `path` 时多数工具回退到"当前打开的项目 / 当前活动文件"。
 
-### 3.2 工具清单(51 个,`McpTools.kt` 实测)
+### 3.2 工具清单(53 个,`McpTools.kt` 实测)
 
 **项目与文件**
 
@@ -457,6 +457,8 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 | `analyze_imports` | 分析所需 import | `content` |
 | `list_widgets` | 列出随 IDE 发布的内置控件(含短名/分类/可写属性) | — |
 | `list_project_libraries` | 列项目 `lib/<abi>/*.so`、`libs/*.dex\|jar`、`libs/*.so` 与设备首选 ABI | `path` |
+| `list_lib_classes` | 列用户导入 `libs/*.dex\|jar` **内含的类**(可 `filter` 子串过滤、`className` 额外返回成员) | `path`、`lib`、`filter`、`className`、`page`、`maxResults` |
+| `invoke_lib_method` | 反射调用项目 `libs/` 库内类的**静态方法**或**构造器**(仅标量参数) | `className` **必填**、`method`、`args`、`constructor`、`page`、`path`、`timeoutMs` |
 
 **编辑器**
 

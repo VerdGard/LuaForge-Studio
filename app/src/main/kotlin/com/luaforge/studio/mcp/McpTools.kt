@@ -28,6 +28,7 @@ import com.luaforge.studio.widget.BuiltinWidgets
 import com.luajava.LuaObject
 import com.luajava.LuaState
 import com.luajava.LuaStateFactory
+import dalvik.system.DexClassLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -36,7 +37,11 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.zip.ZipFile
+import java.lang.reflect.Constructor
+import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
+import java.lang.reflect.Modifier
 
 /**
  * MCP 工具集:把编辑器的全部能力(读写代码、调试运行、编译构建、日志等)暴露为 MCP 工具。
@@ -604,6 +609,39 @@ object McpTools {
             )
         )
 
+        tools.put(
+            tool(
+                "list_lib_classes",
+                "查看用户导入 libs/ 中 .dex/.jar 内含的类;传 className 时额外返回该类的构造器/静态与实例方法/字段" +
+                    "(类名离线即可列出;查看成员时优先复用运行实例的类加载器)",
+                obj(
+                    "path" to strProp("项目路径,缺省为当前打开的项目"),
+                    "lib" to strProp("只看某个库(文件名,如 demo.jar)"),
+                    "filter" to strProp("按类名子串过滤(忽略大小写)"),
+                    "className" to strProp("全限定类名;指定后额外返回其成员"),
+                    "page" to strProp("运行中的页面名,存在多个运行页面时用于精确指定"),
+                    "maxResults" to intProp("每个库最多返回类数,默认 500")
+                )
+            )
+        )
+
+        tools.put(
+            tool(
+                "invoke_lib_method",
+                "反射调用项目 libs/ 库内类的静态方法或构造器,支持基本类型/字符串参数",
+                obj(
+                    "className" to strProp("全限定类名,如 com.example.Foo"),
+                    "method" to strProp("方法名;省略则视为构造器"),
+                    "args" to strProp("实参:JSON 数组,或换行/逗号分隔的字符串(分隔形式会自动推断 number/boolean)"),
+                    "constructor" to boolProp("为 true 时按构造器调用(忽略 method)"),
+                    "page" to strProp("目标页面名(pageName),存在多个运行页面时用于精确指定"),
+                    "path" to strProp("目标项目路径,缺省用当前打开的项目"),
+                    "timeoutMs" to intProp("等待毫秒,默认 5000,上限 30000")
+                ),
+                required = arrayOf("className")
+            )
+        )
+
         return tools
     }
 
@@ -666,6 +704,8 @@ object McpTools {
                 "debugger_clear" -> debuggerClear(context, args)
                 "list_global_utils" -> listGlobalUtils(context, args)
                 "call_global_util" -> callGlobalUtil(context, args)
+                "list_lib_classes" -> listLibClasses(context, args)
+                "invoke_lib_method" -> invokeLibMethod(context, args)
                 else -> errorResult("未知工具: $name")
             }
         } catch (e: Exception) {
@@ -3220,6 +3260,363 @@ object McpTools {
                 .put("result", results.firstOrNull()?.let { luaValueToJson(it) } ?: JSONObject.NULL)
                 .put("results", values)
                 .put("note", "调用在运行实例主线程执行(与项目自身调用同一路径),会受脚本忙碌程度影响。")
+                .toString(2)
+        )
+    }
+
+    // ------------------------------------------------------------------
+    // libs/ 库类查看与调用
+    // ------------------------------------------------------------------
+
+    /** 项目 libs/ 下的 .dex / .jar 三方库(按文件名排序)。 */
+    private fun libArchiveFiles(root: File): List<File> {
+        val dir = File(root, "libs")
+        if (!dir.isDirectory) return emptyList()
+        return dir.listFiles()
+            ?.filter { it.isFile && (it.name.endsWith(".dex") || it.name.endsWith(".jar")) }
+            ?.sortedBy { it.name }
+            ?: emptyList()
+    }
+
+    private fun u32le(b: ByteArray, off: Int): Int =
+        (b[off].toInt() and 0xFF) or ((b[off + 1].toInt() and 0xFF) shl 8) or
+            ((b[off + 2].toInt() and 0xFF) shl 16) or ((b[off + 3].toInt() and 0xFF) shl 24)
+
+    /** 跳过 uleb128,返回其后的位置。 */
+    private fun skipUleb128(b: ByteArray, pos: Int): Int {
+        var p = pos
+        while (p < b.size) {
+            val cur = b[p].toInt() and 0xFF
+            p++
+            if (cur and 0x80 == 0) break
+        }
+        return p
+    }
+
+    /**
+     * 直接解析 dex 的字符串池取出类描述符,不构造 [dalvik.system.DexFile]。
+     *
+     * 这样在 API 34+ 上不会触碰 DexFile 构造限制,也无需类已加载。
+     */
+    private fun dexClassNames(bytes: ByteArray): List<String> {
+        if (bytes.size < 0x70) return emptyList()
+        if (bytes[0].toInt().toChar() != 'd' || bytes[1].toInt().toChar() != 'e' ||
+            bytes[2].toInt().toChar() != 'x'
+        ) {
+            return emptyList()
+        }
+        val stringIdsSize = u32le(bytes, 0x38)
+        val stringIdsOff = u32le(bytes, 0x3C)
+        if (stringIdsSize <= 0 || stringIdsOff <= 0) return emptyList()
+        val out = LinkedHashSet<String>()
+        var i = 0
+        while (i < stringIdsSize) {
+            val idOff = stringIdsOff + i * 4
+            if (idOff + 4 > bytes.size) break
+            val dataOff = u32le(bytes, idOff)
+            if (dataOff in 1 until bytes.size) {
+                var p = skipUleb128(bytes, dataOff)
+                val sb = StringBuilder()
+                while (p < bytes.size && bytes[p].toInt() != 0 && sb.length < 512) {
+                    sb.append((bytes[p].toInt() and 0xFF).toChar())
+                    p++
+                }
+                val str = sb.toString()
+                if (str.length >= 3 && str[0] == 'L' && str.endsWith(";") && str.indexOf('/') > 0) {
+                    out.add(str.substring(1, str.length - 1).replace('/', '.'))
+                }
+            }
+            i++
+        }
+        return out.toList()
+    }
+
+    /** 从 .dex 或 .jar(内含 classes*.dex / *.class)提取类名。 */
+    private fun archiveClassNames(file: File): List<String> {
+        return try {
+            if (file.name.endsWith(".dex")) {
+                dexClassNames(file.readBytes())
+            } else {
+                val out = LinkedHashSet<String>()
+                ZipFile(file).use { zip ->
+                    val entries = zip.entries()
+                    while (entries.hasMoreElements()) {
+                        val e = entries.nextElement()
+                        if (e.isDirectory) continue
+                        val n = e.name
+                        when {
+                            n.endsWith(".dex") -> out.addAll(dexClassNames(zip.getInputStream(e).readBytes()))
+                            n.endsWith(".class") -> out.add(n.removeSuffix(".class").replace('/', '.'))
+                        }
+                    }
+                }
+                out.toList()
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /** 加载库类:优先用运行实例已加载 libs 的类加载器,其次临时 DexClassLoader。 */
+    private fun loadLibClass(context: Context, root: File, activity: LuaActivity?, name: String): Class<*>? {
+        if (activity != null) {
+            runCatching { activity.classLoaders }.getOrNull()?.forEach { loader ->
+                runCatching { Class.forName(name, false, loader) }.getOrNull()?.let { return it }
+            }
+        }
+        val libs = libArchiveFiles(root)
+        if (libs.isNotEmpty()) {
+            val dexPath = libs.joinToString(File.pathSeparator) { it.absolutePath }
+            runCatching {
+                val loader = DexClassLoader(
+                    dexPath, context.codeCacheDir.absolutePath, null, context.classLoader
+                )
+                Class.forName(name, false, loader)
+            }.getOrNull()?.let { return it }
+        }
+        return runCatching { Class.forName(name, false, context.classLoader) }.getOrNull()
+    }
+
+    /** 反射导出类的构造器 / 方法 / 字段。 */
+    private fun classMembers(clazz: Class<*>): JSONObject {
+        val constructors = JSONArray()
+        clazz.declaredConstructors.sortedBy { it.parameterTypes.size }.forEach { c ->
+            constructors.put(JSONObject().put("params", JSONArray(c.parameterTypes.map { it.simpleName })))
+        }
+        val methods = JSONArray()
+        clazz.declaredMethods.sortedBy { it.name }.forEach { m ->
+            methods.put(
+                JSONObject()
+                    .put("name", m.name)
+                    .put("static", Modifier.isStatic(m.modifiers))
+                    .put("params", JSONArray(m.parameterTypes.map { it.simpleName }))
+                    .put("returns", m.returnType.simpleName)
+            )
+        }
+        val fields = JSONArray()
+        clazz.declaredFields.sortedBy { it.name }.forEach { f ->
+            fields.put(
+                JSONObject()
+                    .put("name", f.name)
+                    .put("type", f.type.simpleName)
+                    .put("static", Modifier.isStatic(f.modifiers))
+            )
+        }
+        return JSONObject()
+            .put("name", clazz.name)
+            .put("superclass", clazz.superclass?.name ?: JSONObject.NULL)
+            .put("interfaces", JSONArray(clazz.interfaces.map { it.name }))
+            .put("constructors", constructors)
+            .put("methods", methods)
+            .put("fields", fields)
+    }
+
+    private fun listLibClasses(context: Context, args: JSONObject): JSONObject {
+        val project = resolveProjectPath(context, args.optString("path", ""))
+            ?: return errorResult("无法确定项目路径,请先在前台打开项目或传入 path")
+        val root = File(project)
+        if (!isAllowed(context, root)) return errorResult("路径不在允许范围内: $project")
+
+        val libFilter = args.optString("lib", "").trim()
+        val filter = args.optString("filter", "").trim()
+        val maxResults = args.optInt("maxResults", 500).coerceIn(1, 20000)
+        val className = args.optString("className", "").trim()
+
+        val allLibs = libArchiveFiles(root)
+        val libsDir = File(root, "libs").absolutePath
+        if (allLibs.isEmpty()) {
+            return textResult(
+                JSONObject()
+                    .put("project", root.absolutePath)
+                    .put("libsDir", libsDir)
+                    .put("libraryCount", 0)
+                    .put("libraries", JSONArray())
+                    .put("note", "libs/ 下没有 .dex/.jar 三方库。把库放到 项目/libs/ 后重新运行项目即可加载。")
+                    .toString(2)
+            )
+        }
+
+        val libsArr = JSONArray()
+        val targets = if (libFilter.isBlank()) allLibs else allLibs.filter { it.name == libFilter }
+        for (f in targets) {
+            var names = archiveClassNames(f)
+            if (filter.isNotBlank()) names = names.filter { it.contains(filter, ignoreCase = true) }
+            val truncated = names.size > maxResults
+            libsArr.put(
+                JSONObject()
+                    .put("name", f.name)
+                    .put("classCount", names.size)
+                    .put("truncated", truncated)
+                    .put("classes", JSONArray(if (truncated) names.take(maxResults) else names))
+            )
+        }
+
+        val result = JSONObject()
+            .put("project", root.absolutePath)
+            .put("libsDir", libsDir)
+            .put("libraryCount", targets.size)
+            .put("libraries", libsArr)
+
+        if (className.isNotBlank()) {
+            val activity = resolveRunningActivity(context, args)
+            val clazz = loadLibClass(context, root, activity, className)
+            result.put("className", className)
+            if (clazz == null) {
+                result.put("members", JSONObject.NULL)
+                result.put(
+                    "membersNote",
+                    "无法加载类 $className:请用上面的类名列表核对它确实在该项目的 libs/ 库中。"
+                )
+            } else {
+                result.put("members", classMembers(clazz))
+            }
+        }
+
+        result.put(
+            "note",
+            "类名通过解析 dex/jar 字符串池得出(离线可用,无需运行)。" +
+                "调用类成员请用 invoke_lib_method(仅支持静态方法与构造器)。"
+        )
+        return textResult(result.toString(2))
+    }
+
+    /** 参数无法匹配目标类型时的哨兵。 */
+    private object NoMatch
+
+    private fun boxOf(target: Class<*>): Class<*> = when (target) {
+        Int::class.java -> Int::class.javaObjectType
+        Long::class.java -> Long::class.javaObjectType
+        Double::class.java -> Double::class.javaObjectType
+        Float::class.java -> Float::class.javaObjectType
+        Short::class.java -> Short::class.javaObjectType
+        Byte::class.java -> Byte::class.javaObjectType
+        Char::class.java -> Char::class.javaObjectType
+        Boolean::class.java -> Boolean::class.javaObjectType
+        else -> target
+    }
+
+    /** 把 JSON/字面量实参转成目标形参类型;不能安全转换时返回 [NoMatch]。 */
+    private fun tryCoerce(value: Any?, target: Class<*>): Any? {
+        if (value == null) return if (target.isPrimitive) NoMatch else null
+        if (boxOf(target).isInstance(value)) return value
+        if (value is Number) {
+            return when (target) {
+                Int::class.java, Int::class.javaObjectType -> value.toInt()
+                Long::class.java, Long::class.javaObjectType -> value.toLong()
+                Double::class.java, Double::class.javaObjectType -> value.toDouble()
+                Float::class.java, Float::class.javaObjectType -> value.toFloat()
+                Short::class.java, Short::class.javaObjectType -> value.toShort()
+                Byte::class.java, Byte::class.javaObjectType -> value.toByte()
+                Char::class.java, Char::class.javaObjectType -> value.toInt().toChar()
+                Number::class.java -> value
+                else -> NoMatch
+            }
+        }
+        if (value is String) {
+            return when (target) {
+                CharSequence::class.java, String::class.java -> value
+                Char::class.java, Char::class.javaObjectType -> if (value.length == 1) value[0] else NoMatch
+                else -> NoMatch
+            }
+        }
+        return NoMatch
+    }
+
+    private fun coerceAll(args: List<Any?>, types: Array<Class<*>>): Array<Any?>? {
+        val out = arrayOfNulls<Any?>(args.size)
+        for (i in args.indices) {
+            val c = tryCoerce(args[i], types[i])
+            if (c === NoMatch) return null
+            out[i] = c
+        }
+        return out
+    }
+
+    private fun pickConstructor(clazz: Class<*>, args: List<Any?>): Constructor<*>? =
+        clazz.constructors
+            .filter { it.parameterTypes.size == args.size }
+            .firstOrNull { coerceAll(args, it.parameterTypes) != null }
+
+    private fun pickStaticMethod(clazz: Class<*>, name: String, args: List<Any?>): Method? =
+        clazz.methods
+            .filter { it.name == name && Modifier.isStatic(it.modifiers) }
+            .firstOrNull { it.parameterTypes.size == args.size && coerceAll(args, it.parameterTypes) != null }
+
+    private fun javaValueToJson(value: Any?): Any = when (value) {
+        null -> JSONObject.NULL
+        is String, is Boolean, is Number -> value
+        is Char -> value.toString()
+        else -> toJsonValue(value)
+    }
+
+    private suspend fun invokeLibMethod(context: Context, args: JSONObject): JSONObject {
+        val className = args.optString("className", "").trim()
+        if (className.isBlank()) return errorResult("缺少参数 className")
+
+        val project = resolveProjectPath(context, args.optString("path", ""))
+            ?: return errorResult("无法确定项目路径,请先在前台打开项目或传入 path")
+        val root = File(project)
+        if (!isAllowed(context, root)) return errorResult("路径不在允许范围内: $project")
+
+        val activity = resolveRunningActivity(context, args)
+        val clazz = loadLibClass(context, root, activity, className)
+            ?: return errorResult(
+                "无法加载类 $className。请确认它在项目 libs/ 的 .dex/.jar 中;" +
+                    "如类依赖运行环境,请先 run_project 再调用。"
+            )
+
+        val luaArgs = parseLuaArgs(args)
+        val isCtor = args.optBoolean("constructor", false) || args.optString("method", "").trim().isBlank()
+
+        // 不能用 java.lang.reflect.Executable(API 26+),minSdk=24;这里分开持有构造器与方法。
+        val ctor: Constructor<*>?
+        val method: Method?
+        val types: Array<Class<*>>
+        val memberName: String
+        if (isCtor) {
+            ctor = pickConstructor(clazz, luaArgs) ?: return errorResult(
+                "未找到匹配的构造器:$className,实参 ${luaArgs.size} 个。"
+            )
+            method = null
+            types = ctor.parameterTypes
+            memberName = "<init>"
+        } else {
+            val methodName = args.optString("method", "").trim()
+            method = pickStaticMethod(clazz, methodName, luaArgs) ?: return errorResult(
+                "未找到匹配的静态方法 $className.$methodName(...)。" +
+                    "invoke_lib_method 仅支持静态方法与构造器。"
+            )
+            ctor = null
+            types = method.parameterTypes
+            memberName = method.name
+        }
+
+        val timeoutMs = args.optInt("timeoutMs", 5000).coerceIn(200, 30000)
+        val outcome = withTimeoutOrNull(timeoutMs.toLong()) {
+            withContext(Dispatchers.Main) {
+                runCatching {
+                    val co = coerceAll(luaArgs, types)
+                        ?: error("参数无法转换为目标类型")
+                    if (ctor != null) ctor.newInstance(*co) else method!!.invoke(null, *co)
+                }
+            }
+        } ?: return errorResult("调用超时(${timeoutMs}ms)。")
+
+        val result = outcome.getOrElse { e ->
+            val cause = (e as? InvocationTargetException)?.targetException ?: e
+            return errorResult("调用失败: ${cause.javaClass.name}: ${cause.message ?: cause.toString()}")
+        }
+
+        return textResult(
+            JSONObject()
+                .put("className", className)
+                .put("member", memberName)
+                .put("isConstructor", isCtor)
+                .put("page", activity?.pageName ?: JSONObject.NULL)
+                .put("projectPath", root.absolutePath)
+                .put("resultType", result?.javaClass?.name ?: "void")
+                .put("result", javaValueToJson(result))
+                .put("note", "仅支持静态方法与构造器;实例方法需先构造对象,暂不支持跨调用传句柄。")
                 .toString(2)
         )
     }

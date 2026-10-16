@@ -219,7 +219,10 @@ object RecyclerAdapterUtil {
         val list = ArrayList<Any>()
         try {
             val L = luaActivity.luaState
-            L.pushJavaObject(table)
+            // 必须压入真实的 Lua 表本身;pushJavaObject 压入的是 Java 包装 userdata,
+            // 对其取 objLen 得到的是 userdata 字节数(sizeof(java_object)==8),
+            // 会导致数据被截断为 8 条。这里改用 LuaObject.push() 压入真表。
+            table.push()
 
             // 先尝试获取长度（假设是数组表）
             var len: Int = 0
