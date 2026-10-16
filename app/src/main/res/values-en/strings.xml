@@ -646,6 +646,11 @@
     <string name="mcp_notification_text_unknown">MCP service kept alive in background</string>
     <string name="mcp_notification_copy">Copy address</string>
 
+    <string name="settings_mcp_notification_permission">Notification permission</string>
+    <string name="settings_mcp_notification_permission_granted">Granted; the persistent notification can be shown</string>
+    <string name="settings_mcp_notification_permission_denied">Not granted; the persistent notification won\'t show. Tap to enable</string>
+    <string name="settings_mcp_notification_permission_toast">Please allow notification permission, otherwise the persistent notification cannot be shown</string>
+
     <string name="settings_network">Network Request Interception</string>
     <string name="settings_security">Security</string>
     <string name="settings_network_enable">Intercept Network Requests</string>

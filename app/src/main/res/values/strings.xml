@@ -647,6 +647,11 @@
     <string name="mcp_notification_text_unknown">MCP 服务后台保活中</string>
     <string name="mcp_notification_copy">复制地址</string>
 
+    <string name="settings_mcp_notification_permission">通知权限</string>
+    <string name="settings_mcp_notification_permission_granted">已授予,常驻通知可正常显示</string>
+    <string name="settings_mcp_notification_permission_denied">未授予,常驻通知不会显示;点按前往开启</string>
+    <string name="settings_mcp_notification_permission_toast">请允许通知权限,否则常驻通知无法显示</string>
+
     <string name="settings_network">网络请求拦截</string>
     <string name="settings_security">安全防护</string>
     <string name="settings_network_enable">拦截网络请求</string>

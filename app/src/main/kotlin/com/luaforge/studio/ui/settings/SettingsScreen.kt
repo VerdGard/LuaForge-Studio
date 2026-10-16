@@ -1,8 +1,12 @@
 package com.luaforge.studio.ui.settings
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -107,6 +111,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.os.LocaleListCompat
 import com.luaforge.studio.R
@@ -228,6 +233,36 @@ fun SettingsScreen(
     val context = LocalContext.current
 
     val currentSettingsState = settingsManager.currentSettings
+
+    // 通知权限(Android 13+ 运行时权限):常驻通知显示的前提
+    fun hasNotificationPermission(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    var notificationPermissionGranted by remember { mutableStateOf(hasNotificationPermission()) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        notificationPermissionGranted = granted
+        if (!granted) {
+            toast.showToast(
+                context.getString(R.string.settings_mcp_notification_permission_toast)
+            )
+        } else if (currentSettingsState.mcpForegroundKeepAlive && currentSettingsState.mcpPersistentNotification) {
+            // 授权后立即刷新保活通知,无需等待下次设置变更
+            McpManager.refreshKeepAliveNotification(context, true, null)
+        }
+    }
+
+    fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            notificationPermissionGranted = true
+        }
+    }
 
     var appearanceExpanded by remember { mutableStateOf(false) }
     var editorConfigExpanded by remember { mutableStateOf(false) }
@@ -1780,16 +1815,39 @@ Column(
                                             updateSettingsWithSave(
                                                 currentSettingsState.copy(mcpForegroundKeepAlive = enabled)
                                             )
+                                            if (enabled) requestNotificationPermission()
                                         }
                                     )
                                 },
                                 onClick = {
+                                    val enabled = !currentSettingsState.mcpForegroundKeepAlive
                                     updateSettingsWithSave(
                                         currentSettingsState.copy(
-                                            mcpForegroundKeepAlive = !currentSettingsState.mcpForegroundKeepAlive
+                                            mcpForegroundKeepAlive = enabled
                                         )
                                     )
+                                    if (enabled) requestNotificationPermission()
                                 }
+                            )
+
+                            // 通知权限(Android 13+ 运行时权限;未授予时保活通知不显示)
+                            SettingsListItem(
+                                title = stringResource(R.string.settings_mcp_notification_permission),
+                                subtitle = stringResource(
+                                    if (notificationPermissionGranted)
+                                        R.string.settings_mcp_notification_permission_granted
+                                    else
+                                        R.string.settings_mcp_notification_permission_denied
+                                ),
+                                leadingIcon = {
+                                    Icon(
+                                        if (notificationPermissionGranted) Icons.Filled.CheckCircle
+                                        else Icons.Filled.Info,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                },
+                                onClick = { requestNotificationPermission() }
                             )
 
                             // 通知栏常驻(仅在保活开启时才有意义)
@@ -1811,15 +1869,18 @@ Column(
                                                 updateSettingsWithSave(
                                                     currentSettingsState.copy(mcpPersistentNotification = enabled)
                                                 )
+                                                if (enabled) requestNotificationPermission()
                                             }
                                         )
                                     },
                                     onClick = {
+                                        val enabled = !currentSettingsState.mcpPersistentNotification
                                         updateSettingsWithSave(
                                             currentSettingsState.copy(
-                                                mcpPersistentNotification = !currentSettingsState.mcpPersistentNotification
+                                                mcpPersistentNotification = enabled
                                             )
                                         )
+                                        if (enabled) requestNotificationPermission()
                                     }
                                 )
                             }
