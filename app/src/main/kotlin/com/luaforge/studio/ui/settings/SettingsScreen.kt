@@ -37,10 +37,12 @@ import androidx.compose.material.icons.automirrored.filled.Comment
 import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
 import androidx.compose.material.icons.automirrored.filled.MergeType
 import androidx.compose.material.icons.automirrored.filled.TextSnippet
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ColorLens
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DataArray
@@ -110,7 +112,10 @@ import androidx.core.os.LocaleListCompat
 import com.luaforge.studio.R
 import com.luaforge.studio.mcp.McpManager
 import com.luaforge.studio.ui.components.AppIconGrid
+import com.luaforge.studio.ui.components.FilePickerDialog
+import com.luaforge.studio.ui.components.SelectionMode
 import com.luaforge.studio.ui.components.ColorPickerDialog
+import com.luaforge.studio.ui.components.tvFocusHighlight
 import com.luaforge.studio.ui.theme.ThemeType
 import com.luaforge.studio.utils.IconManager
 import com.luaforge.studio.utils.LogConfigRepository
@@ -226,7 +231,8 @@ fun SettingsScreen(
 
     var appearanceExpanded by remember { mutableStateOf(false) }
     var editorConfigExpanded by remember { mutableStateOf(false) }
-    var syntaxHighlightExpanded by remember { mutableStateOf(false) }
+    var buildSignExpanded by remember { mutableStateOf(false) }
+    var showSignPicker by remember { mutableStateOf(false) }
     var toastSettingsExpanded by remember { mutableStateOf(false) }
     var mcpExpanded by remember { mutableStateOf(false) }
     var mcpPortText by remember { mutableStateOf(currentSettingsState.mcpPort.toString()) }
@@ -1017,557 +1023,18 @@ Column(
                     )
 
                     HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
+                        modifier = Modifier.padding(vertical = 4.dp),
                         thickness = 0.5.dp,
                         color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
                     )
 
                     Text(
-                        text = stringResource(R.string.settings_build_abi),
+                        text = stringResource(R.string.settings_syntax_highlight),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Medium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
 
-                    Text(
-                        text = stringResource(R.string.settings_build_abi_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    AbiTargetNavBar(
-                        selected = currentSettingsState.abiTarget,
-                        onSelect = { target ->
-                            updateSettingsWithSave(currentSettingsState.copy(abiTarget = target))
-                        }
-                    )
-
-                }
-            }
-
-            item {
-                SettingsCardGroup(
-                    title = stringResource(R.string.settings_notification_toast),
-                    icon = Icons.Filled.Info,
-                    initiallyExpanded = toastSettingsExpanded,
-                    onExpandedChange = { toastSettingsExpanded = it }
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        Text(
-                            text = stringResource(R.string.settings_toast_position),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            FilterChip(
-                                selected = currentSettingsState.toastPosition == ToastPosition.TOP,
-                                onClick = {
-                                    updateSettingsWithSave(currentSettingsState.copy(toastPosition = ToastPosition.TOP))
-                                },
-                                label = { Text(stringResource(R.string.settings_toast_top)) }
-                            )
-
-                            FilterChip(
-                                selected = currentSettingsState.toastPosition == ToastPosition.BOTTOM,
-                                onClick = {
-                                    updateSettingsWithSave(currentSettingsState.copy(toastPosition = ToastPosition.BOTTOM))
-                                },
-                                label = { Text(stringResource(R.string.settings_toast_bottom)) }
-                            )
-                        }
-
-                        SettingsListItem(
-                            title = stringResource(R.string.settings_toast_border),
-                            subtitle = stringResource(R.string.settings_toast_border_desc),
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Filled.Info,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = currentSettingsState.toastBorderEnabled,
-                                    onCheckedChange = {
-                                        updateSettingsWithSave(currentSettingsState.copy(toastBorderEnabled = it))
-                                    }
-                                )
-                            },
-                            onClick = {
-                                updateSettingsWithSave(currentSettingsState.copy(toastBorderEnabled = !currentSettingsState.toastBorderEnabled))
-                            }
-                        )
-                    }
-                }
-            }
-
-            item {
-                SettingsCardGroup(
-                    title = stringResource(R.string.settings_mcp),
-                    icon = Icons.Filled.Hub,
-                    initiallyExpanded = mcpExpanded,
-                    onExpandedChange = { mcpExpanded = it }
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        SettingsListItem(
-                            title = stringResource(R.string.settings_mcp_enable),
-                            subtitle = stringResource(R.string.settings_mcp_enable_desc),
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Filled.Hub,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = currentSettingsState.mcpEnabled,
-                                    onCheckedChange = { enabled ->
-                                        updateSettingsWithSave(
-                                            currentSettingsState.copy(mcpEnabled = enabled)
-                                        )
-                                    }
-                                )
-                            },
-                            onClick = {
-                                updateSettingsWithSave(
-                                    currentSettingsState.copy(mcpEnabled = !currentSettingsState.mcpEnabled)
-                                )
-                            }
-                        )
-
-                        if (currentSettingsState.mcpEnabled) {
-                            OutlinedTextField(
-                                value = mcpPortText,
-                                onValueChange = { input ->
-                                    mcpPortText = input.filter { it.isDigit() }.take(5)
-                                    val parsed = mcpPortText.toIntOrNull()
-                                    if (parsed != null && parsed in 1024..65535) {
-                                        updateSettingsWithSave(
-                                            currentSettingsState.copy(mcpPort = parsed)
-                                        )
-                                    }
-                                },
-                                label = { Text(stringResource(R.string.settings_mcp_port)) },
-                                supportingText = { Text(stringResource(R.string.settings_mcp_port_desc)) },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-
-                            SettingsListItem(
-                                title = stringResource(R.string.settings_mcp_require_token),
-                                subtitle = stringResource(R.string.settings_mcp_require_token_desc),
-                                leadingIcon = {
-                                    Icon(
-                                        Icons.Filled.Lock,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                },
-                                trailingContent = {
-                                    Switch(
-                                        checked = currentSettingsState.mcpRequireToken,
-                                        onCheckedChange = { require ->
-                                            var newToken = currentSettingsState.mcpToken
-                                            if (require && newToken.isBlank()) {
-                                                newToken = SettingsManager.generateMcpToken()
-                                                mcpTokenText = newToken
-                                            }
-                                            updateSettingsWithSave(
-                                                currentSettingsState.copy(
-                                                    mcpRequireToken = require,
-                                                    mcpToken = newToken
-                                                )
-                                            )
-                                        }
-                                    )
-                                },
-                                onClick = {
-                                    var newToken = currentSettingsState.mcpToken
-                                    val require = !currentSettingsState.mcpRequireToken
-                                    if (require && newToken.isBlank()) {
-                                        newToken = SettingsManager.generateMcpToken()
-                                        mcpTokenText = newToken
-                                    }
-                                    updateSettingsWithSave(
-                                        currentSettingsState.copy(
-                                            mcpRequireToken = require,
-                                            mcpToken = newToken
-                                        )
-                                    )
-                                }
-                            )
-
-                            if (currentSettingsState.mcpRequireToken) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    OutlinedTextField(
-                                        value = mcpTokenText,
-                                        onValueChange = { input ->
-                                            mcpTokenText = input
-                                            updateSettingsWithSave(
-                                                currentSettingsState.copy(mcpToken = input)
-                                            )
-                                        },
-                                        label = { Text(stringResource(R.string.settings_mcp_token)) },
-                                        singleLine = true,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    IconButton(
-                                        onClick = {
-                                            val newToken = SettingsManager.generateMcpToken()
-                                            mcpTokenText = newToken
-                                            updateSettingsWithSave(
-                                                currentSettingsState.copy(mcpToken = newToken)
-                                            )
-                                        }
-                                    ) {
-                                        Icon(
-                                            Icons.Filled.RestartAlt,
-                                            contentDescription = stringResource(R.string.settings_mcp_generate_token)
-                                        )
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            val clipboard = context.getSystemService(
-                                                android.content.ClipboardManager::class.java
-                                            )
-                                            clipboard?.setPrimaryClip(
-                                                android.content.ClipData.newPlainText(
-                                                    "MCP Token",
-                                                    currentSettingsState.mcpToken
-                                                )
-                                            )
-                                            toast.showToast(
-                                                context.getString(R.string.settings_mcp_token_copied)
-                                            )
-                                        }
-                                    ) {
-                                        Icon(
-                                            Icons.Filled.ContentCopy,
-                                            contentDescription = stringResource(R.string.settings_mcp_copy_token)
-                                        )
-                                    }
-                                }
-                            }
-
-                            HorizontalDivider(
-                                modifier = Modifier.padding(vertical = 4.dp),
-                                thickness = 0.5.dp,
-                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.05f)
-                            )
-
-                            val mcpStatus = McpManager.status
-                            Text(
-                                text = if (mcpStatus.running) {
-                                    stringResource(R.string.settings_mcp_status_running, mcpStatus.port)
-                                } else {
-                                    stringResource(R.string.settings_mcp_status_stopped)
-                                },
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium,
-                                color = if (mcpStatus.running) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-
-                            if (mcpStatus.running && mcpStatus.addresses.isNotEmpty()) {
-                                Text(
-                                    text = stringResource(R.string.settings_mcp_endpoints),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Column(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    mcpStatus.addresses.forEach { address ->
-                                        EndpointRow(
-                                            address = address,
-                                            onCopy = {
-                                                copyToClipboard(context, "MCP Endpoint", address)
-                                                toast.showToast(
-                                                    context.getString(
-                                                        R.string.settings_mcp_address_copied
-                                                    )
-                                                )
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-
-                            if (!mcpStatus.error.isNullOrBlank()) {
-                                Text(
-                                    text = mcpStatus.error!!,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                            }
-
-                            Text(
-                                text = stringResource(R.string.settings_mcp_hint),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-
-            item {
-                SettingsCardGroup(
-                    title = stringResource(R.string.settings_security),
-                    icon = Icons.Filled.Shield,
-                    initiallyExpanded = securityExpanded,
-                    onExpandedChange = { securityExpanded = it }
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text(
-                            text = stringResource(R.string.settings_network),
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 4.dp)
-                        )
-
-                        SettingsListItem(
-                            title = stringResource(R.string.settings_network_enable),
-                            subtitle = stringResource(R.string.settings_network_enable_desc),
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Filled.Security,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = currentSettingsState.networkInterceptEnabled,
-                                    onCheckedChange = { enabled ->
-                                        updateSettingsWithSave(
-                                            currentSettingsState.copy(networkInterceptEnabled = enabled)
-                                        )
-                                    }
-                                )
-                            },
-                            onClick = {
-                                updateSettingsWithSave(
-                                    currentSettingsState.copy(
-                                        networkInterceptEnabled = !currentSettingsState.networkInterceptEnabled
-                                    )
-                                )
-                            }
-                        )
-
-                        if (currentSettingsState.networkInterceptEnabled) {
-                            HostRecordSection(
-                                title = stringResource(R.string.settings_network_allowed),
-                                description = stringResource(R.string.settings_network_allowed_desc),
-                                hosts = currentSettingsState.networkAllowedHosts,
-                                emptyText = stringResource(R.string.settings_network_allowed_empty),
-                                clearText = stringResource(R.string.settings_network_clear_all),
-                                accent = MaterialTheme.colorScheme.primary,
-                                onDelete = { host ->
-                                    updateSettingsWithSave(
-                                        currentSettingsState.copy(
-                                            networkAllowedHosts =
-                                                currentSettingsState.networkAllowedHosts - host
-                                        )
-                                    )
-                                    toast.showToast(
-                                        context.getString(
-                                            R.string.settings_network_record_deleted,
-                                            host
-                                        )
-                                    )
-                                },
-                                onClearAll = {
-                                    updateSettingsWithSave(
-                                        currentSettingsState.copy(
-                                            networkAllowedHosts = emptySet()
-                                        )
-                                    )
-                                    toast.showToast(
-                                        context.getString(R.string.settings_network_cleared_allowed)
-                                    )
-                                }
-                            )
-
-                            HostRecordSection(
-                                title = stringResource(R.string.settings_network_blocked),
-                                description = stringResource(R.string.settings_network_blocked_desc),
-                                hosts = currentSettingsState.networkBlockedHosts,
-                                emptyText = stringResource(R.string.settings_network_blocked_empty),
-                                clearText = stringResource(R.string.settings_network_clear_all),
-                                accent = MaterialTheme.colorScheme.error,
-                                onDelete = { host ->
-                                    updateSettingsWithSave(
-                                        currentSettingsState.copy(
-                                            networkBlockedHosts =
-                                                currentSettingsState.networkBlockedHosts - host
-                                        )
-                                    )
-                                    toast.showToast(
-                                        context.getString(
-                                            R.string.settings_network_record_deleted,
-                                            host
-                                        )
-                                    )
-                                },
-                                onClearAll = {
-                                    updateSettingsWithSave(
-                                        currentSettingsState.copy(
-                                            networkBlockedHosts = emptySet()
-                                        )
-                                    )
-                                    toast.showToast(
-                                        context.getString(R.string.settings_network_cleared_blocked)
-                                    )
-                                }
-                            )
-
-                            Text(
-                                text = stringResource(R.string.settings_network_hint),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            thickness = 0.5.dp,
-                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
-                        )
-
-                        Text(
-                            text = stringResource(R.string.settings_firewall),
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 4.dp)
-                        )
-
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                        SettingsListItem(
-                            title = stringResource(R.string.settings_firewall_cross_write),
-                            subtitle = stringResource(R.string.settings_firewall_cross_write_desc),
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Filled.Shield,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = currentSettingsState.crossProjectWriteGuard,
-                                    onCheckedChange = { checked ->
-                                        updateSettingsWithSave(
-                                            currentSettingsState.copy(crossProjectWriteGuard = checked)
-                                        )
-                                    }
-                                )
-                            },
-                            onClick = {
-                                updateSettingsWithSave(
-                                    currentSettingsState.copy(
-                                        crossProjectWriteGuard =
-                                            !currentSettingsState.crossProjectWriteGuard
-                                    )
-                                )
-                            }
-                        )
-
-                        HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            thickness = 0.5.dp,
-                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
-                        )
-
-                        SettingsListItem(
-                            title = stringResource(R.string.settings_firewall_self_guard),
-                            subtitle = stringResource(R.string.settings_firewall_self_guard_desc),
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Filled.Lock,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = currentSettingsState.selfGuard,
-                                    onCheckedChange = { checked ->
-                                        updateSettingsWithSave(
-                                            currentSettingsState.copy(selfGuard = checked)
-                                        )
-                                    }
-                                )
-                            },
-                            onClick = {
-                                updateSettingsWithSave(
-                                    currentSettingsState.copy(
-                                        selfGuard = !currentSettingsState.selfGuard
-                                    )
-                                )
-                            }
-                        )
-
-                        Text(
-                            text = stringResource(
-                                R.string.settings_firewall_guarded,
-                                settingsManager.firewallGuardTotal()
-                            ),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.outline,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 10.dp)
-                        )
-
-                        Text(
-                            text = stringResource(R.string.settings_firewall_hint),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                        )
-                        }
-                    }
-                }
-            }
-
-            item {
-                SettingsCardGroup(
-                    title = stringResource(R.string.settings_syntax_highlight),
-                    icon = Icons.Filled.ColorLens,
-                    initiallyExpanded = syntaxHighlightExpanded,
-                    onExpandedChange = { syntaxHighlightExpanded = it }
-                ) {
                     // 类名高亮
                     SettingsListItem(
                         title = stringResource(R.string.settings_class_name_color),
@@ -1916,6 +1383,767 @@ Column(
                             Text(stringResource(R.string.settings_reset_default_colors))
                         }
                     }
+
+                }
+            }
+
+            item {
+                SettingsCardGroup(
+                    title = stringResource(R.string.settings_build_signing),
+                    icon = Icons.Filled.Build,
+                    initiallyExpanded = buildSignExpanded,
+                    onExpandedChange = { buildSignExpanded = it }
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.settings_build_abi),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        Text(
+                            text = stringResource(R.string.settings_build_abi_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        AbiTargetNavBar(
+                            selected = currentSettingsState.abiTarget,
+                            onSelect = { target ->
+                                updateSettingsWithSave(currentSettingsState.copy(abiTarget = target))
+                            }
+                        )
+                    }
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                    )
+
+                    SettingsListItem(
+                        title = stringResource(R.string.settings_sign_custom_enable),
+                        subtitle = stringResource(R.string.settings_sign_custom_enable_desc),
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Lock,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = currentSettingsState.signCustomEnabled,
+                                onCheckedChange = { enabled ->
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(signCustomEnabled = enabled)
+                                    )
+                                }
+                            )
+                        },
+                        onClick = {
+                            updateSettingsWithSave(
+                                currentSettingsState.copy(signCustomEnabled = !currentSettingsState.signCustomEnabled)
+                            )
+                        }
+                    )
+
+                    if (currentSettingsState.signCustomEnabled) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = currentSettingsState.signStorePath,
+                                    onValueChange = { path ->
+                                        updateSettingsWithSave(
+                                            currentSettingsState.copy(signStorePath = path)
+                                        )
+                                    },
+                                    label = { Text(stringResource(R.string.settings_sign_store_path)) },
+                                    placeholder = { Text(stringResource(R.string.settings_sign_store_path_hint)) },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                IconButton(onClick = { showSignPicker = true }) {
+                                    Icon(
+                                        Icons.Filled.Extension,
+                                        contentDescription = stringResource(R.string.settings_sign_pick_file)
+                                    )
+                                }
+                            }
+
+                            OutlinedTextField(
+                                value = currentSettingsState.signStorePassword,
+                                onValueChange = { pwd ->
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(signStorePassword = pwd)
+                                    )
+                                },
+                                label = { Text(stringResource(R.string.settings_sign_store_password)) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            OutlinedTextField(
+                                value = currentSettingsState.signKeyAlias,
+                                onValueChange = { alias ->
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(signKeyAlias = alias)
+                                    )
+                                },
+                                label = { Text(stringResource(R.string.settings_sign_key_alias)) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            OutlinedTextField(
+                                value = currentSettingsState.signKeyPassword,
+                                onValueChange = { pwd ->
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(signKeyPassword = pwd)
+                                    )
+                                },
+                                label = { Text(stringResource(R.string.settings_sign_key_password)) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            val signIncomplete = currentSettingsState.signStorePath.isBlank() ||
+                                currentSettingsState.signKeyAlias.isBlank()
+                            if (signIncomplete) {
+                                Text(
+                                    text = stringResource(R.string.settings_sign_incomplete),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                SettingsCardGroup(
+                    title = stringResource(R.string.settings_notification_toast),
+                    icon = Icons.Filled.Info,
+                    initiallyExpanded = toastSettingsExpanded,
+                    onExpandedChange = { toastSettingsExpanded = it }
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.settings_toast_position),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = currentSettingsState.toastPosition == ToastPosition.TOP,
+                                onClick = {
+                                    updateSettingsWithSave(currentSettingsState.copy(toastPosition = ToastPosition.TOP))
+                                },
+                                label = { Text(stringResource(R.string.settings_toast_top)) }
+                            )
+
+                            FilterChip(
+                                selected = currentSettingsState.toastPosition == ToastPosition.BOTTOM,
+                                onClick = {
+                                    updateSettingsWithSave(currentSettingsState.copy(toastPosition = ToastPosition.BOTTOM))
+                                },
+                                label = { Text(stringResource(R.string.settings_toast_bottom)) }
+                            )
+                        }
+
+                        SettingsListItem(
+                            title = stringResource(R.string.settings_toast_border),
+                            subtitle = stringResource(R.string.settings_toast_border_desc),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Info,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = currentSettingsState.toastBorderEnabled,
+                                    onCheckedChange = {
+                                        updateSettingsWithSave(currentSettingsState.copy(toastBorderEnabled = it))
+                                    }
+                                )
+                            },
+                            onClick = {
+                                updateSettingsWithSave(currentSettingsState.copy(toastBorderEnabled = !currentSettingsState.toastBorderEnabled))
+                            }
+                        )
+                    }
+                }
+            }
+
+            item {
+                SettingsCardGroup(
+                    title = stringResource(R.string.settings_mcp),
+                    icon = Icons.Filled.Hub,
+                    initiallyExpanded = mcpExpanded,
+                    onExpandedChange = { mcpExpanded = it }
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        SettingsListItem(
+                            title = stringResource(R.string.settings_mcp_enable),
+                            subtitle = stringResource(R.string.settings_mcp_enable_desc),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Hub,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = currentSettingsState.mcpEnabled,
+                                    onCheckedChange = { enabled ->
+                                        updateSettingsWithSave(
+                                            currentSettingsState.copy(mcpEnabled = enabled)
+                                        )
+                                    }
+                                )
+                            },
+                            onClick = {
+                                updateSettingsWithSave(
+                                    currentSettingsState.copy(mcpEnabled = !currentSettingsState.mcpEnabled)
+                                )
+                            }
+                        )
+
+                        if (currentSettingsState.mcpEnabled) {
+                            OutlinedTextField(
+                                value = mcpPortText,
+                                onValueChange = { input ->
+                                    mcpPortText = input.filter { it.isDigit() }.take(5)
+                                    val parsed = mcpPortText.toIntOrNull()
+                                    if (parsed != null && parsed in 1024..65535) {
+                                        updateSettingsWithSave(
+                                            currentSettingsState.copy(mcpPort = parsed)
+                                        )
+                                    }
+                                },
+                                label = { Text(stringResource(R.string.settings_mcp_port)) },
+                                supportingText = { Text(stringResource(R.string.settings_mcp_port_desc)) },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            SettingsListItem(
+                                title = stringResource(R.string.settings_mcp_require_token),
+                                subtitle = stringResource(R.string.settings_mcp_require_token_desc),
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Lock,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                },
+                                trailingContent = {
+                                    Switch(
+                                        checked = currentSettingsState.mcpRequireToken,
+                                        onCheckedChange = { require ->
+                                            var newToken = currentSettingsState.mcpToken
+                                            if (require && newToken.isBlank()) {
+                                                newToken = SettingsManager.generateMcpToken()
+                                                mcpTokenText = newToken
+                                            }
+                                            updateSettingsWithSave(
+                                                currentSettingsState.copy(
+                                                    mcpRequireToken = require,
+                                                    mcpToken = newToken
+                                                )
+                                            )
+                                        }
+                                    )
+                                },
+                                onClick = {
+                                    var newToken = currentSettingsState.mcpToken
+                                    val require = !currentSettingsState.mcpRequireToken
+                                    if (require && newToken.isBlank()) {
+                                        newToken = SettingsManager.generateMcpToken()
+                                        mcpTokenText = newToken
+                                    }
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(
+                                            mcpRequireToken = require,
+                                            mcpToken = newToken
+                                        )
+                                    )
+                                }
+                            )
+
+                            if (currentSettingsState.mcpRequireToken) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = mcpTokenText,
+                                        onValueChange = { input ->
+                                            mcpTokenText = input
+                                            updateSettingsWithSave(
+                                                currentSettingsState.copy(mcpToken = input)
+                                            )
+                                        },
+                                        label = { Text(stringResource(R.string.settings_mcp_token)) },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    IconButton(
+                                        onClick = {
+                                            val newToken = SettingsManager.generateMcpToken()
+                                            mcpTokenText = newToken
+                                            updateSettingsWithSave(
+                                                currentSettingsState.copy(mcpToken = newToken)
+                                            )
+                                        }
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.RestartAlt,
+                                            contentDescription = stringResource(R.string.settings_mcp_generate_token)
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            val clipboard = context.getSystemService(
+                                                android.content.ClipboardManager::class.java
+                                            )
+                                            clipboard?.setPrimaryClip(
+                                                android.content.ClipData.newPlainText(
+                                                    "MCP Token",
+                                                    currentSettingsState.mcpToken
+                                                )
+                                            )
+                                            toast.showToast(
+                                                context.getString(R.string.settings_mcp_token_copied)
+                                            )
+                                        }
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.ContentCopy,
+                                            contentDescription = stringResource(R.string.settings_mcp_copy_token)
+                                        )
+                                    }
+                                }
+                            }
+
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                thickness = 0.5.dp,
+                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.05f)
+                            )
+
+                            // 前台保活:以前台服务常驻,降低退后台被回收的概率
+                            SettingsListItem(
+                                title = stringResource(R.string.settings_mcp_foreground_keepalive),
+                                subtitle = stringResource(R.string.settings_mcp_foreground_keepalive_desc),
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Security,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                },
+                                trailingContent = {
+                                    Switch(
+                                        checked = currentSettingsState.mcpForegroundKeepAlive,
+                                        onCheckedChange = { enabled ->
+                                            updateSettingsWithSave(
+                                                currentSettingsState.copy(mcpForegroundKeepAlive = enabled)
+                                            )
+                                        }
+                                    )
+                                },
+                                onClick = {
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(
+                                            mcpForegroundKeepAlive = !currentSettingsState.mcpForegroundKeepAlive
+                                        )
+                                    )
+                                }
+                            )
+
+                            // 通知栏常驻(仅在保活开启时才有意义)
+                            if (currentSettingsState.mcpForegroundKeepAlive) {
+                                SettingsListItem(
+                                    title = stringResource(R.string.settings_mcp_persistent_notification),
+                                    subtitle = stringResource(R.string.settings_mcp_persistent_notification_desc),
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Filled.Info,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    },
+                                    trailingContent = {
+                                        Switch(
+                                            checked = currentSettingsState.mcpPersistentNotification,
+                                            onCheckedChange = { enabled ->
+                                                updateSettingsWithSave(
+                                                    currentSettingsState.copy(mcpPersistentNotification = enabled)
+                                                )
+                                            }
+                                        )
+                                    },
+                                    onClick = {
+                                        updateSettingsWithSave(
+                                            currentSettingsState.copy(
+                                                mcpPersistentNotification = !currentSettingsState.mcpPersistentNotification
+                                            )
+                                        )
+                                    }
+                                )
+                            }
+
+                            // 电池优化豁免:进一步保障后台存活
+                            SettingsListItem(
+                                title = stringResource(R.string.settings_mcp_battery_exempt),
+                                subtitle = stringResource(R.string.settings_mcp_battery_exempt_desc),
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Filled.Security,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                },
+                                trailingContent = {
+                                    val exempt = com.luaforge.studio.utils.BatteryOptimization
+                                        .isIgnoringBatteryOptimizations(context)
+                                    Icon(
+                                        if (exempt) Icons.Filled.CheckCircle else Icons.Filled.Security,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                },
+                                onClick = {
+                                    val ran = com.luaforge.studio.utils.BatteryOptimization
+                                        .requestExemption(context)
+                                    if (!ran) {
+                                        toast.showToast(
+                                            context.getString(R.string.settings_mcp_battery_exempt_unavailable)
+                                        )
+                                    } else {
+                                        updateSettingsWithSave(
+                                            currentSettingsState.copy(mcpBatteryExempt = true)
+                                        )
+                                    }
+                                }
+                            )
+
+                            val mcpStatus = McpManager.status
+                            Text(
+                                text = if (mcpStatus.running) {
+                                    stringResource(R.string.settings_mcp_status_running, mcpStatus.port)
+                                } else {
+                                    stringResource(R.string.settings_mcp_status_stopped)
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = if (mcpStatus.running) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            if (mcpStatus.running && mcpStatus.addresses.isNotEmpty()) {
+                                Text(
+                                    text = stringResource(R.string.settings_mcp_endpoints),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    mcpStatus.addresses.forEach { address ->
+                                        EndpointRow(
+                                            address = address,
+                                            onCopy = {
+                                                copyToClipboard(context, "MCP Endpoint", address)
+                                                toast.showToast(
+                                                    context.getString(
+                                                        R.string.settings_mcp_address_copied
+                                                    )
+                                                )
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (!mcpStatus.error.isNullOrBlank()) {
+                                Text(
+                                    text = mcpStatus.error!!,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+
+                            Text(
+                                text = stringResource(R.string.settings_mcp_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                SettingsCardGroup(
+                    title = stringResource(R.string.settings_security),
+                    icon = Icons.Filled.Shield,
+                    initiallyExpanded = securityExpanded,
+                    onExpandedChange = { securityExpanded = it }
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.settings_network),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                        )
+
+                        SettingsListItem(
+                            title = stringResource(R.string.settings_network_enable),
+                            subtitle = stringResource(R.string.settings_network_enable_desc),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Security,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = currentSettingsState.networkInterceptEnabled,
+                                    onCheckedChange = { enabled ->
+                                        updateSettingsWithSave(
+                                            currentSettingsState.copy(networkInterceptEnabled = enabled)
+                                        )
+                                    }
+                                )
+                            },
+                            onClick = {
+                                updateSettingsWithSave(
+                                    currentSettingsState.copy(
+                                        networkInterceptEnabled = !currentSettingsState.networkInterceptEnabled
+                                    )
+                                )
+                            }
+                        )
+
+                        if (currentSettingsState.networkInterceptEnabled) {
+                            HostRecordSection(
+                                title = stringResource(R.string.settings_network_allowed),
+                                description = stringResource(R.string.settings_network_allowed_desc),
+                                hosts = currentSettingsState.networkAllowedHosts,
+                                emptyText = stringResource(R.string.settings_network_allowed_empty),
+                                clearText = stringResource(R.string.settings_network_clear_all),
+                                accent = MaterialTheme.colorScheme.primary,
+                                onDelete = { host ->
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(
+                                            networkAllowedHosts =
+                                                currentSettingsState.networkAllowedHosts - host
+                                        )
+                                    )
+                                    toast.showToast(
+                                        context.getString(
+                                            R.string.settings_network_record_deleted,
+                                            host
+                                        )
+                                    )
+                                },
+                                onClearAll = {
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(
+                                            networkAllowedHosts = emptySet()
+                                        )
+                                    )
+                                    toast.showToast(
+                                        context.getString(R.string.settings_network_cleared_allowed)
+                                    )
+                                }
+                            )
+
+                            HostRecordSection(
+                                title = stringResource(R.string.settings_network_blocked),
+                                description = stringResource(R.string.settings_network_blocked_desc),
+                                hosts = currentSettingsState.networkBlockedHosts,
+                                emptyText = stringResource(R.string.settings_network_blocked_empty),
+                                clearText = stringResource(R.string.settings_network_clear_all),
+                                accent = MaterialTheme.colorScheme.error,
+                                onDelete = { host ->
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(
+                                            networkBlockedHosts =
+                                                currentSettingsState.networkBlockedHosts - host
+                                        )
+                                    )
+                                    toast.showToast(
+                                        context.getString(
+                                            R.string.settings_network_record_deleted,
+                                            host
+                                        )
+                                    )
+                                },
+                                onClearAll = {
+                                    updateSettingsWithSave(
+                                        currentSettingsState.copy(
+                                            networkBlockedHosts = emptySet()
+                                        )
+                                    )
+                                    toast.showToast(
+                                        context.getString(R.string.settings_network_cleared_blocked)
+                                    )
+                                }
+                            )
+
+                            Text(
+                                text = stringResource(R.string.settings_network_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                        )
+
+                        Text(
+                            text = stringResource(R.string.settings_firewall),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                        )
+
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                        SettingsListItem(
+                            title = stringResource(R.string.settings_firewall_cross_write),
+                            subtitle = stringResource(R.string.settings_firewall_cross_write_desc),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Shield,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = currentSettingsState.crossProjectWriteGuard,
+                                    onCheckedChange = { checked ->
+                                        updateSettingsWithSave(
+                                            currentSettingsState.copy(crossProjectWriteGuard = checked)
+                                        )
+                                    }
+                                )
+                            },
+                            onClick = {
+                                updateSettingsWithSave(
+                                    currentSettingsState.copy(
+                                        crossProjectWriteGuard =
+                                            !currentSettingsState.crossProjectWriteGuard
+                                    )
+                                )
+                            }
+                        )
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                        )
+
+                        SettingsListItem(
+                            title = stringResource(R.string.settings_firewall_self_guard),
+                            subtitle = stringResource(R.string.settings_firewall_self_guard_desc),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Lock,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = currentSettingsState.selfGuard,
+                                    onCheckedChange = { checked ->
+                                        updateSettingsWithSave(
+                                            currentSettingsState.copy(selfGuard = checked)
+                                        )
+                                    }
+                                )
+                            },
+                            onClick = {
+                                updateSettingsWithSave(
+                                    currentSettingsState.copy(
+                                        selfGuard = !currentSettingsState.selfGuard
+                                    )
+                                )
+                            }
+                        )
+
+                        Text(
+                            text = stringResource(
+                                R.string.settings_firewall_guarded,
+                                settingsManager.firewallGuardTotal()
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 10.dp)
+                        )
+
+                        Text(
+                            text = stringResource(R.string.settings_firewall_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                        )
+                        }
+                    }
                 }
             }
 
@@ -2067,6 +2295,21 @@ Column(
         )
     }
 
+    // 自定义签名文件选择
+    if (showSignPicker) {
+        FilePickerDialog(
+            initialPath = android.os.Environment.getExternalStorageDirectory().absolutePath,
+            selectionMode = SelectionMode.FILE,
+            title = stringResource(R.string.settings_sign_store_path),
+            allowedExtensions = listOf("jks", "keystore"),
+            onDismiss = { showSignPicker = false },
+            onFileSelected = { path ->
+                updateSettingsWithSave(currentSettingsState.copy(signStorePath = path))
+                showSignPicker = false
+            }
+        )
+    }
+
     // 颜色选择器对话框
     if (showColorPicker && colorToEdit != null) {
         ColorPickerDialog(
@@ -2095,7 +2338,8 @@ fun SettingsListItem(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 2.dp),
+            .padding(horizontal = 4.dp, vertical = 2.dp)
+            .tvFocusHighlight(MaterialTheme.colorScheme.primary, cornerRadius = 12),
         shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface,

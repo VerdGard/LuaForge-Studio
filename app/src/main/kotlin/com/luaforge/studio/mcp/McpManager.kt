@@ -40,6 +40,7 @@ object McpManager {
 
         if (!settings.mcpEnabled) {
             stop()
+            McpKeepAliveService.stop(context)
             return
         }
 
@@ -52,10 +53,13 @@ object McpManager {
             status.port == settings.mcpPort &&
             status.token == effectiveToken
         ) {
+            syncKeepAlive(context, settings)
             return
         }
 
         start(context, settings.mcpPort, effectiveToken)
+        // 启动(或重启)后同步前台保活:重启场景下通知里的地址需要刷新
+        syncKeepAlive(context, settings)
     }
 
     @Synchronized
@@ -95,6 +99,25 @@ object McpManager {
             )
             false
         }
+    }
+
+    /**
+     * 根据设置同步前台保活服务:开启则(重新)启动并刷新通知中的地址,关闭则停止。
+     * 仅在服务器实际运行时保活才有意义。
+     */
+    private fun syncKeepAlive(context: Context, settings: SettingsData) {
+        if (settings.mcpForegroundKeepAlive && isRunning()) {
+            val address = status.addresses.firstOrNull().orEmpty()
+            McpKeepAliveService.start(context, address, settings.mcpPersistentNotification)
+        } else {
+            McpKeepAliveService.stop(context)
+        }
+    }
+
+    /** 刷新前台保活通知中展示的地址(端口/网卡变化后调用)。 */
+    fun refreshKeepAliveNotification(context: Context, showNotification: Boolean, address: String?) {
+        if (!isRunning()) return
+        McpKeepAliveService.start(context, address ?: status.addresses.firstOrNull().orEmpty(), showNotification)
     }
 
     @Synchronized

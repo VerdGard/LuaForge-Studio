@@ -121,4 +121,9 @@ dependencies {
 
     // HTTP Client (OkHttp)
     api(libs.okhttp)
+
+    // Video Playback (Media3 / ExoPlayer)
+    api(libs.media3.exoplayer)
+    api(libs.media3.ui)
+    api(libs.media3.common)
 }

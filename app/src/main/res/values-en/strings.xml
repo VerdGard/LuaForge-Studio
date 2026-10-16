@@ -630,6 +630,22 @@
     <string name="settings_mcp_status_stopped">Stopped</string>
     <string name="settings_mcp_hint">Add the HTTP endpoint in your MCP client to call tools. The service lives with the app process and stops when the app exits.</string>
 
+    <string name="settings_mcp_foreground_keepalive">Foreground keep-alive</string>
+    <string name="settings_mcp_foreground_keepalive_desc">Run as a foreground service to reduce the chance of being killed in the background</string>
+    <string name="settings_mcp_persistent_notification">Persistent notification</string>
+    <string name="settings_mcp_persistent_notification_desc">Show a persistent notification while keeping alive; tap the button to copy the MCP address</string>
+    <string name="settings_mcp_battery_exempt">Battery optimization exemption</string>
+    <string name="settings_mcp_battery_exempt_desc">Request battery optimization whitelist for better background survival</string>
+    <string name="settings_mcp_battery_exempt_requested">Battery exemption requested</string>
+    <string name="settings_mcp_battery_exempt_unavailable">Not supported or not needed on this device</string>
+    <string name="settings_mcp_battery_exempt_denied">Not whitelisted; you can allow it manually in system settings later</string>
+    <string name="mcp_notification_channel">MCP service keep-alive</string>
+    <string name="mcp_notification_channel_desc">Foreground keep-alive notification for MCP service</string>
+    <string name="mcp_notification_title">LuaForge MCP service running</string>
+    <string name="mcp_notification_text">Address: %1$s (tap the button to copy)</string>
+    <string name="mcp_notification_text_unknown">MCP service kept alive in background</string>
+    <string name="mcp_notification_copy">Copy address</string>
+
     <string name="settings_network">Network Request Interception</string>
     <string name="settings_security">Security</string>
     <string name="settings_network_enable">Intercept Network Requests</string>
@@ -689,5 +705,59 @@
     <string name="code_editor_build_type_release_desc">Disable debug mode</string>
     <string name="code_editor_build_type_default_desc">Build using the encryption and debug settings from project properties</string>
     <string name="code_editor_build_start">Start build</string>
+
+    <string name="settings_build_signing">Build &amp; Signing</string>
+    <string name="settings_build_signing_desc">Packaging ABI and APK signing configuration</string>
+    <string name="settings_sign_custom_enable">Use custom signing file</string>
+    <string name="settings_sign_custom_enable_desc">When off, the built-in default signing is used; turn on to specify your own keystore</string>
+    <string name="settings_sign_store_path">Keystore path</string>
+    <string name="settings_sign_store_path_hint">Select a .jks / .keystore file</string>
+    <string name="settings_sign_pick_file">Pick file</string>
+    <string name="settings_sign_store_password">Keystore password</string>
+    <string name="settings_sign_key_alias">Key alias</string>
+    <string name="settings_sign_key_password">Key password</string>
+    <string name="settings_sign_incomplete">Signing config incomplete; falls back to built-in signing</string>
+
+    <string name="collab_title">Collaboration</string>
+    <string name="collab_role_host">Host</string>
+    <string name="collab_role_client">Client</string>
+    <string name="collab_role_select">Role</string>
+    <string name="collab_shared_project">Shared project</string>
+    <string name="collab_shared_project_desc">Choose the project directory to share on the LAN</string>
+    <string name="collab_local_project">Local sync directory</string>
+    <string name="collab_local_project_desc">The client syncs the remote project into this directory</string>
+    <string name="collab_pick_project">Pick project</string>
+    <string name="collab_pick_dir">Pick directory</string>
+    <string name="collab_port">Listen port</string>
+    <string name="collab_token">Access token (optional)</string>
+    <string name="collab_remote_host">Host address</string>
+    <string name="collab_remote_host_hint">e.g. 192.168.1.10</string>
+    <string name="collab_remote_port">Host port</string>
+    <string name="collab_start">Start collab</string>
+    <string name="collab_stop">Stop collab</string>
+    <string name="collab_running">Running</string>
+    <string name="collab_stopped">Stopped</string>
+    <string name="collab_connect">Connect &amp; sync</string>
+    <string name="collab_sync_now">Sync now</string>
+    <string name="collab_rev">Revision %1$d</string>
+    <string name="collab_endpoints">Share addresses</string>
+    <string name="collab_history">Commit history</string>
+    <string name="collab_snapshot">Commit snapshot</string>
+    <string name="collab_snapshot_desc">Commit the current project state as a git snapshot</string>
+    <string name="collab_snapshot_message">Snapshot message</string>
+    <string name="collab_rollback">Rollback</string>
+    <string name="collab_rollback_confirm">Rollback to this commit? The working tree will be overwritten.</string>
+    <string name="collab_rolled_back">Rolled back to %1$s</string>
+    <string name="collab_no_history">No commits yet</string>
+    <string name="collab_author">Author</string>
+    <string name="collab_status_title">Collab status</string>
+    <string name="collab_error">Error: %1$s</string>
+    <string name="collab_need_host">Please enter the host address</string>
+    <string name="collab_need_project">Please choose a project directory</string>
+    <string name="collab_started">Collaboration started</string>
+    <string name="collab_start_failed">Failed to start collaboration</string>
+    <string name="collab_changes">%1$d changes pending</string>
+    <string name="collab_refresh">Refresh</string>
+    <string name="collab_snapshot_hint">Enter a message for this snapshot</string>
 
 </resources>

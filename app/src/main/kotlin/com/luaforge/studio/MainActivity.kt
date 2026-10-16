@@ -63,11 +63,14 @@ import androidx.lifecycle.lifecycleScope
 import coil.compose.SubcomposeAsyncImage
 import com.luaforge.studio.ui.editor.persistence.EditorStateUtil
 import com.luaforge.studio.ui.about.AboutScreen
+import com.luaforge.studio.collab.CollabManager
 import com.luaforge.studio.mcp.McpManager
 import com.luaforge.studio.network.NetworkApprovalManager
 import com.luaforge.studio.ui.components.FilePickerDialog
 import com.luaforge.studio.ui.components.SelectionMode
 import com.luaforge.studio.ui.components.Toast
+import com.luaforge.studio.ui.components.tvFocusHighlight
+import com.luaforge.studio.ui.collab.CollabScreen
 import com.luaforge.studio.ui.editor.CodeEditScreen
 import com.luaforge.studio.ui.project.NewProjectScreen
 import com.luaforge.studio.ui.settings.DarkMode
@@ -113,6 +116,7 @@ data class ProjectItem(
 enum class MainContentType {
     PROJECTS,
     SETTINGS,
+    COLLAB,
     ABOUT
 }
 
@@ -134,12 +138,20 @@ fun MainApp() {
     val settings = SettingsManager.currentSettings
     val toastPosition = settings.toastPosition
 
+    // 协同管理器初始化(不在启动时自动连/开,由协同页手动触发)
+    LaunchedEffect(Unit) {
+        CollabManager.initialize(context)
+    }
+
     // MCP 服务随设置变化同步启停(端口/令牌变化会自动重启)
     LaunchedEffect(Unit) {
         McpManager.initialize(context)
         McpManager.applySettings(SettingsManager.currentSettings)
     }
-    LaunchedEffect(settings.mcpEnabled, settings.mcpPort, settings.mcpToken, settings.mcpRequireToken) {
+    LaunchedEffect(
+        settings.mcpEnabled, settings.mcpPort, settings.mcpToken, settings.mcpRequireToken,
+        settings.mcpForegroundKeepAlive, settings.mcpPersistentNotification
+    ) {
         McpManager.applySettings(settings)
     }
 
@@ -415,7 +427,12 @@ fun MainScreen(
     }
 
     val pageOrder =
-        listOf(MainContentType.PROJECTS, MainContentType.SETTINGS, MainContentType.ABOUT)
+        listOf(
+            MainContentType.PROJECTS,
+            MainContentType.SETTINGS,
+            MainContentType.COLLAB,
+            MainContentType.ABOUT
+        )
 
     fun showToast(message: String) {
         toast.showToast(message)
@@ -825,6 +842,7 @@ fun MainScreen(
                                 text = when (currentContentType) {
                                     MainContentType.PROJECTS -> stringResource(R.string.app_name)
                                     MainContentType.SETTINGS -> stringResource(R.string.settings)
+                                    MainContentType.COLLAB -> stringResource(R.string.collab_title)
                                     MainContentType.ABOUT -> stringResource(R.string.about)
                                 },
                                 maxLines = 1,
@@ -918,7 +936,7 @@ fun MainScreen(
                                 }
                             }
 
-                            MainContentType.SETTINGS, MainContentType.ABOUT -> {
+                            MainContentType.SETTINGS, MainContentType.COLLAB, MainContentType.ABOUT -> {
                             }
                         }
                     },
@@ -951,7 +969,7 @@ fun MainScreen(
                         )
                     }
 
-                    MainContentType.SETTINGS, MainContentType.ABOUT -> {
+                    MainContentType.SETTINGS, MainContentType.COLLAB, MainContentType.ABOUT -> {
                     }
                 }
             },
@@ -1039,6 +1057,20 @@ fun MainScreen(
 
                         MainContentType.SETTINGS -> {
                             SettingsScreen(
+                                onBack = {
+                                    shouldReturnToProjects = true
+                                },
+                                currentSettings = currentSettings,
+                                onSettingsChanged = { newSettings ->
+                                    settingsManager.updateSettings(newSettings)
+                                    settingsManager.saveSettings(context)
+                                },
+                                toast = toast
+                            )
+                        }
+
+                        MainContentType.COLLAB -> {
+                            CollabScreen(
                                 onBack = {
                                     shouldReturnToProjects = true
                                 },
@@ -1295,7 +1327,7 @@ fun ProjectCard(
     }
 
     Card(
-        modifier = modifier,
+        modifier = modifier.tvFocusHighlight(colorScheme.primary, cornerRadius = 12),
         shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(
             containerColor = colorScheme.surfaceContainerLow

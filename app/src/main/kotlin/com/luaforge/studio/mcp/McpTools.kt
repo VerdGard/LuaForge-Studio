@@ -22,6 +22,7 @@ import com.luaforge.studio.utils.JsonUtil
 import com.luaforge.studio.utils.LuaParserUtil
 import com.luaforge.studio.utils.FileUtil
 import com.luaforge.studio.utils.LogCatcher
+import com.luaforge.studio.collab.CollabManager
 import com.luaforge.studio.utils.ProjectUtil
 import com.luaforge.studio.widget.BuiltinWidgets
 import com.luajava.LuaObject
@@ -156,6 +157,25 @@ object McpTools {
                 required = arrayOf("path")
             )
         )
+
+        tools.put(
+            tool(
+                "copy_file",
+                "从其他项目(或其他目录)复制文件/目录到当前项目内。" +
+                    "source 可为绝对路径,或 \"项目名/相对路径\"(相对项目根目录);" +
+                    "传入 fromProject 时,source 相对该项目根解析。" +
+                    "默认复制到当前项目根下的同名文件,可用 target 指定目标相对路径(项目内)。",
+                obj(
+                    "source" to strProp("源文件/目录路径:绝对路径、或相对 fromProject/项目根目录"),
+                    "fromProject" to strProp("源所在项目名或路径,缺省先在项目根目录下按 source 查找"),
+                    "target" to strProp("目标路径(项目内相对路径);缺省用源文件名置于项目根目录"),
+                    "overwrite" to boolProp("目标已存在时是否覆盖,默认 false"),
+                    "recursive" to boolProp("复制目录时是否递归,默认 true")
+                ),
+                required = arrayOf("source")
+            )
+        )
+
 
         tools.put(
             tool(
@@ -601,6 +621,7 @@ object McpTools {
                 "write_file" -> writeFile(context, args)
                 "create_file" -> createFile(context, args)
                 "delete_file" -> deleteFile(context, args)
+                "copy_file" -> copyFile(context, args)
                 "get_project_info" -> getProjectInfo(context, args)
                 "get_editor_state" -> getEditorState()
                 "open_file" -> openFile(context, args)
@@ -892,6 +913,8 @@ object McpTools {
         // 该文件若正在编辑器中打开,必须把新内容推回编辑器;
         // 否则编辑器仍持有旧内容,用户之后一保存就会把外部写入覆盖掉。
         val synced = syncEditorIfOpen(file.absolutePath)
+        // 协同共享端:把本次写入登记为变更,连接端据此实时同步
+        recordCollabChange(context, file.absolutePath, deleted = false)
         val result = JSONObject()
             .put("path", file.absolutePath)
             .put("mode", mode)
@@ -904,6 +927,132 @@ object McpTools {
             result.put("replacedLines", JSONObject().put("from", replacedFrom).put("to", replacedTo))
         }
         return textResult(result.toString(2))
+    }
+
+    /**
+     * 从其他项目/目录复制文件(或目录)到当前项目内。
+     *
+     * 源解析顺序:
+     * 1. source 为绝对路径 → 直接使用;
+     * 2. 传了 fromProject → 先按项目名在项目根下解析,否则当作路径;
+     * 3. 否则先在项目根目录下按 source 相对路径查找,再回退到「项目名/相对路径」拆分解析。
+     *
+     * 目标始终限制在当前项目根目录内(isAllowed 校验),避免越界写入。
+     */
+    private suspend fun copyFile(context: Context, args: JSONObject): JSONObject {
+        val rawSource = args.optString("source", "").trim()
+        if (rawSource.isBlank()) return errorResult("缺少参数 source")
+
+        val fromProject = args.optString("fromProject", "").trim()
+        val overwrite = args.optBoolean("overwrite", false)
+        val recursive = args.optBoolean("recursive", true)
+
+        val source = resolveCopySource(context, rawSource, fromProject)
+            ?: return errorResult("源路径不存在: $rawSource")
+        if (!isAllowed(context, source)) return errorResult("源路径不在允许范围内: ${source.absolutePath}")
+
+        // 目标:项目根目录内。target 缺省取源文件名
+        val targetRaw = args.optString("target", "").ifBlank { source.name }
+        val target = resolveProject(context, targetRaw)
+        if (!isAllowed(context, target)) {
+            return errorResult("目标路径不在允许范围内(仅允许项目内): ${target.absolutePath}")
+        }
+
+        if (!source.exists()) return errorResult("源路径不存在: ${source.absolutePath}")
+        if (source.isDirectory && !recursive) {
+            return errorResult("源为目录且 recursive=false: ${source.absolutePath}")
+        }
+
+        if (target.exists() && !overwrite) {
+            return errorResult("目标已存在(overwrite=false): ${target.absolutePath}")
+        }
+
+        val copied = withContext(Dispatchers.IO) {
+            runCatching {
+                if (source.isDirectory) {
+                    copyDirectory(source, target)
+                } else {
+                    target.parentFile?.mkdirs()
+                    source.copyTo(target, overwrite = true)
+                }
+            }.getOrElse { e ->
+                return@withContext e
+            }
+        }
+        if (copied is Throwable) {
+            return errorResult("复制失败: ${copied.message}")
+        }
+
+        val files = if (source.isDirectory) countFiles(target) else 1
+        return textResult(
+            JSONObject()
+                .put("source", source.absolutePath)
+                .put("target", target.absolutePath)
+                .put("isDirectory", source.isDirectory)
+                .put("filesCopied", files)
+                .put("bytes", if (source.isDirectory) 0L else source.length())
+                .put("message", "复制成功")
+                .toString(2)
+        )
+    }
+
+    /** 解析复制源:绝对路径优先,其次 fromProject,再次项目根与「项目名/子路径」。 */
+    private fun resolveCopySource(context: Context, rawSource: String, fromProject: String): File? {
+        val direct = File(rawSource)
+        if (direct.isAbsolute) return direct
+
+        val projectsRoot = projectsRoot(context)
+
+        if (fromProject.isNotBlank()) {
+            val projDir = run {
+                val f = File(fromProject)
+                if (f.isAbsolute) f else File(projectsRoot, fromProject)
+            }
+            val candidate = File(projDir, rawSource)
+            if (candidate.exists()) return candidate
+        }
+
+        // 先按项目根下相对路径
+        val inRoot = File(projectsRoot, rawSource)
+        if (inRoot.exists()) return inRoot
+
+        // 再按「项目名/子路径」拆分
+        val firstSlash = rawSource.indexOf('/')
+        if (firstSlash > 0) {
+            val projName = rawSource.substring(0, firstSlash)
+            val rest = rawSource.substring(firstSlash + 1)
+            val candidate = File(File(projectsRoot, projName), rest)
+            if (candidate.exists()) return candidate
+        }
+        return null
+    }
+
+    /** 递归复制目录(覆盖同名文件)。 */
+    private fun copyDirectory(src: File, dst: File) {
+        if (!dst.exists()) dst.mkdirs()
+        src.listFiles()?.forEach { child ->
+            val targetChild = File(dst, child.name)
+            if (child.isDirectory) {
+                copyDirectory(child, targetChild)
+            } else {
+                targetChild.parentFile?.mkdirs()
+                child.copyTo(targetChild, overwrite = true)
+            }
+        }
+    }
+
+    /** 统计目录下文件数量。 */
+    private fun countFiles(dir: File): Int {
+        var count = 0
+        val queue = ArrayDeque<File>()
+        queue.add(dir)
+        while (queue.isNotEmpty()) {
+            val d = queue.removeFirst()
+            d.listFiles()?.forEach { child ->
+                if (child.isDirectory) queue.add(child) else count++
+            }
+        }
+        return count
     }
 
     private suspend fun createFile(context: Context, args: JSONObject): JSONObject {
@@ -925,6 +1074,7 @@ object McpTools {
         }
         // 覆盖已有文件时同样要刷新编辑器,避免旧缓冲区回写覆盖
         val synced = syncEditorIfOpen(file.absolutePath)
+        recordCollabChange(context, file.absolutePath, deleted = false)
         return textResult(
             JSONObject()
                 .put("path", file.absolutePath)
@@ -948,6 +1098,7 @@ object McpTools {
         }
         // 该文件若在编辑器中打开,需关闭标签;否则标签会指向已删除的文件
         val closed = closeEditorIfOpen(file.absolutePath)
+        recordCollabChange(context, file.absolutePath, deleted = true)
         return textResult(
             JSONObject()
                 .put("path", file.absolutePath)
@@ -1138,6 +1289,16 @@ object McpTools {
      * write_file / create_file 等外部写入之后必须调用,否则编辑器缓冲区仍是旧内容,
      * 用户随后保存会把外部写入覆盖掉。
      */
+    /**
+     * 若当前项目正作为协同「共享端」运行,登记一次文件变更,让连接端能实时拉取。
+     * 非共享状态或文件不在共享项目内时静默忽略。
+     */
+    private fun recordCollabChange(context: Context, absolutePath: String, deleted: Boolean) {
+        runCatching {
+            CollabManager.recordLocalChange(absolutePath, deleted)
+        }
+    }
+
     private suspend fun syncEditorIfOpen(filePath: String): Boolean {
         val vm = EditorBridge.currentViewModel() ?: return false
         return withContext(Dispatchers.Main) {

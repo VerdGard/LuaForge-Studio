@@ -138,4 +138,9 @@ dependencies {
     api(libs.glide)
     api(libs.okhttp)
     api(libs.okhttp3.integration)
+
+    // 视频播放(Media3 / ExoPlayer)
+    api(libs.media3.exoplayer)
+    api(libs.media3.ui)
+    api(libs.media3.common)
 }

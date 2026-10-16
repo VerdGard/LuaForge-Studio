@@ -116,14 +116,28 @@
 
     <!-- 前台服务权限 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <!-- 录音 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- TV / 大屏兼容:声明 leanback,触摸屏非必需(允许遥控器操作的电视/盒子) -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.faketouch"
+        android:required="false" />
 
     <application
         android:name="com.androlua.LuaApplication"
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher_playstore"
+        android:banner="@drawable/tv_banner"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:largeHeap="true"
@@ -143,6 +157,7 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity-alias>
 
@@ -198,6 +213,21 @@
         <service
             android:name="com.androlua.LuaService"
             android:enabled="true" />
+
+        <service
+            android:name=".mcp.McpKeepAliveService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <receiver
+            android:name=".mcp.McpNotificationReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.luaforge.studio.action.COPY_MCP_ADDRESS" />
+            </intent-filter>
+        </receiver>
 
         <service
             android:label="@string/app_name"

@@ -94,6 +94,11 @@ private object PreferencesKeys {
     val MCP_REQUIRE_TOKEN = booleanPreferencesKey("mcp_require_token")
     val MCP_TOKEN = stringPreferencesKey("mcp_token")
 
+    // 【新增】MCP 前台保活与通知栏常驻
+    val MCP_FOREGROUND_KEEPALIVE = booleanPreferencesKey("mcp_foreground_keepalive")
+    val MCP_PERSISTENT_NOTIFICATION = booleanPreferencesKey("mcp_persistent_notification")
+    val MCP_BATTERY_EXEMPT = booleanPreferencesKey("mcp_battery_exempt")
+
     // 【新增】网络请求拦截设置
     val NETWORK_INTERCEPT_ENABLED = booleanPreferencesKey("network_intercept_enabled")
     val NETWORK_ALLOWED_HOSTS = stringPreferencesKey("network_allowed_hosts")
@@ -110,6 +115,23 @@ private object PreferencesKeys {
 
     // 【新增】打包目标架构:ARM32 / ARM64 / UNIVERSAL
     val ABI_TARGET = stringPreferencesKey("abi_target")
+
+    // 【新增】局域网协同开发
+    val COLLAB_ENABLED = booleanPreferencesKey("collab_enabled")
+    val COLLAB_ROLE = stringPreferencesKey("collab_role")
+    val COLLAB_PORT = intPreferencesKey("collab_port")
+    val COLLAB_TOKEN = stringPreferencesKey("collab_token")
+    val COLLAB_REMOTE_HOST = stringPreferencesKey("collab_remote_host")
+    val COLLAB_REMOTE_PORT = intPreferencesKey("collab_remote_port")
+    val COLLAB_SHARED_PROJECT = stringPreferencesKey("collab_shared_project")
+    val COLLAB_LOCAL_PROJECT = stringPreferencesKey("collab_local_project")
+
+    // 【新增】自定义签名文件
+    val SIGN_ENABLED = booleanPreferencesKey("sign_custom_enabled")
+    val SIGN_STORE_PATH = stringPreferencesKey("sign_store_path")
+    val SIGN_STORE_PASSWORD = stringPreferencesKey("sign_store_password")
+    val SIGN_KEY_ALIAS = stringPreferencesKey("sign_key_alias")
+    val SIGN_KEY_PASSWORD = stringPreferencesKey("sign_key_password")
 }
 
 /** 防火墙拦截类型（分计）。 */
@@ -277,6 +299,9 @@ object SettingsManager {
         val mcpRequireToken = preferences[PreferencesKeys.MCP_REQUIRE_TOKEN] ?: false
         val mcpToken = preferences[PreferencesKeys.MCP_TOKEN] ?: ""
 
+        val mcpForegroundKeepAlive = preferences[PreferencesKeys.MCP_FOREGROUND_KEEPALIVE] ?: false
+        val mcpPersistentNotification = preferences[PreferencesKeys.MCP_PERSISTENT_NOTIFICATION] ?: false
+
         // 【新增】加载网络请求拦截设置
         val networkInterceptEnabled = preferences[PreferencesKeys.NETWORK_INTERCEPT_ENABLED] ?: false
         val networkAllowedHosts: Set<String> = try {
@@ -319,6 +344,23 @@ object SettingsManager {
             AbiTarget.UNIVERSAL
         }
 
+        // 【新增】加载协同设置
+        val collabEnabled = preferences[PreferencesKeys.COLLAB_ENABLED] ?: false
+        val collabRole = preferences[PreferencesKeys.COLLAB_ROLE] ?: "HOST"
+        val collabPort = preferences[PreferencesKeys.COLLAB_PORT] ?: 9188
+        val collabToken = preferences[PreferencesKeys.COLLAB_TOKEN] ?: ""
+        val collabRemoteHost = preferences[PreferencesKeys.COLLAB_REMOTE_HOST] ?: ""
+        val collabRemotePort = preferences[PreferencesKeys.COLLAB_REMOTE_PORT] ?: 9188
+        val collabSharedProject = preferences[PreferencesKeys.COLLAB_SHARED_PROJECT] ?: ""
+        val collabLocalProject = preferences[PreferencesKeys.COLLAB_LOCAL_PROJECT] ?: ""
+
+        // 【新增】加载自定义签名文件
+        val signCustomEnabled = preferences[PreferencesKeys.SIGN_ENABLED] ?: false
+        val signStorePath = preferences[PreferencesKeys.SIGN_STORE_PATH] ?: ""
+        val signStorePassword = preferences[PreferencesKeys.SIGN_STORE_PASSWORD] ?: ""
+        val signKeyAlias = preferences[PreferencesKeys.SIGN_KEY_ALIAS] ?: ""
+        val signKeyPassword = preferences[PreferencesKeys.SIGN_KEY_PASSWORD] ?: ""
+
         updateSettings(
             SettingsData(
                 themeType = themeType,
@@ -356,6 +398,8 @@ object SettingsManager {
                 mcpPort = mcpPort,                        // 【新增】
                 mcpRequireToken = mcpRequireToken,        // 【新增】
                 mcpToken = mcpToken,                      // 【新增】
+                mcpForegroundKeepAlive = mcpForegroundKeepAlive,      // 【新增】
+                mcpPersistentNotification = mcpPersistentNotification, // 【新增】
                 networkInterceptEnabled = networkInterceptEnabled,  // 【新增】
                 networkAllowedHosts = networkAllowedHosts,          // 【新增】
                 networkBlockedHosts = networkBlockedHosts,          // 【新增】
@@ -364,7 +408,20 @@ object SettingsManager {
                 crossWriteCounts = crossWriteCounts,                // 【新增】
                 selfGuardCounts = selfGuardCounts,                  // 【新增】
                 symbolAutoPair = symbolAutoPair,                    // 【新增】
-                abiTarget = abiTarget                              // 【新增】
+                abiTarget = abiTarget,                             // 【新增】
+                collabEnabled = collabEnabled,                     // 【新增】
+                collabRole = collabRole,                           // 【新增】
+                collabPort = collabPort,                           // 【新增】
+                collabToken = collabToken,                         // 【新增】
+                collabRemoteHost = collabRemoteHost,               // 【新增】
+                collabRemotePort = collabRemotePort,               // 【新增】
+                collabSharedProject = collabSharedProject,         // 【新增】
+                collabLocalProject = collabLocalProject,           // 【新增】
+                signCustomEnabled = signCustomEnabled,             // 【新增】
+                signStorePath = signStorePath,                     // 【新增】
+                signStorePassword = signStorePassword,             // 【新增】
+                signKeyAlias = signKeyAlias,                       // 【新增】
+                signKeyPassword = signKeyPassword                  // 【新增】
             )
         )
     }
@@ -429,6 +486,9 @@ object SettingsManager {
             preferences[PreferencesKeys.MCP_PORT] = currentSettings.mcpPort
             preferences[PreferencesKeys.MCP_REQUIRE_TOKEN] = currentSettings.mcpRequireToken
             preferences[PreferencesKeys.MCP_TOKEN] = currentSettings.mcpToken
+            preferences[PreferencesKeys.MCP_FOREGROUND_KEEPALIVE] = currentSettings.mcpForegroundKeepAlive
+            preferences[PreferencesKeys.MCP_PERSISTENT_NOTIFICATION] = currentSettings.mcpPersistentNotification
+            preferences[PreferencesKeys.MCP_BATTERY_EXEMPT] = currentSettings.mcpBatteryExempt
 
             // 【新增】保存网络请求拦截设置
             preferences[PreferencesKeys.NETWORK_INTERCEPT_ENABLED] = currentSettings.networkInterceptEnabled
@@ -444,6 +504,23 @@ object SettingsManager {
             // 【新增】保存符号自动补全与打包目标架构
             preferences[PreferencesKeys.SYMBOL_AUTO_PAIR] = currentSettings.symbolAutoPair
             preferences[PreferencesKeys.ABI_TARGET] = currentSettings.abiTarget.name
+
+            // 【新增】保存协同设置
+            preferences[PreferencesKeys.COLLAB_ENABLED] = currentSettings.collabEnabled
+            preferences[PreferencesKeys.COLLAB_ROLE] = currentSettings.collabRole
+            preferences[PreferencesKeys.COLLAB_PORT] = currentSettings.collabPort
+            preferences[PreferencesKeys.COLLAB_TOKEN] = currentSettings.collabToken
+            preferences[PreferencesKeys.COLLAB_REMOTE_HOST] = currentSettings.collabRemoteHost
+            preferences[PreferencesKeys.COLLAB_REMOTE_PORT] = currentSettings.collabRemotePort
+            preferences[PreferencesKeys.COLLAB_SHARED_PROJECT] = currentSettings.collabSharedProject
+            preferences[PreferencesKeys.COLLAB_LOCAL_PROJECT] = currentSettings.collabLocalProject
+
+            // 【新增】保存自定义签名文件
+            preferences[PreferencesKeys.SIGN_ENABLED] = currentSettings.signCustomEnabled
+            preferences[PreferencesKeys.SIGN_STORE_PATH] = currentSettings.signStorePath
+            preferences[PreferencesKeys.SIGN_STORE_PASSWORD] = currentSettings.signStorePassword
+            preferences[PreferencesKeys.SIGN_KEY_ALIAS] = currentSettings.signKeyAlias
+            preferences[PreferencesKeys.SIGN_KEY_PASSWORD] = currentSettings.signKeyPassword
         }
         notifyListeners()
     }
@@ -633,4 +710,36 @@ data class SettingsData(
     val symbolAutoPair: Boolean = true,
     /** 打包目标架构(默认通用版) */
     val abiTarget: AbiTarget = AbiTarget.UNIVERSAL,
+    /** MCP 前台保活:启用前台服务避免退后台被系统回收 */
+    val mcpForegroundKeepAlive: Boolean = false,
+    /** MCP 通知栏常驻:保活时显示常驻通知,点击可复制 MCP 地址 */
+    val mcpPersistentNotification: Boolean = false,
+    /** 是否已申请过电池优化豁免(仅作记录,实际状态以系统为准) */
+    val mcpBatteryExempt: Boolean = false,
+    /** 是否启用局域网协同开发 */
+    val collabEnabled: Boolean = false,
+    /** 协同角色:HOST(共享端)/ CLIENT(连接端) */
+    val collabRole: String = "HOST",
+    /** 共享端监听端口 */
+    val collabPort: Int = 9188,
+    /** 协同访问令牌(可空) */
+    val collabToken: String = "",
+    /** 连接端:远端主机 */
+    val collabRemoteHost: String = "",
+    /** 连接端:远端端口 */
+    val collabRemotePort: Int = 9188,
+    /** 共享端:被共享的项目路径 */
+    val collabSharedProject: String = "",
+    /** 连接端:项目同步到本地的目录 */
+    val collabLocalProject: String = "",
+    /** 是否使用自定义签名文件(关闭则用内置默认签名) */
+    val signCustomEnabled: Boolean = false,
+    /** 自定义签名文件(.jks/.keystore)绝对路径 */
+    val signStorePath: String = "",
+    /** 签名文件库口令 */
+    val signStorePassword: String = "",
+    /** 密钥别名 */
+    val signKeyAlias: String = "",
+    /** 密钥口令 */
+    val signKeyPassword: String = "",
 )

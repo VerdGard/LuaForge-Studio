@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android TV 桌面横幅(320x180 基准),供 manifest 的 android:banner 引用 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path
+        android:fillColor="#1F2A24"
+        android:pathData="M0,0h320v180h-320z" />
+    <path
+        android:fillColor="#2E6A44"
+        android:pathData="M0,0h320v180h-320z"
+        android:fillAlpha="0.55" />
+    <path
+        android:fillColor="#8FE3B0"
+        android:pathData="M150,52l44,26v52l-44,26l-44,-26v-52z" />
+    <path
+        android:fillColor="#1F2A24"
+        android:pathData="M140,80h20v44h-20zM170,80h12v12h-12zM170,100h12v12h-12zM170,120h12v4h-12z" />
+</vector>

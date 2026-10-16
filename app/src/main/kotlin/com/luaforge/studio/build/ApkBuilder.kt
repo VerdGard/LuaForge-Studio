@@ -4,6 +4,7 @@ import android.content.Context
 import org.json.JSONObject
 import com.luaforge.studio.build.maven.*
 import com.luaforge.studio.ui.settings.AbiTarget
+import com.luaforge.studio.ui.settings.SettingsManager
 import com.luaforge.studio.utils.ConsoleUtil
 import com.luaforge.studio.utils.JsonUtil
 import com.luaforge.studio.utils.LogCatcher
@@ -377,10 +378,11 @@ class ApkBuilder {
             LogCatcher.i("ApkBuilder", "开始对APK进行签名")
 
             try {
-                // 1. 从assets提取签名文件到缓存
-                val jksPath = extractJksToCache(context)
+                // 1. 解析签名配置:优先使用用户自定义签名文件,否则用内置默认签名
+                val signConfig = resolveSignConfig(context)
+                val jksPath = signConfig.storePath
                 if (jksPath == null) {
-                    LogCatcher.e("ApkBuilder", "无法提取签名文件")
+                    LogCatcher.e("ApkBuilder", "无法取得签名文件")
                     return null
                 }
 
@@ -401,15 +403,15 @@ class ApkBuilder {
                 val success = signerApk(
                     context,                     // context
                     jksPath,                     // keyPath
-                    "LuaForge-Studio",          // pass
-                    "LuaForge-Studio",          // alias
-                    "LuaForge-Studio",          // keyPass
+                    signConfig.storePassword,   // pass
+                    signConfig.keyAlias,        // alias
+                    signConfig.keyPassword,     // keyPass
                     unsignedApkPath,            // inPath
                     outputPath                  // outPath
                 )
 
-                // 4. 清理临时签名文件
-                File(jksPath).delete()
+                // 4. 清理临时签名文件(内置签名提取自 assets,需删除;自定义签名直接引用用户文件,不删)
+                if (signConfig.temporary) File(jksPath).delete()
 
                 if (success) {
                     val signedApkFile = File(outputPath)
@@ -433,6 +435,55 @@ class ApkBuilder {
                 e.printStackTrace()
                 return null
             }
+        }
+
+        /** 一次签名所需的密钥参数。 */
+        private data class SignConfig(
+            val storePath: String?,
+            val storePassword: String,
+            val keyAlias: String,
+            val keyPassword: String,
+            /** true 表示 storePath 是临时提取的内置签名,签名后应删除。 */
+            val temporary: Boolean
+        )
+
+        /**
+         * 解析签名配置。
+         *
+         * - 开启自定义签名且文件可读 → 使用用户指定的 keystore,不复制、不删除;
+         * - 否则回退到内置签名(从 assets 的 signature.jks 提取到缓存,签名后删除)。
+         *
+         * 自定义签名文件缺失时回退内置签名并记录告警,避免因配置错误导致构建整体失败。
+         */
+        private fun resolveSignConfig(context: Context): SignConfig {
+            val settings = SettingsManager.currentSettings
+            if (settings.signCustomEnabled) {
+                val path = settings.signStorePath
+                val storeFile = path?.let { File(it) }
+                if (storeFile != null && storeFile.exists() && storeFile.isFile && storeFile.canRead()) {
+                    if (settings.signKeyAlias.isBlank()) {
+                        LogCatcher.w("ApkBuilder", "自定义签名未配置别名,回退内置签名")
+                    } else {
+                        LogCatcher.i("ApkBuilder", "使用自定义签名文件: $path")
+                        return SignConfig(
+                            storePath = storeFile.absolutePath,
+                            storePassword = settings.signStorePassword,
+                            keyAlias = settings.signKeyAlias,
+                            keyPassword = settings.signKeyPassword.ifBlank { settings.signStorePassword },
+                            temporary = false
+                        )
+                    }
+                } else {
+                    LogCatcher.w("ApkBuilder", "自定义签名文件不可读,回退内置签名: $path")
+                }
+            }
+            return SignConfig(
+                storePath = extractJksToCache(context),
+                storePassword = "LuaForge-Studio",
+                keyAlias = "LuaForge-Studio",
+                keyPassword = "LuaForge-Studio",
+                temporary = true
+            )
         }
 
         // 从assets提取JKS签名文件到缓存
