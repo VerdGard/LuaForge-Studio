@@ -363,18 +363,16 @@ fun CollabScreen(
                                         // null = 按远端项目名自动下载到本地项目库
                                         localDir = null
                                     )
-                                    toast.showToast(
+                                    // 成功时提示实际落地路径,失败时提示启动失败
+                                    val msg = if (ok) {
                                         context.getString(
-                                            if (ok) {
-                                                context.getString(
-                                                    R.string.collab_auto_download_done,
-                                                    CollabManager.status.projectPath.orEmpty()
-                                                )
-                                            } else {
-                                                context.getString(R.string.collab_start_failed)
-                                            }
+                                            R.string.collab_auto_download_done,
+                                            CollabManager.status.projectPath.orEmpty()
                                         )
-                                    )
+                                    } else {
+                                        context.getString(R.string.collab_start_failed)
+                                    }
+                                    toast.showToast(msg)
                                     refreshHistory()
                                 }
                             }
