@@ -689,7 +689,7 @@
     <string name="settings_proxy_status_active">%1$s proxy enabled: %2$s</string>
     <string name="settings_proxy_status_invalid">Unrecognized format; use host:port, e.g. 192.168.10.245:7890</string>
     <string name="settings_proxy_clear">Clear proxy</string>
-    <string name="settings_proxy_hint">Applies to the editor's own network requests (Maven dependency downloads, built-in OkHttp utilities). Accepts host:port, http://host:port and socks5://host:port. LAN collaboration and packaged APKs bypass the proxy.</string>
+    <string name="settings_proxy_hint">Applies to the editor\'s own network requests (Maven dependency downloads, built-in OkHttp utilities). Accepts host:port, http://host:port and socks5://host:port. LAN collaboration and packaged APKs bypass the proxy.</string>
     <string name="settings_firewall">Firewall</string>
     <string name="settings_firewall_cross_write">Cross-project write guard</string>
     <string name="settings_firewall_cross_write_desc">Blocks writing, deleting or modifying other project directories; reading is unaffected</string>
