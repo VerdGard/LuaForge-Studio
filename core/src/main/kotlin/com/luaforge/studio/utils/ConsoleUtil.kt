@@ -108,124 +108,88 @@ object ConsoleUtil {
     }
 
     /**
-     * 编译 Lua 文件
+     * 编译 Lua 文件成字节码。
+     *
+     * <p>必须走 [LuaState.LloadFile],**不能**用 Lua 侧的 `loadfile`:
+     * 用户脚本可能用了 Compose DSL 的命名参数(`Text("x", size = 20)`),
+     * 那不是合法 Lua 语法,要靠 [LuaState.LloadFile] 里的
+     * [com.luaforge.studio.lua.LuaSugar] 改写后才能通过。
+     * 早期实现把编译逻辑写成一段 Lua 代码再 `loadfile`,绕过了这层改写,
+     * 结果带命名参数的项目在「打包成 APK」时一律编译失败。
      */
     private fun compileLuaFile(state: LuaState, path: String): Any {
-        val luaCode = """
-            function build(path)
-                if path then
-                    local str, st = loadfile(path)
-                    if st then
-                        return nil, st
-                    end
-                    local path = path .. 'c'
-                    
-                    local st, str = pcall(string.dump, str, true)
-                    if st then
-                        local f = io.open(path, 'wb')
-                        f:write(str)
-                        f:close()
-                        return path, nil
-                    else
-                        os.remove(path)
-                        return nil, str
-                    end
-                end
-            end
-            
-            return build('$path')
-        """.trimIndent()
-
-        val result = executeLuaCode(state, luaCode)
-        return createResultTable(state, result.first, result.second)
+        return withCleanStack(state) {
+            try {
+                val ok = state.LloadFile(path)
+                if (ok != 0) {
+                    val err = state.toString(-1)
+                    state.pop(1)
+                    return@withCleanStack createResultTable(state, null, err)
+                }
+                dumpTopAndWrite(state, File(path + "c"))
+            } catch (e: Exception) {
+                createResultTable(state, null, "Internal error: ${e.message}")
+            }
+        }
     }
 
     /**
-     * 编译 ALY 文件
+     * 编译 ALY(布局表)成字节码。
+     *
+     * <p>ALY 文件本身是一个布局 table 字面量,需要包一层 `local layout=... return layout`
+     * 才能作为 chunk 编译。拼接在**字节层**完成(ISO-8859-1 往返),
+     * 这样源文件是 GBK 还是 UTF-8 都不会被破坏;
+     * 再交给 [LuaState.LloadBuffer] —— 它同样带命名参数改写。
      */
     private fun compileALYFile(state: LuaState, path: String): Any {
-        val luaCode = """
-            function build_aly(path2)
-                if path2 then
-                    local f, st = io.open(path2)
-                    if st then
-                        return nil, st
-                    end
-                    local str = f:read("*a")
-                    f:close()
-                    str = string.format("local layout=%s\nreturn layout", str)
-                    local path = path2 .. 'c'
-                    str, st = loadstring(str, path2:match("[^/]+/[^/]+$"), "bt")
-                    if st then
-                        return nil, st:gsub("%b[]", path2, 1)
-                    end
-
-                    local st, str = pcall(string.dump, str, true)
-                    if st then
-                        f = io.open(path, 'wb')
-                        f:write(str)
-                        f:close()
-                        return path, nil
-                    else
-                        os.remove(path)
-                        return nil, str
-                    end
-                end
-            end
-            
-            return build_aly('$path')
-        """.trimIndent()
-
-        val result = executeLuaCode(state, luaCode)
-        return createResultTable(state, result.first, result.second)
+        return withCleanStack(state) {
+            try {
+                val raw = File(path).readBytes()
+                val prefix = "local layout=".toByteArray(Charsets.ISO_8859_1)
+                val suffix = "\nreturn layout".toByteArray(Charsets.ISO_8859_1)
+                val wrapped = prefix + raw + suffix
+                val ok = state.LloadBuffer(wrapped, File(path).name)
+                if (ok != 0) {
+                    val err = state.toString(-1)
+                    state.pop(1)
+                    return@withCleanStack createResultTable(state, null, err)
+                }
+                dumpTopAndWrite(state, File(path + "c"))
+            } catch (e: Exception) {
+                createResultTable(state, null, "Internal error: ${e.message}")
+            }
+        }
     }
 
     /**
-     * 执行 Lua 代码
+     * 把栈顶函数 dump 成字节码并写盘;栈顶函数会被弹出。
+     *
+     * @return 结果 table(`path` 为产物路径,失败时 `error` 为原因)
      */
-    private fun executeLuaCode(state: LuaState, luaCode: String): Pair<String?, String?> {
-        try {
-            // 保存当前栈顶位置
-            val topBefore = state.top
+    private fun dumpTopAndWrite(state: LuaState, out: File): Any {
+        val dumped = state.dump(-1)
+        state.pop(1)
+        if (dumped == null || dumped.isEmpty()) {
+            return createResultTable(state, null, "无法生成字节码(栈顶不是可编译的函数)")
+        }
+        out.writeBytes(dumped)
+        return createResultTable(state, out.absolutePath, null)
+    }
 
-            // 加载 Lua 代码
-            val ok = state.LloadString(luaCode)
-            if (ok != 0) {
-                return Pair(null, "Failed to load Lua code: ${state.toString(-1)}")
-            }
-
-            // 设置错误处理函数
-            state.getGlobal("debug")
-            state.getField(-1, "traceback")
-            state.remove(-2)
-            state.insert(-2)
-
-            // 执行 Lua 代码，期望 2 个返回值
-            val result = state.pcall(0, 2, -2)
-            if (result != 0) {
-                return Pair(null, "Failed to execute Lua code ($result): ${state.toString(-1)}")
-            }
-
-            // 获取两个返回值
-            val return2 = state.toJavaObject(-1)  // 第二个返回值
-            val return1 = state.toJavaObject(-2)  // 第一个返回值
-
-            // 清理栈，恢复到原始状态
-            state.top = topBefore
-
-            // 根据 Lua 的约定：成功时返回 (路径, nil)，失败时返回 (nil, 错误信息)
-            val pathResult = if (return1 != null) return1.toString() else null
-            val errorResult = if (return2 != null) return2.toString() else null
-
-            return Pair(pathResult, errorResult)
-
-        } catch (e: LuaException) {
-            throw LuaException("Lua error: ${e.message}")
-        } catch (e: Exception) {
-            throw LuaException("Error executing Lua code: ${e.message}")
+    /**
+     * 在干净的栈上执行编译,结束后把栈恢复到进入时的深度。
+     *
+     * [ApkBuilder] 复用一个共享 [LuaState] 连续编译整个项目的文件,
+     * 任何一次编译残留的栈元素都会累积,最终把虚拟机栈挤爆
+     * (报 "stack overflow")。旧实现在 finally 里直接 `top = 0`,
+     * 这里改为按进入深度恢复,既能清理又不破坏调用方已有的栈内容。
+     */
+    private inline fun withCleanStack(state: LuaState, block: () -> Any): Any {
+        val entryTop = state.top
+        return try {
+            block()
         } finally {
-            // 确保栈被清理
-            state.top = 0
+            state.top = entryTop
         }
     }
 }

@@ -9,9 +9,12 @@ package com.luaforge.studio.compose
 
 import android.app.Activity
 import android.content.Context
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -534,9 +537,37 @@ private fun toPlain(v: Any?): Any? {
 // 渲染
 // ---------------------------------------------------------------------------
 
+/**
+ * 当这个 ComposeView 被当作 Activity 的内容视图时,按系统栏高度补 padding。
+ *
+ * API 35+ 起系统强制 edge-to-edge(`LuaActivity` 会调
+ * `WindowCompat.setDecorFitsSystemWindows(window, false)`),届时窗口不再自动为
+ * 状态栏/导航栏留出空间。`LuaActivity` 原本把 inset 处理绑在自己的根布局上,
+ * 但 `composeContent(fn)` 与 `activity.setContentView(compose(fn))` 会**整体替换**
+ * 那个根布局 —— inset 处理随之失效,Compose 内容被状态栏压住、底部被导航栏切掉,
+ * 表现就是"布局显示不完整"。
+ *
+ * 只在两种情况下生效:
+ * - API >= 35(更低版本窗口仍是 fit 模式,自己再加 padding 会重复留白);
+ * - 本视图的直接父容器是 `android.R.id.content`(即确实是内容视图)。
+ *   若它被嵌进用户自己的布局,则由用户布局负责 inset,这里不能重复补。
+ */
+private fun applyContentInsetsIfRoot(view: View) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return
+    ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
+        val isRootContent = (v.parent as? View)?.id == android.R.id.content
+        if (isRootContent) {
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+        }
+        insets
+    }
+}
+
 /** 构建一个可挂载的 ComposeView。 */
 private fun buildComposeView(context: Context, body: LuaObject?): ComposeView {
     val view = ComposeView(context)
+    applyContentInsetsIfRoot(view)
     val rootStore = SlotStore()
     view.setContent {
         MaterialTheme {
@@ -832,7 +863,7 @@ private fun LuaNodeView(store: SlotStore, node: LuaNode, extra: Modifier = Modif
         // ---- 文本与图形 ----
         "Text" -> Text(
             text = textOf(o),
-            modifier = extra.then(modifierOf(o)),
+            modifier = extra.then(modifierOf(o, sizeAsDp = false)),
             color = colorOf(o["color"]) ?: Color.Unspecified,
             fontSize = spOf(o["size"]),
             fontWeight = if (boolOf(o["bold"])) FontWeight.Bold else null,
@@ -854,7 +885,7 @@ private fun LuaNodeView(store: SlotStore, node: LuaNode, extra: Modifier = Modif
                 // 没有可用图片资源时退化成文字,避免 painterResource 直接崩。
                 Text(
                     text = textOf(o).ifEmpty { o["icon"]?.toString() ?: "" },
-                    modifier = extra.then(modifierOf(o)),
+                    modifier = extra.then(modifierOf(o, sizeAsDp = false)),
                     fontSize = spOf(o["size"]),
                     color = colorOf(o["color"]) ?: Color.Unspecified
                 )
@@ -1518,7 +1549,7 @@ private fun str(v: Any?): String = v?.toString()?.trim()?.lowercase() ?: ""
  * `clickable` 放最后,保证点击区域包含内边距。
  */
 @Composable
-private fun modifierOf(o: Map<String, Any?>): Modifier {
+private fun modifierOf(o: Map<String, Any?>, sizeAsDp: Boolean = true): Modifier {
     var m: Modifier = Modifier
 
     // ---- 尺寸 ----
@@ -1526,7 +1557,12 @@ private fun modifierOf(o: Map<String, Any?>): Modifier {
     if (w > 0f) m = m.width(w.dp)
     val h = floatOf(o["height"], 0f)
     if (h > 0f) m = m.height(h.dp)
-    val s = floatOf(o["size"], 0f)
+    // `size` 在属性表里有两种语义,必须由调用方声明是哪种:
+    // - 尺寸(dp):Spacer / Box / Image 等,限制控件本身大小;
+    // - 字号(sp):Text / Icon 等,由 spOf 单独消费。
+    // 早期版本无条件按 dp 处理,导致 `Text("hi", size = 20)` 同时被加上
+    // `.size(20.dp)`,文本被挤进 20dp 的方块里换行截断 —— 布局看起来"显示不全"。
+    val s = if (sizeAsDp) floatOf(o["size"], 0f) else 0f
     if (s > 0f) m = m.size(s.dp)
     if (boolOf(o["fillMaxWidth"])) m = m.fillMaxWidth(floatOf(o["fillMaxWidthFraction"], 1f))
     if (boolOf(o["fillMaxHeight"])) m = m.fillMaxHeight(floatOf(o["fillMaxHeightFraction"], 1f))

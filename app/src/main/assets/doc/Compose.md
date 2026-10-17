@@ -246,6 +246,16 @@ fillMaxSize = true
 aspectRatio = 1.5               -- 宽高比
 ```
 
+> **`size` 有两种含义,取决于用在哪个组件上:**
+>
+> - **尺寸(dp)**:`Spacer` `Box` `Image` `Icon` 等 —— 限制**控件本身**的大小;
+> - **字号(sp)**:`Text`(`Icon` 无图片资源而回退成文字时同理)—— 只影响**文字大小**,
+>   不会给控件加尺寸约束。
+>
+> 也就是说 `Text("hi", size = 20)` 的字号是 20sp、控件宽高仍由内容撑开;
+> 而 `Spacer({ size = 20 })` 是一块 20dp × 20dp 的空隙。
+> 若给 `Text` 同时限宽,请用 `width` / `maxLines` / `overflow`,不要指望 `size`。
+
 ### 视觉
 
 ```lua
@@ -298,12 +308,13 @@ color = "#80FF5722"             -- "#AARRGGBB",带透明度
 background = "#F5F5F5"
 ```
 
-### 字体
+### 字体(仅 `Text` 及回退成文字的 `Icon`)
 
 ```lua
-size = 18         -- sp
+size = 18         -- sp,字号
 bold = true
 maxLines = 2
+overflow = "ellipsis"   -- 或 "clip"(默认)
 ```
 
 ---

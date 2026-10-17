@@ -70,6 +70,11 @@ fun saveWelcomeCompleted(context: Context) {
     sharedPrefs.edit().putBoolean("welcome_completed", true).apply()
 }
 
+// statusBarColor / navigationBarColor 自 API 35 起弃用,替代方案是
+// WindowInsetsController + enableEdgeToEdge,但那条路径要求调用方先处理
+// 系统栏 inset 的消费,直接换会在 targetSdk 36 上丢掉透明栏效果。
+// minSdk 24 仍需这两个 setter,故此处保留并定点抑制。
+@Suppress("DEPRECATION")
 @Composable
 fun TransparentSystemBars() {
     val view = LocalView.current
