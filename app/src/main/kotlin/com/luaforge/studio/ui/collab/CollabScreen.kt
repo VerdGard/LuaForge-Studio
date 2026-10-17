@@ -81,7 +81,6 @@ fun CollabScreen(
     var remotePortText by remember { mutableStateOf(state.collabRemotePort.toString()) }
 
     var showProjectPicker by remember { mutableStateOf(false) }
-    var showLocalDirPicker by remember { mutableStateOf(false) }
 
     var snapshotMessage by remember { mutableStateOf("") }
     var showSnapshotDialog by remember { mutableStateOf(false) }
@@ -258,6 +257,13 @@ fun CollabScreen(
                                     toast.showToast(context.getString(R.string.collab_need_project))
                                     return@Button
                                 }
+                                // 越界目录不允许共享(旧配置残留 / 手工改设置都会走到这里)
+                                if (!CollabManager.isShareableProjectDir(dir)) {
+                                    toast.showToast(
+                                        context.getString(R.string.collab_project_out_of_range)
+                                    )
+                                    return@Button
+                                }
                                 // 绑定端口/枚举网卡等属阻塞操作,放到 IO 线程,避免主线程 ANR
                                 scope.launch {
                                     val ok = CollabManager.startHost(
@@ -316,27 +322,29 @@ fun CollabScreen(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    // 连上后自动下载到本地项目库:不再需要用户手动挑目录
                     Text(
-                        text = stringResource(R.string.collab_local_project),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Medium
+                        text = stringResource(R.string.collab_local_project_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = state.collabLocalProject,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text(stringResource(R.string.collab_local_project)) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
+                    Text(
+                        text = CollabManager.sharedProjectRoot().absolutePath,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    if (collabStatus.syncing) {
+                        Text(
+                            text = stringResource(
+                                R.string.collab_syncing_progress,
+                                collabStatus.syncDone,
+                                collabStatus.syncTotal
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
                         )
-                        OutlinedButton(onClick = { showLocalDirPicker = true }) {
-                            Text(stringResource(R.string.collab_pick_dir))
-                        }
                     }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -346,21 +354,25 @@ fun CollabScreen(
                                     toast.showToast(context.getString(R.string.collab_need_host))
                                     return@Button
                                 }
-                                if (state.collabLocalProject.isBlank()) {
-                                    toast.showToast(context.getString(R.string.collab_need_project))
-                                    return@Button
-                                }
                                 // 首次 info()/全量同步都要走网络,必须离开主线程
                                 scope.launch {
                                     val ok = CollabManager.startClient(
                                         remoteHostText,
                                         state.collabRemotePort,
                                         state.collabToken,
-                                        File(state.collabLocalProject)
+                                        // null = 按远端项目名自动下载到本地项目库
+                                        localDir = null
                                     )
                                     toast.showToast(
                                         context.getString(
-                                            if (ok) R.string.collab_started else R.string.collab_start_failed
+                                            if (ok) {
+                                                context.getString(
+                                                    R.string.collab_auto_download_done,
+                                                    CollabManager.status.projectPath.orEmpty()
+                                                )
+                                            } else {
+                                                context.getString(R.string.collab_start_failed)
+                                            }
                                         )
                                     )
                                     refreshHistory()
@@ -460,24 +472,24 @@ fun CollabScreen(
 
     // ---- 项目目录选择 ----
     if (showProjectPicker) {
+        // 锁根:只允许在项目库根目录内选择,面包屑与上一级均无法越界
+        val shareRoot = CollabManager.sharedProjectRoot().absolutePath
         FilePickerDialog(
             selectionMode = SelectionMode.DIRECTORY,
             title = stringResource(R.string.collab_pick_project),
+            initialPath = shareRoot,
+            rootPath = shareRoot,
             onDismiss = { showProjectPicker = false },
             onDirectorySelected = { path ->
-                persist(SettingsManager.currentSettings.copy(collabSharedProject = path))
+                // 第二道校验:必须是项目库下的一级子目录(共享根目录本身也不行)
+                if (CollabManager.isShareableProjectDir(path)) {
+                    persist(SettingsManager.currentSettings.copy(collabSharedProject = path))
+                } else {
+                    toast.showToast(
+                        context.getString(R.string.collab_project_out_of_range)
+                    )
+                }
                 showProjectPicker = false
-            }
-        )
-    }
-    if (showLocalDirPicker) {
-        FilePickerDialog(
-            selectionMode = SelectionMode.DIRECTORY,
-            title = stringResource(R.string.collab_pick_dir),
-            onDismiss = { showLocalDirPicker = false },
-            onDirectorySelected = { path ->
-                persist(SettingsManager.currentSettings.copy(collabLocalProject = path))
-                showLocalDirPicker = false
             }
         )
     }

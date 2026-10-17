@@ -150,12 +150,19 @@ class CollabServer(
         }
     }
 
+    /**
+     * 项目元信息。
+     *
+     * 注意:**不要在这里计算文件数**。`changedFiles()` 会对整个工作区逐个文件
+     * 读取内容并算 sha1,项目稍大就是几十毫秒到上百毫秒;而连接端在增量轮询中
+     * 每批变更都会拉一次 info,共享端会被这种全库扫描反复拖慢。
+     * `fileCount` 客户端从未消费(见 CollabClient.Info),因此直接不返回。
+     */
     private fun handleInfo(client: Socket) {
         val body = JSONObject()
             .put("name", projectName)
             .put("rev", repo.currentRev())
             .put("head", repo.headRevision() ?: JSONObject.NULL)
-            .put("fileCount", repo.git.changedFiles().size)
             .toString()
         writeResponse(client, 200, "application/json", body)
     }

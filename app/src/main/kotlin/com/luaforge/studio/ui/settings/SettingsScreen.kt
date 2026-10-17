@@ -127,6 +127,7 @@ import com.luaforge.studio.utils.LogConfigRepository
 import com.luaforge.studio.utils.LogFileAccess
 import com.luaforge.studio.utils.NetworkProxy
 import com.luaforge.studio.utils.NonBlockingToastState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -313,6 +314,15 @@ fun SettingsScreen(
         settingsManager.updateSettings(newSettings)
         settingsManager.saveSettings(context)
         onSettingsChanged(newSettings)
+    }
+
+    // 代理地址防抖持久化:停止输入 500ms 后才写一次 DataStore
+    LaunchedEffect(proxyText) {
+        if (proxyText == currentSettingsState.networkProxy) return@LaunchedEffect
+        delay(500)
+        updateSettingsWithSave(
+            SettingsManager.currentSettings.copy(networkProxy = proxyText)
+        )
     }
 
     fun isValidFontFile(path: String): Boolean {
@@ -2166,10 +2176,10 @@ Column(
                                 val filtered = input.filter { ch ->
                                     ch.isLetterOrDigit() || ch in ".-_:[]/"
                                 }.take(64)
+                                // 只更新本地输入态;落盘由下方 LaunchedEffect 防抖完成。
+                                // saveSettings 会重写全部设置键,逐字符调用等于每敲一下
+                                // 就写一次全量 DataStore,输入长地址时会明显卡顿。
                                 proxyText = filtered
-                                updateSettingsWithSave(
-                                    currentSettingsState.copy(networkProxy = filtered)
-                                )
                             },
                             label = { Text(stringResource(R.string.settings_proxy_label)) },
                             placeholder = { Text(stringResource(R.string.settings_proxy_placeholder)) },
@@ -2202,7 +2212,7 @@ Column(
                                         )
                                     }) {
                                         Icon(
-                                            Icons.Filled.Close,
+                                            Icons.Filled.Clear,
                                             contentDescription = stringResource(
                                                 R.string.settings_proxy_clear
                                             )

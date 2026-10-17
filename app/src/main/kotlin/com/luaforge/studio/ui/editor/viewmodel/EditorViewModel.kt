@@ -36,7 +36,6 @@ import io.github.rosemoe.sora.widget.component.EditorAutoCompletion
 import io.github.rosemoe.sora.widget.schemes.EditorColorScheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlinx.coroutines.Dispatchers as KotlinDispatchers
@@ -169,25 +168,28 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
         val filePath = state.file.absolutePath
         val currentIndex = activeFileIndex
         val file = state.file
-        runBlocking(KotlinDispatchers.IO) {
+        // 这里由 ActivityResult 回调直接调用,也就是**主线程**。
+        // 原实现同步阻塞写盘,文件稍大就会卡住一帧甚至更多;
+        // 现在整体挪到 IO 线程,写盘完成后回主线程重开文件。
+        viewModelScope.launch(KotlinDispatchers.IO) {
             try {
                 if (file.exists() && file.canWrite()) {
                     file.writeText(newContent, Charsets.UTF_8)
-                    LogCatcher.i("EditorViewModel", "布局助手返回，已同步保存文件: $filePath")
+                    LogCatcher.i("EditorViewModel", "布局助手返回,已保存文件: $filePath")
                 } else {
-                    LogCatcher.w("EditorViewModel", "文件不可写，无法保存: $filePath")
+                    LogCatcher.w("EditorViewModel", "文件不可写,无法保存: $filePath")
                 }
             } catch (e: Exception) {
                 LogCatcher.e("EditorViewModel", "布局助手返回保存文件失败: ${file.name}", e)
             }
-        }
-        closeFile(currentIndex)
-        viewModelScope.launch {
-            openFile(file)
-            getActiveEditor()?.let { editor ->
-                editor.post { editor.setSelection(0, 0) }
+            closeFile(currentIndex)
+            withContext(KotlinDispatchers.Main) {
+                openFile(file)
+                getActiveEditor()?.let { editor ->
+                    editor.post { editor.setSelection(0, 0) }
+                }
+                LogCatcher.i("EditorViewModel", "布局助手返回:文件已重新打开,状态完全重置")
             }
-            LogCatcher.i("EditorViewModel", "布局助手返回：文件已重新打开，状态完全重置")
         }
     }
 

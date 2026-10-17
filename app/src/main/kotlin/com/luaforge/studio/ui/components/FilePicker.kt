@@ -61,6 +61,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -826,58 +828,65 @@ fun getFileIcon(fileName: String): androidx.compose.ui.graphics.vector.ImageVect
 }
 
 // 加载文件和目录
-fun loadFilesAndDirectories(
+//
+// 这个函数会被 FilePickerDialog 在切换目录时调用。目录里文件一多,
+// listFiles + 逐项 stat(length/lastModified/isHidden) 就是实打实的磁盘 IO,
+// 放在主线程会让对话框在进入大目录时掉帧。因此改成挂起函数,
+// 真正的扫描放到 IO 线程,回调仍在调用方(主线程)执行。
+suspend fun loadFilesAndDirectories(
     path: String,
     allowedExtensions: List<String>,
     onItemsLoaded: (List<PickerFileItem>) -> Unit
 ) {
-    try {
-        val directory = File(path)
-        if (!directory.exists() || !directory.isDirectory) {
-            onItemsLoaded(emptyList())
-            return
-        }
+    val items = withContext(Dispatchers.IO) {
+        try {
+            val directory = File(path)
+            if (!directory.exists() || !directory.isDirectory) {
+                return@withContext emptyList<PickerFileItem>()
+            }
 
-        val files = directory.listFiles() ?: emptyArray()
-        val items = mutableListOf<PickerFileItem>()
+            // 扩展名集合预先归一化一次:原来在循环里对每个文件都重新 map,
+            // 文件多时是 O(n*m) 的无谓分配。
+            val allowed = if (allowedExtensions.isEmpty()) null
+            else allowedExtensions.mapTo(HashSet()) { it.lowercase() }
 
-        for (file in files) {
-            // 过滤隐藏文件
-            if (file.name.startsWith(".")) continue
+            val files = directory.listFiles() ?: emptyArray()
+            val out = ArrayList<PickerFileItem>(files.size)
 
-            // 扩展名过滤
-            if (!file.isDirectory && allowedExtensions.isNotEmpty()) {
-                val extension = file.name.substringAfterLast('.', "").lowercase()
-                if (extension !in allowedExtensions.map { it.lowercase() }) {
-                    continue
+            for (file in files) {
+                if (file.name.startsWith(".")) continue
+
+                if (allowed != null && !file.isDirectory) {
+                    val extension = file.name.substringAfterLast('.', "").lowercase()
+                    if (extension !in allowed) continue
                 }
-            }
 
-            items.add(
-                PickerFileItem(
-                    fileName = file.name,
-                    filePath = file.absolutePath,
-                    isDirectory = file.isDirectory,
-                    fileSize = if (file.isFile) file.length() else 0L,
-                    modifiedDate = file.lastModified(),
-                    isHidden = file.isHidden
+                out.add(
+                    PickerFileItem(
+                        fileName = file.name,
+                        filePath = file.absolutePath,
+                        isDirectory = file.isDirectory,
+                        fileSize = if (file.isFile) file.length() else 0L,
+                        modifiedDate = file.lastModified(),
+                        isHidden = file.isHidden
+                    )
                 )
-            )
-        }
-
-        // 排序：目录在前，按名称升序
-        items.sortWith(Comparator { item1, item2 ->
-            if (item1.isDirectory != item2.isDirectory) {
-                return@Comparator if (item1.isDirectory) -1 else 1
             }
-            item1.fileName.compareTo(item2.fileName, ignoreCase = true)
-        })
 
-        onItemsLoaded(items)
-    } catch (e: Exception) {
-        e.printStackTrace()
-        onItemsLoaded(emptyList())
+            // 排序:目录在前,按名称升序
+            out.sortWith(Comparator { item1, item2 ->
+                if (item1.isDirectory != item2.isDirectory) {
+                    return@Comparator if (item1.isDirectory) -1 else 1
+                }
+                item1.fileName.compareTo(item2.fileName, ignoreCase = true)
+            })
+            out
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
     }
+    onItemsLoaded(items)
 }
 
 // 文件大小格式化

@@ -742,7 +742,7 @@
     <string name="collab_shared_project">Shared project</string>
     <string name="collab_shared_project_desc">Choose the project directory to share on the LAN</string>
     <string name="collab_local_project">Local sync directory</string>
-    <string name="collab_local_project_desc">The client syncs the remote project into this directory</string>
+    <string name="collab_local_project_desc">Connect once and the remote project is downloaded into the local project library automatically</string>
     <string name="collab_pick_project">Pick project</string>
     <string name="collab_pick_dir">Pick directory</string>
     <string name="collab_port">Listen port</string>
@@ -770,6 +770,11 @@
     <string name="collab_status_title">Collab status</string>
     <string name="collab_error">Error: %1$s</string>
     <string name="collab_need_host">Please enter the host address</string>
+    <string name="collab_project_out_of_range">Only projects inside the project library can be shared (a first-level project folder under the library root)</string>
+    <string name="collab_syncing_progress">Downloading %1$d / %2$d</string>
+    <string name="collab_auto_downloading">Downloading project files...</string>
+    <string name="collab_auto_download_done">Project synced locally: %1$s</string>
+    <string name="collab_shared_root_hint">Only projects inside the project library can be selected</string>
     <string name="collab_need_project">Please choose a project directory</string>
     <string name="collab_started">Collaboration started</string>
     <string name="collab_start_failed">Failed to start collaboration</string>

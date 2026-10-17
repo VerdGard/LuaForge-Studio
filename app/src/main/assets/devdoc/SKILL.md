@@ -556,6 +556,12 @@ MCP 只允许访问这些根(`McpTools.kt:1429-1443`):
 
 路径经 `canonicalPath` 归一化后做前缀匹配,空值与文件系统根 `/` 被过滤。
 
+**局域网协同的共享范围更窄**:共享端只能共享**项目库根目录下的一级项目文件夹**
+(`settings.projectStoragePath`,默认 `/storage/emulated/0/LuaForge-Studio/project/`),
+项目库根目录本身、更深层的子目录以及库外的任意路径都会被拒绝。判定用
+`canonicalPath`,因此 `..` 与软链接无法绕过;全量同步与增量同步也会校验远端路径。
+连接端连上后按远端项目名自动下载到本地项目库,无需手动指定落地目录。
+
 日志:`/storage/emulated/0/LuaForge-Studio/luaforge.log`。`get_logs` 读取上限 512KB,`read_file` 上限 2MB。
 超过 2MB 的文件用 `read_file startLine/endLine` 按行读,并配合 `file_info` 的 `md5`/`lines` 做完整性校验;
 写回用 `write_file mode=replaceLines startLine/endLine` + `expectedMd5`(或 `expectedLines`)防止并发覆盖。
