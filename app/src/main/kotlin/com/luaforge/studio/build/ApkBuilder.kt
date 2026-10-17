@@ -858,7 +858,7 @@ class ApkBuilder {
                 // 2.5 收集模板自带类,供构建精简做重复类剔除
                 //     解压后的 workDir 根目录就是模板的 classes*.dex,直接读比再开一遍
                 //     core.apk 更贴合实际产物。开关关闭时不扫,避免无谓开销。
-                val templateClasses = if (buildSlimEnabled) {
+                val templateClasses: Set<String> = if (buildSlimEnabled) {
                     BuildSlimmer.collectDexClassDescriptorsIn(workDir).also {
                         LogCatcher.i("ApkBuilder", "模板自带类 ${it.size} 个")
                     }

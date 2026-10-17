@@ -331,7 +331,8 @@ class CollabServer(
                 }
             } catch (_: Exception) {
             }
-            val out = preferred + others
+            // `preferred + others` 得到的是只读 List,不能 add;先拼成可变列表再回退。
+            val out = (preferred + others).toMutableList()
             if (out.isEmpty()) out.add("127.0.0.1")
             return out
         }

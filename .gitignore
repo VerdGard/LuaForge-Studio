@@ -1,6 +1,10 @@
 # Gradle files
 .gradle/
-build/
+# 注意:不能用裸 `build/` —— 它会连带忽略源码包 app/src/main/kotlin/com/luaforge/studio/build/,
+# 导致新加进该包的文件(如 BuildSlimmer.kt)不进仓库,CI 检出后编译报 Unresolved reference。
+# 只忽略根目录与各模块(Gradle 子项目都在仓库根下一层)的构建输出目录。
+/build/
+/*/build/
 
 # Local configuration file (sdk path, etc)
 local.properties
