@@ -567,7 +567,14 @@ private fun LuaGroup(store: SlotStore, body: LuaObject) {
     }
 }
 
-/** Row 的子节点:带 `weight` 支持(`Modifier.weight` 只能在 RowScope 里取到)。 */
+/**
+ * Row 的子节点渲染器。
+ *
+ * 除了 `weight`(`Modifier.weight` 只能在 RowScope 里取到),这里还必须处理
+ * **scope-only 组件**:`NavigationBarItem` 声明为 `fun RowScope.NavigationBarItem(...)`,
+ * 在 `LuaNodeView` 的 `when` 里(没有 RowScope 接收者)调用会报 `Unresolved reference`。
+ * 所以这类组件只能在持有接收者的地方调用,由这里分派。
+ */
 @Composable
 private fun RowScope.LuaChildrenRow(store: SlotStore, body: LuaObject?) {
     store.reset()
@@ -575,13 +582,44 @@ private fun RowScope.LuaChildrenRow(store: SlotStore, body: LuaObject?) {
     val nodes = buildNodes(store) { body.call() }
     nodes.forEachIndexed { index, item ->
         key(index) {
-            val w = floatOf(item.opts["weight"], 0f)
-            LuaNodeView(store.childAt(index), item, if (w > 0f) Modifier.weight(w) else Modifier)
+            val child = store.childAt(index)
+            when (item.name) {
+                "NavigationBarItem" -> NavigationBarItemScope(child, item)
+                else -> {
+                    val w = floatOf(item.opts["weight"], 0f)
+                    LuaNodeView(child, item, if (w > 0f) Modifier.weight(w) else Modifier)
+                }
+            }
         }
     }
 }
 
-/** Column 的子节点:同上。 */
+/**
+ * `NavigationBarItem` 的实际调用点(RowScope 扩展)。
+ *
+ * `label` 是 `(@Composable () -> Unit)?`:必须显式声明类型,写成
+ * `?.let { { Text(it) } }` 会产生非可组合 lambda 而编译失败。
+ */
+@Composable
+private fun RowScope.NavigationBarItemScope(store: SlotStore, node: LuaNode) {
+    val o = node.opts
+    val labelText = o["label"]?.toString()
+    val labelSlot: (@Composable () -> Unit)? =
+        if (labelText.isNullOrBlank()) null else ({ Text(labelText) })
+    NavigationBarItem(
+        selected = boolOf(o["selected"]),
+        onClick = { callLua(o["onClick"]) },
+        icon = { Text(o["icon"]?.toString() ?: "") },
+        modifier = modifierOf(o),
+        enabled = boolOf(o["enabled"], true),
+        label = labelSlot
+    )
+}
+
+/**
+ * Column 的子节点渲染器,规则同 [LuaChildrenRow]:
+ * `NavigationRailItem` 是 `fun ColumnScope.NavigationRailItem(...)`,必须在此分派。
+ */
 @Composable
 private fun ColumnScope.LuaChildrenColumn(store: SlotStore, body: LuaObject?) {
     store.reset()
@@ -589,10 +627,33 @@ private fun ColumnScope.LuaChildrenColumn(store: SlotStore, body: LuaObject?) {
     val nodes = buildNodes(store) { body.call() }
     nodes.forEachIndexed { index, item ->
         key(index) {
-            val w = floatOf(item.opts["weight"], 0f)
-            LuaNodeView(store.childAt(index), item, if (w > 0f) Modifier.weight(w) else Modifier)
+            val child = store.childAt(index)
+            when (item.name) {
+                "NavigationRailItem" -> NavigationRailItemScope(child, item)
+                else -> {
+                    val w = floatOf(item.opts["weight"], 0f)
+                    LuaNodeView(child, item, if (w > 0f) Modifier.weight(w) else Modifier)
+                }
+            }
         }
     }
+}
+
+/** `NavigationRailItem` 的实际调用点(ColumnScope 扩展)。 */
+@Composable
+private fun ColumnScope.NavigationRailItemScope(store: SlotStore, node: LuaNode) {
+    val o = node.opts
+    val labelText = o["label"]?.toString()
+    val labelSlot: (@Composable () -> Unit)? =
+        if (labelText.isNullOrBlank()) null else ({ Text(labelText) })
+    NavigationRailItem(
+        selected = boolOf(o["selected"]),
+        onClick = { callLua(o["onClick"]) },
+        icon = { Text(o["icon"]?.toString() ?: "") },
+        modifier = modifierOf(o),
+        enabled = boolOf(o["enabled"], true),
+        label = labelSlot
+    )
 }
 
 private inline fun buildNodes(store: SlotStore, crossinline exec: () -> Unit): List<LuaNode> {
@@ -1065,37 +1126,12 @@ private fun LuaNodeView(store: SlotStore, node: LuaNode, extra: Modifier = Modif
 
         "BottomAppBar" -> BottomAppBar(modifier = extra.then(modifierOf(o))) { SlotContent(store, body, o) }
 
-        "NavigationBar" -> NavigationBar(modifier = extra.then(modifierOf(o))) { SlotContent(store, body, o) }
+        // 内容槽必须走 RowScope 渲染器:NavigationBarItem 是 RowScope 扩展函数,
+        // 只有在这里子节点才拿得到 RowScope 接收者。
+        "NavigationBar" -> NavigationBar(modifier = extra.then(modifierOf(o))) { LuaChildrenRow(store, body) }
 
-        "NavigationBarItem" -> {
-            val labelText = o["label"]?.toString()
-            val labelSlot: (@Composable () -> Unit)? =
-                if (labelText.isNullOrBlank()) null else ({ Text(labelText) })
-            NavigationBarItem(
-                selected = boolOf(o["selected"]),
-                onClick = { callLua(o["onClick"]) },
-                icon = { Text(o["icon"]?.toString() ?: "") },
-                modifier = extra.then(modifierOf(o)),
-                enabled = boolOf(o["enabled"], true),
-                label = labelSlot
-            )
-        }
-
-        "NavigationRail" -> NavigationRail(modifier = extra.then(modifierOf(o))) { SlotContent(store, body, o) }
-
-        "NavigationRailItem" -> {
-            val labelText = o["label"]?.toString()
-            val labelSlot: (@Composable () -> Unit)? =
-                if (labelText.isNullOrBlank()) null else ({ Text(labelText) })
-            NavigationRailItem(
-                selected = boolOf(o["selected"]),
-                onClick = { callLua(o["onClick"]) },
-                icon = { Text(o["icon"]?.toString() ?: "") },
-                modifier = extra.then(modifierOf(o)),
-                enabled = boolOf(o["enabled"], true),
-                label = labelSlot
-            )
-        }
+        // 同上,NavigationRailItem 是 ColumnScope 扩展函数。
+        "NavigationRail" -> NavigationRail(modifier = extra.then(modifierOf(o))) { LuaChildrenColumn(store, body) }
 
         "TabRow", "ScrollableTabRow" -> {
             val tabs = (toPlain(o["tabs"]) as? List<*>) ?: emptyList<Any?>()
