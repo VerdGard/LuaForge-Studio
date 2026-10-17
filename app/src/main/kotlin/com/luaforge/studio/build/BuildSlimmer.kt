@@ -93,7 +93,7 @@ object BuildSlimmer {
     /**
      * 把项目引入的 jar 转成 dex,并按需精简。
      *
-     * @param jars        待转换的 jar(项目 `libs/*.jar` + Maven 下载的 jar)
+     * @param jars        待转换的 jar(项目 `libs` 目录下的 jar + Maven 下载的 jar)
      * @param androidJar  平台 `android.jar`,作为 R8/D8 的 library 输入
      * @param templateClasses 模板(`core.apk` 解压后 `classes*.dex`)已有的类描述符;
      *                     用于识别重复类,传空集合则跳过去重
