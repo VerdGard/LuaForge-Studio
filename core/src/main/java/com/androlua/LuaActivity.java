@@ -267,6 +267,10 @@ public class LuaActivity extends AppCompatActivity
       mLuaDexLoader = new LuaDexLoader(this);
       mLuaDexLoader.loadLibs();
 
+      // Lua 侧 Jetpack Compose 桥:A(随 core 内置)/ C(项目 libs/compose_bridge.dex)共存。
+      // 必须放在 loadLibs() 之后 —— 外部桥靠 libs/*.dex 的类加载器才可见。
+      registerComposeBridge();
+
       // IDE 会话钩子:防火墙注入、调试浮窗注入等。
       // 放在 loadLibs() 之后:确保 libs/*.dex、原生库(如 lfs)已就位后再包装写入入口。
       // 产物未安装钩子 -> 列表为空,直接跳过,零开销。
@@ -1356,6 +1360,45 @@ public class LuaActivity extends AppCompatActivity
           }
         };
     call.register("call");
+  }
+
+  /**
+   * 注册 Lua 侧 Compose 全局函数(compose / composeContent / state / Column / Text ...)。
+   *
+   * <p>加载顺序:**项目内的外部桥优先**(方案 C,`libs/compose_bridge.dex`),
+   * 其次回退随 core 编译的内置桥(方案 A)。两者都没有时只记一条日志,
+   * 不抛异常、不提示 —— 没用 Compose 的项目不应该看到任何噪音。
+   *
+   * <p>这里刻意用反射入口({@code LuaComposeLoader.register})而不是直接调用
+   * {@code LuaCompose.register}:外部发行版可能整体不编入内置桥,
+   * 直接引用会在类链接期就抛 NoClassDefFoundError。
+   */
+  private void registerComposeBridge() {
+    try {
+      final LuaDexLoader dexLoader = mLuaDexLoader;
+      com.luaforge.studio.compose.LuaComposeLoader.DexProvider provider =
+          new com.luaforge.studio.compose.LuaComposeLoader.DexProvider() {
+            @Override
+            public ClassLoader load(String path) {
+              try {
+                return dexLoader.loadDex(path);
+              } catch (Throwable t) {
+                Log.e("LuaActivity", "加载 compose 桥 dex 失败: " + path, t);
+                return null;
+              }
+            }
+          };
+      com.luaforge.studio.compose.LuaComposeLoader.Result r =
+          com.luaforge.studio.compose.LuaComposeLoader.INSTANCE.register(L, this, luaDir, provider);
+      if (r.getSource() == com.luaforge.studio.compose.LuaComposeLoader.Source.NONE) {
+        Log.i("LuaActivity", "Compose 桥未启用: " + r.getDetail());
+      } else {
+        Log.i("LuaActivity", "Compose 桥已启用(" + r.getSource() + ", " + r.getRegistered() + " 个函数)");
+      }
+    } catch (Throwable t) {
+      // 桥不可用绝不能影响页面启动
+      Log.w("LuaActivity", "注册 Compose 桥失败: " + t.getMessage());
+    }
   }
 
   public void setDebug(boolean isDebug) {

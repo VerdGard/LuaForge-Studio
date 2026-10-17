@@ -42,6 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -679,6 +680,44 @@ fun CodeEditScreen(
                                     runBuild(buildType)
                                 }
                             )
+
+                            // 外部写入冲突:协同 / MCP 改了磁盘,但本地还有未保存的编辑。
+                            // 不静默覆盖,交给用户裁决 —— 否则用户的输入会被无声吞掉。
+                            viewModel.fileConflicts.firstOrNull()?.let { conflict ->
+                                AlertDialog(
+                                    onDismissRequest = { /* 必须裁决,不允许点击外部关闭 */ },
+                                    title = { Text(stringResource(R.string.collab_editor_conflicts, viewModel.fileConflicts.size)) },
+                                    text = {
+                                        Column {
+                                            Text(
+                                                text = conflict.fileName,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Text(
+                                                text = conflict.source,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    confirmButton = {
+                                        TextButton(onClick = {
+                                            scope.launch {
+                                                viewModel.resolveFileConflict(conflict.filePath, keepMine = true)
+                                            }
+                                        }) { Text(stringResource(R.string.collab_editor_keep_mine)) }
+                                    },
+                                    dismissButton = {
+                                        TextButton(onClick = {
+                                            scope.launch {
+                                                viewModel.resolveFileConflict(conflict.filePath, keepMine = false)
+                                            }
+                                        }) { Text(stringResource(R.string.collab_editor_accept_disk)) }
+                                    }
+                                )
+                            }
 
                             // Maven下载进度对话框
                             DownloadProgressDialog(

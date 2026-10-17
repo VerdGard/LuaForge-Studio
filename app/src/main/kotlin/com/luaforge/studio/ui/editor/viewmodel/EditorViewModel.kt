@@ -28,6 +28,7 @@ import com.androlua.LuaFunctionRegistrar
 import com.luaforge.studio.utils.LogCatcher
 import com.luaforge.studio.utils.JsonUtil
 import com.luaforge.studio.utils.NonBlockingToastState
+import com.luaforge.studio.utils.ProjectFileIO
 import io.github.rosemoe.sora.event.SelectionChangeEvent
 import io.github.rosemoe.sora.event.SubscriptionReceipt
 import io.github.rosemoe.sora.widget.CodeEditor
@@ -50,9 +51,33 @@ data class CodeEditorState(
     var contentHash by mutableStateOf("")
         private set
 
+    /**
+     * 非空表示该缓冲区是**只读占位**(如文件超过 1MB),内容不是真实文件内容。
+     * 值为原因描述,供 UI 提示。只读缓冲区必须禁止写回磁盘,
+     * 否则会把占位文本当成用户代码覆盖掉原文件。
+     */
+    var readOnlyReason by mutableStateOf<String?>(null)
+        private set
+
+    /** 是否可以安全地把 [content] 写回磁盘。 */
+    val isWritable: Boolean get() = readOnlyReason == null
+
     fun onContentLoaded(loadedContent: String) {
         content = loadedContent
         savedContent = loadedContent
+        readOnlyReason = null
+        updateContentHash()
+    }
+
+    /**
+     * 载入"只读占位":内容仅用于展示,禁止保存。
+     *
+     * 用于文件过大/无法解码等只想让用户看一眼、不能回写的场景。
+     */
+    fun onPlaceholderLoaded(placeholder: String, reason: String) {
+        content = placeholder
+        savedContent = placeholder
+        readOnlyReason = reason
         updateContentHash()
     }
 
@@ -174,7 +199,8 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
         viewModelScope.launch(KotlinDispatchers.IO) {
             try {
                 if (file.exists() && file.canWrite()) {
-                    file.writeText(newContent, Charsets.UTF_8)
+                    // 原子写 + 项目级锁:与协同落盘/MCP 写入互斥,避免半截文件
+                    ProjectFileIO.writeTextAtomic(file, newContent, projectLockFor(file))
                     LogCatcher.i("EditorViewModel", "布局助手返回,已保存文件: $filePath")
                 } else {
                     LogCatcher.w("EditorViewModel", "文件不可写,无法保存: $filePath")
@@ -796,6 +822,16 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
         }
     }
 
+    /**
+     * 取该文件所属项目的写锁。
+     *
+     * 锁粒度按**项目根**而不是全局:不同项目可以并行保存,同一项目内串行。
+     * 项目根探测统一交给 [ProjectFileIO.lockForProjectFile](按 settings.json /
+     * .luaforge / .git 标记向上找),因此编辑器保存、MCP 写入、协同落盘
+     * 必然落在同一把锁上 —— 这是"协同同步把文件写坏"的根因修复点。
+     */
+    private fun projectLockFor(file: File): Any = ProjectFileIO.lockForProjectFile(file)
+
     override fun onCleared() {
         super.onCleared()
         LogCatcher.i("EditorViewModel", "onCleared")
@@ -821,12 +857,17 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
             val errorMessages = mutableListOf<String>()
             modifiedFiles.forEach { state ->
                 try {
+                    // 只读占位(超大/读失败)的内容不是真实文件内容,绝不能写回
+                    if (!state.isWritable) {
+                        errorMessages.add("${state.file.name} 为只读预览,已跳过保存")
+                        return@forEach
+                    }
                     if (!state.file.canWrite()) {
                         errorMessages.add("文件 ${state.file.name} 不可写")
                         return@forEach
                     }
-                    state.file.outputStream().bufferedWriter(Charsets.UTF_8)
-                        .use { it.write(state.content) }
+                    // 原子写:先写临时文件再 rename,读者永远看不到半截内容
+                    ProjectFileIO.writeTextAtomic(state.file, state.content, projectLockFor(state.file))
                     state.onContentSaved()
                     updateFileSavedState(state.file.absolutePath, true)
                     successCount++
@@ -856,9 +897,10 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
             var successCount = 0
             modifiedFiles.forEach { state ->
                 try {
+                    if (!state.isWritable) return@forEach
                     if (!state.file.canWrite()) return@forEach
-                    state.file.outputStream().bufferedWriter(Charsets.UTF_8)
-                        .use { it.write(state.content) }
+                    // 原子写:先写临时文件再 rename,读者永远看不到半截内容
+                    ProjectFileIO.writeTextAtomic(state.file, state.content, projectLockFor(state.file))
                     state.onContentSaved()
                     updateFileSavedState(state.file.absolutePath, true)
                     successCount++
@@ -873,9 +915,9 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
         withContext(KotlinDispatchers.IO) {
             val state = activeFileState ?: return@withContext false
             try {
+                if (!state.isWritable) return@withContext false
                 if (!state.file.canWrite()) return@withContext false
-                state.file.outputStream().bufferedWriter(Charsets.UTF_8)
-                    .use { it.write(state.content) }
+                ProjectFileIO.writeTextAtomic(state.file, state.content, projectLockFor(state.file))
                 state.onContentSaved()
                 updateFileSavedState(state.file.absolutePath, true)
                 true
@@ -889,9 +931,14 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
         val state = activeFileState ?: return@withContext false
         try {
             if (!state.file.exists() || !state.file.canRead()) return@withContext false
-            val content =
-                if (state.file.length() > 1024 * 1024) "文件过大" else state.file.readText(Charsets.UTF_8)
-            state.onContentLoaded(content)
+            val tooLarge = state.file.length() > MAX_EDITABLE_BYTES
+            val content = if (tooLarge) TOO_LARGE_PLACEHOLDER else state.file.readText(Charsets.UTF_8)
+            // 超大文件走只读占位:内容不是真实文件内容,禁止保存回磁盘
+            if (tooLarge) {
+                state.onPlaceholderLoaded(content, "文件超过 1MB,仅只读预览")
+            } else {
+                state.onContentLoaded(content)
+            }
             editorInstances[state.file.absolutePath]?.let { editor ->
                 editor.post {
                     editor.setText(content)
@@ -917,26 +964,50 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
     /**
      * 把磁盘上的最新内容同步到编辑器缓冲区与控件。
      *
-     * 供 MCP 的 write_file / create_file 等"外部写入"调用:否则编辑器仍持有旧内容,
-     * 用户随后触发保存会把外部写入的代码覆盖回去。
+     * 供 MCP 的 write_file / create_file、协同同步等"外部写入"调用:否则编辑器仍持有
+     * 旧内容,用户随后触发保存会把外部写入的代码覆盖回去。
      *
-     * @return 该文件未在编辑器中打开时返回 false
+     * ## 为什么不无脑覆盖
+     *
+     * 用户正在编辑器里改这个文件(缓冲区 `isModified`)、同时外部把磁盘改了 ——
+     * 无脑覆盖会**吞掉用户未保存的输入**。这时只登记一条 [FileConflict]
+     * (见 [fileConflicts]),由用户自己决定"接受外部版本"还是"保留我的"。
+     *
+     * 区分两种调用者:
+     * - **内部刷新**(`fromExternal = false`,如"重新加载"菜单):用户明确要求以磁盘为准,
+     *   不做冲突拦截;
+     * - **外部写入**(`fromExternal = true`,MCP / 协同):必须拦截未保存编辑。
+     *
+     * @param fromExternal 是否为外部写入触发的刷新
+     * @param source 触发者描述,仅用于日志与冲突展示(如 "协同同步"、"MCP write_file")
+     * @return 缓冲区内容是否被更新;因冲突被拦下或文件未打开时返回 false
      */
-    suspend fun refreshEditorFromDisk(filePath: String): Boolean {
+    suspend fun refreshEditorFromDisk(
+        filePath: String,
+        fromExternal: Boolean = false,
+        source: String = ""
+    ): Boolean {
         val state = openFiles.firstOrNull { it.file.absolutePath == filePath }
             ?: return false
         return withContext(KotlinDispatchers.IO) {
             try {
                 if (!state.file.exists() || !state.file.canRead()) return@withContext false
-                if (state.file.length() > 1024 * 1024) return@withContext false
+                if (state.file.length() > MAX_EDITABLE_BYTES) return@withContext false
                 val content = state.file.readText(Charsets.UTF_8)
+                // 外部写入 + 本地有未保存编辑 → 不覆盖,登记冲突交给用户裁决
+                if (fromExternal && state.isModified && state.content != content) {
+                    // 冲突状态是 Compose State,写入必须回主线程
+                    withContext(KotlinDispatchers.Main) { addFileConflict(filePath, source) }
+                    return@withContext false
+                }
                 // 以磁盘为准:重载后不再标记为已修改
-                state.onContentLoaded(content)
                 withContext(KotlinDispatchers.Main) {
+                    state.onContentLoaded(content)
                     editorInstances[filePath]?.let { editor ->
                         if (editor.text.toString() != content) editor.setText(content)
                         editor.postInvalidate()
                     }
+                    clearFileConflict(filePath)
                 }
                 true
             } catch (e: Exception) {
@@ -946,21 +1017,114 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
         }
     }
 
+    // ------------------------------------------------------------------
+    // 外部写入与未保存编辑的冲突
+    // ------------------------------------------------------------------
+
+    /** 一处冲突:定位于某文件,等待用户裁决"用外部覆盖"还是"保留我的"。 */
+    data class FileConflict(
+        val filePath: String,
+        val fileName: String,
+        val source: String,
+        val at: Long = System.currentTimeMillis()
+    )
+
+    /** 当前待裁决的冲突。UI 可观察此状态弹出提示。 */
+    var fileConflicts by mutableStateOf<List<FileConflict>>(emptyList())
+        private set
+
+    /** 登记冲突。**必须在主线程调用**(写 Compose State)。 */
+    private fun addFileConflict(filePath: String, source: String) {
+        if (fileConflicts.any { it.filePath == filePath }) return
+        val name = File(filePath).name
+        LogCatcher.w(
+            "EditorViewModel",
+            "${source.ifBlank { "外部写入" }} 修改了 $name,但本地有未保存的编辑,已保留本地内容"
+        )
+        fileConflicts = fileConflicts + FileConflict(filePath, name, source.ifBlank { "外部写入" })
+    }
+
+    fun clearFileConflict(filePath: String) {
+        if (fileConflicts.none { it.filePath == filePath }) return
+        fileConflicts = fileConflicts.filterNot { it.filePath == filePath }
+    }
+
+    fun clearAllFileConflicts() {
+        if (fileConflicts.isNotEmpty()) fileConflicts = emptyList()
+    }
+
+    /**
+     * 裁决一处冲突。
+     *
+     * @param keepMine true = 保留编辑器里的内容(丢弃磁盘版本);false = 接受磁盘版本
+     * @return 是否处理完成
+     */
+    suspend fun resolveFileConflict(filePath: String, keepMine: Boolean): Boolean {
+        val state = openFiles.firstOrNull { it.file.absolutePath == filePath }
+            ?: return false.also { clearFileConflict(filePath) }
+        if (keepMine) {
+            // 保留本地:用当前缓冲区内容覆盖磁盘(原子写),随后视为已保存。
+            // 写盘只在 IO 线程,缓冲区与冲突状态(Compose State)回主线程更新。
+            val ok = withContext(KotlinDispatchers.IO) {
+                runCatching {
+                    ProjectFileIO.writeTextAtomic(state.file, state.content, projectLockFor(state.file))
+                    true
+                }.getOrDefault(false)
+            }
+            if (ok) {
+                withContext(KotlinDispatchers.Main) {
+                    state.onContentSaved()
+                    clearFileConflict(filePath)
+                }
+                updateFileSavedState(filePath, true)
+            }
+            return ok
+        }
+        // 接受磁盘:丢掉未保存编辑,以磁盘为准强制重载
+        val content = withContext(KotlinDispatchers.IO) {
+            runCatching {
+                if (state.file.exists() && state.file.length() <= MAX_EDITABLE_BYTES) {
+                    state.file.readText(Charsets.UTF_8)
+                } else null
+            }.getOrNull()
+        } ?: return false
+        withContext(KotlinDispatchers.Main) {
+            state.onContentLoaded(content)
+            editorInstances[filePath]?.let { editor ->
+                if (editor.text.toString() != content) editor.setText(content)
+                editor.postInvalidate()
+            }
+            clearFileConflict(filePath)
+        }
+        return true
+    }
+
     // 文件操作
     @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
     private suspend fun openFileInternal(file: File): Boolean {
         return try {
             val (cursorLine, cursorColumn) = getFileCursorPosition(file.absolutePath)
+            // 读失败/超大 都不能把提示语当成文件内容塞进缓冲区:
+            // 一旦用户按保存,真实文件就会被这句提示覆盖。改用只读占位 + 禁止保存。
+            var placeholderReason: String? = null
             val content = withContext(KotlinDispatchers.IO) {
-                try {
-                    if (file.length() > 1024 * 1024) "文件过大" else file.readText(Charsets.UTF_8)
-                } catch (e: Exception) {
-                    "无法读取文件: ${e.message}"
+                if (file.length() > MAX_EDITABLE_BYTES) {
+                    placeholderReason = "文件超过 1MB,仅只读预览"
+                    TOO_LARGE_PLACEHOLDER
+                } else {
+                    try {
+                        file.readText(Charsets.UTF_8)
+                    } catch (e: Exception) {
+                        placeholderReason = "无法读取文件: ${e.message}"
+                        "-- 无法读取该文件:${e.message}\n-- 此缓冲区为只读,保存已被禁用。"
+                    }
                 }
             }
             val languageType = getLanguageType(file.extension)
             val newState = CodeEditorState(file = file, languageType = languageType)
-            newState.onContentLoaded(content)
+            val reason = placeholderReason
+            if (reason != null) newState.onPlaceholderLoaded(content, reason)
+            else newState.onContentLoaded(content)
             openFiles = openFiles + newState
             withContext(KotlinDispatchers.IO) {
                 stateManager.addOrUpdateFileToCurrentProject(
@@ -1200,5 +1364,21 @@ class EditorViewModel : ViewModel(), CompletionDataManager.OnCompletionDataListe
         "aly" -> "aly"
         "json" -> "json"
         else -> "plain"
+    }
+
+    companion object {
+        /**
+         * 编辑器可承载的单文件上限(1MB)。
+         *
+         * 超过这个体积不再把全文读进缓冲区 —— 但**绝不能**退化成把一句
+         * "文件过大"当成文件内容塞进去:那样用户随手一保存,真实文件就被
+         * 这句提示覆盖、不可恢复。正确做法是把文件标记为**只读占位**
+         * (见 [CodeEditorState.readOnlyReason])并禁止保存。
+         */
+        const val MAX_EDITABLE_BYTES = 1024 * 1024L
+
+        /** 文件过大时写入缓冲区的占位内容。只用于展示,永远不能被保存回磁盘。 */
+        private const val TOO_LARGE_PLACEHOLDER =
+            "-- 文件过大(超过 1MB),已跳过加载。\n-- 为避免覆盖真实内容,此缓冲区为只读:\n-- 请在文件管理器中查看,或用 MCP read_file 分段读取。"
     }
 }

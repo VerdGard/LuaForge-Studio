@@ -782,4 +782,15 @@
     <string name="collab_refresh">Refresh</string>
     <string name="collab_snapshot_hint">Enter a message for this snapshot</string>
 
+    <string name="collab_conflicts_title">Sync conflicts (%1$d)</string>
+    <string name="collab_conflicts_desc">These files changed on both sides with different content. Your local version was kept; choose which side wins.</string>
+    <string name="collab_conflict_keep_local">Keep mine</string>
+    <string name="collab_conflict_keep_remote">Use remote</string>
+    <string name="collab_conflict_resolved">Resolved: %1$s</string>
+    <string name="collab_conflict_failed">Failed: %1$s</string>
+    <string name="collab_upload_now">Upload local changes</string>
+    <string name="collab_uploaded">Uploaded %1$d files</string>
+    <string name="collab_editor_conflicts">%1$d file(s) changed externally while you have unsaved edits</string>
+    <string name="collab_editor_keep_mine">Keep mine</string>
+    <string name="collab_editor_accept_disk">Use disk version</string>
 </resources>

@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import com.luaforge.studio.mcp.EditorBridge
 import com.luaforge.studio.ui.settings.SettingsManager
 import com.luaforge.studio.utils.LogCatcher
+import com.luaforge.studio.utils.ProjectFileIO
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,8 +22,28 @@ import java.io.File
  * 局域网协同开发管理器(进程级单例)。
  *
  * 两种角色:
- * - **共享端(host)**:在本地项目上启动 [CollabServer],暴露项目供他人连接;
- * - **连接端(client)**:连接远端共享端,把项目同步到本地,并轮询增量变更实时刷新。
+ * - **共享端(host)**:在本地项目上启动 [CollabServer],暴露项目供他人连接,
+ *   并**监视本地改动**登记为变更(编辑器保存、MCP 写入、协同 put 都算);
+ * - **连接端(client)**:连上共享端后**双向**同步 —— 拉远端增量,也把本地改动推回去。
+ *
+ * ## 双向同步与冲突
+ *
+ * 两端各自维护一份**基线**([baseline]):上次同步后两端一致的内容 MD5。
+ * 每次同步用三方比较判定,而不是"谁新算谁赢":
+ *
+ * | 本地 vs 基线 | 远端 vs 基线 | 处理 |
+ * |---|---|---|
+ * | 未变 | 变了 | 应用远端 |
+ * | 变了 | 未变 | 推送到远端 |
+ * | 未变 | 未变 | 跳过 |
+ * | 变了 | 变了且互不相同 | **冲突**,保留本地,登记到 [status].conflicts 等用户裁决 |
+ *
+ * 没有这层比较时,两端各改各的会互相静默覆盖,用户看到的就是"同步把项目改坏了"。
+ *
+ * ## 写盘安全
+ *
+ * 所有落盘都经 [ProjectFileIO](原子写 + 项目级锁),与编辑器保存、MCP 写入互斥,
+ * 读者永远看不到半截文件。
  *
  * 状态以 Compose State 暴露,设置页 / 协同页可直接观察。
  */
@@ -42,6 +63,15 @@ object CollabManager {
     private var client: CollabClient? = null
     private var syncJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + Job())
+
+    /**
+     * 上次同步后两端一致的内容指纹:相对路径 -> MD5。
+     *
+     * 双向同步的核心状态。并发访问来自轮询协程与 UI 读状态,用并发 Map。
+     * 客户端与共享端共用同一份(共享端用它做本地变更监视)。
+     */
+    private val baseline = java.util.concurrent.ConcurrentHashMap<String, String>()
+
 
     /** 串行化 start/stop 的状态切换;不再用 @Synchronized(suspend 中持锁会跨挂起点)。 */
     private val stateLock = Any()
@@ -98,6 +128,9 @@ object CollabManager {
                     rev = r.currentRev(),
                     head = r.headRevision()
                 )
+                // 共享端也要监视本地改动:编辑器保存不会经过 CollabManager,
+                // 若只靠 MCP 主动调 recordLocalChange,用户手改的文件永远不同步出去。
+                startHostWatch(r, projectDir)
                 LogCatcher.i(TAG, "共享端已启动:$projectName @ ${instance.boundPort}")
             } else {
                 status = CollabStatus(error = "端口 $port 绑定失败或被占用")
@@ -130,9 +163,24 @@ object CollabManager {
             status = CollabStatus(error = "共享端地址无效:$remoteHost")
             return@withContext false
         }
-        synchronized(stateLock) {
+        // 分两步:先在锁内把客户端建起来(不碰主线程),再在锁外做首次同步。
+        // 首次同步要刷新编辑器缓冲区,必须切主线程(见 refreshEditor),
+        // 若在 synchronized(stateLock) 里等待主线程,一旦主线程此时正在读
+        // CollabManager.status 就会死锁。
+        val target = synchronized(stateLock) {
             stopInternal()
-            startClientLocked(normalizedHost, remotePort, token, localDir, onChanged)
+            startClientLocked(normalizedHost, remotePort, token, localDir)
+        } ?: return@withContext false
+        try {
+            initialSync(target)
+            startPolling(onChanged)
+            LogCatcher.i(TAG, "已连接共享端并完成首次同步:${target.absolutePath}")
+            true
+        } catch (e: Exception) {
+            LogCatcher.e(TAG, "首次同步失败", e)
+            stop()
+            status = CollabStatus(error = e.message ?: "首次同步失败")
+            false
         }
     }
 
@@ -151,26 +199,31 @@ object CollabManager {
         return File(sharedProjectRoot(), safe)
     }
 
+    /**
+     * 建立连接并把状态置为「同步中」。
+     *
+     * **不做首次同步**(见 [startClient] 的分工):本函数在 `synchronized(stateLock)`
+     * 内执行,不能等待主线程。成功时返回落地目录,失败返回 null。
+     */
     private fun startClientLocked(
         remoteHost: String,
         remotePort: Int,
         token: String,
-        localDir: File?,
-        onChanged: (() -> Unit)?
-    ): Boolean {
+        localDir: File?
+    ): File? {
         return try {
             val c = CollabClient(remoteHost, remotePort, token)
             val info = c.info()
             if (info == null) {
                 status = CollabStatus(error = "无法连接共享端 $remoteHost:$remotePort")
-                return false
+                return null
             }
             // 未指定落地目录时,连上后按远端项目名自动下载到本地项目库
             val target = localDir ?: localDirFor(info.name)
             if (!target.exists()) target.mkdirs()
             if (!target.isDirectory) {
                 status = CollabStatus(error = "本地目录不可用:${target.absolutePath}")
-                return false
+                return null
             }
 
             client = c
@@ -190,49 +243,358 @@ object CollabManager {
                 syncTotal = 0,
                 syncDone = 0
             )
-            // 全量同步(自动下载所选项目)
-            initialSync(target)
-            status = status.copy(syncing = false)
-            startPolling(onChanged)
-            LogCatcher.i(TAG, "已连接共享端并完成首次同步:${target.absolutePath}")
-            true
+            target
         } catch (e: Exception) {
             LogCatcher.e(TAG, "连接共享端异常", e)
             // 失败时必须回滚已赋值的 client/repo,否则 isRunning() 会返回 true,
             // 而 status 显示的是错误态,造成状态不一致。
             stopInternal()
             status = CollabStatus(error = e.message ?: "未知错误")
-            false
+            null
         }
     }
 
     /**
-     * 首次全量同步:拉取清单与全部文件到 [localDir]。
+     * 连接成功后的首次同步。
      *
-     * 落盘时会校验目标路径仍在 [localDir] 内:远端清单里的 `../` 之类越界路径
-     * 一律跳过,避免共享端被篡改后把文件写到本地项目之外。
+     * 与旧实现的关键区别:**不再无条件用远端覆盖本地**。首次同步同样走三方比对
+     * ([syncOnce]),基线为空时按"谁有内容"决定下载/上传,两边都有且内容不同的
+     * 一律登记为冲突等用户裁决 —— 连接一个已有内容的本地目录时,不会再出现
+     * "一连上就把我的代码冲掉"。
      */
-    private fun initialSync(localDir: File) {
-        val c = client ?: return
+    private suspend fun initialSync(localDir: File) {
+        val outcome = syncOnce(localDir)
+        refreshEditors(outcome)
+        status = status.copy(syncing = false)
+    }
+
+    /**
+     * 刷新受影响的编辑器缓冲区。
+     *
+     * 单独抽出来,是为了让 [syncOnce] 保持**纯同步**(只做磁盘 IO),
+     * 不掺入主线程调度 —— 否则在持有 stateLock 时等待主线程会形成死锁风险。
+     */
+    private suspend fun refreshEditors(outcome: SyncOutcome) {
+        for ((absPath, reason) in outcome.refresh) {
+            refreshEditor(absPath, source = reason)
+        }
+    }
+
+    /**
+     * 执行一轮双向同步。
+     *
+     * ## 三方比对
+     *
+     * 对每个文件取三个指纹:本地磁盘([ProjectFileIO.md5Of])、远端清单、上次同步基线
+     * ([baseline])。据此判定谁改过:
+     *
+     * | 本地变了 | 远端变了 | 处理 |
+     * |---|---|---|
+     * | 否 | 否 | 跳过 |
+     * | 是 | 否 | 推送本地 |
+     * | 否 | 是 | 应用远端 |
+     * | 是 | 是(内容相同) | 只更新基线 |
+     * | 是 | 是(内容不同) | 记冲突,保留本地,不动远端 |
+     *
+     * 只有"两边都改"才会产生冲突,这正是需要人工裁决的唯一种情况。
+     *
+     * 本函数**只做磁盘 IO**,不切主线程;需要刷新的编辑器路径收集在返回值里,
+     * 由调用方([refreshEditors])在 suspend 上下文完成 —— 这样它可以在
+     * `synchronized` 块内安全调用。
+     *
+     * @return 改动结果(是否变了 + 待刷新的编辑器路径)
+     */
+    private fun syncOnce(localDir: File): SyncOutcome {
+        val c = client ?: return SyncOutcome()
         val base = try { localDir.canonicalFile } catch (_: Exception) { localDir.absoluteFile }
-        val paths = c.manifest()
-        status = status.copy(syncing = true, syncTotal = paths.size, syncDone = 0)
-        var done = 0
+        val remote = c.manifest().associate { it.path to it.md5 }
+
+        // 本地指纹只扫一次:下面既要算全集又要算计划,重复走全项目目录开销不小
+        val local = localFileMd5s(base)
+
+        // 全集 = 远端 ∪ 基线 ∪ 本地(本地独有文件也要有机会上传)
+        val paths = LinkedHashSet<String>()
+        paths.addAll(remote.keys)
+        paths.addAll(baseline.keys)
+        paths.addAll(local.keys)
+
+        // 先算计划,再执行:因为"覆盖本地"之前要先拍快照,
+        // 而快照是否必要取决于这一轮到底会不会写本地文件。
+        val plan = ArrayList<Pair<String, Action>>()
         for (path in paths) {
+            val target = safeChildOf(base, path)
+            if (target == null) {
+                LogCatcher.i(TAG, "跳过越界路径:$path")
+                continue
+            }
+            val localMd5 = local[path]
+            val remoteMd5 = remote[path]
+            val baseMd5 = baseline[path]
+            val localChanged = localMd5 != baseMd5
+            val remoteChanged = remoteMd5 != baseMd5
+            val action = when {
+                !localChanged && !remoteChanged -> Action.Skip
+                localChanged && !remoteChanged -> Action.Push
+                !localChanged && remoteChanged -> Action.Pull
+                localMd5 != null && localMd5 == remoteMd5 -> Action.AlignBaseline
+                else -> Action.Conflict
+            }
+            plan.add(path to action)
+        }
+
+        // 本轮会覆盖本地 → 覆盖前先自动快照,给用户留一条回档后路。
+        if (plan.any { it.second == Action.Pull }) {
+            autoSnapshot("同步前自动快照(将被远端覆盖)")
+        }
+
+        status = status.copy(syncing = true, syncTotal = plan.size, syncDone = 0)
+        var done = 0
+        var changedAny = false
+        val found = ArrayList<FileConflict>()
+        val refresh = ArrayList<Pair<String, String>>()
+
+        for ((path, action) in plan) {
             done++
             val target = safeChildOf(base, path)
-            if (target != null) {
-                val content = c.file(path)
-                if (content != null) {
-                    target.parentFile?.mkdirs()
-                    target.writeText(content, Charsets.UTF_8)
+            if (target == null) {
+                status = status.copy(syncDone = done)
+                continue
+            }
+            val localMd5 = local[path]
+            val remoteMd5 = remote[path]
+            when (action) {
+                Action.Skip -> Unit
+
+                Action.Push -> {
+                    // 只有本地变了:推上去
+                    val r = pushOne(c, path, target, localMd5)
+                    if (r == PushOutcome.CONFLICT) {
+                        found.add(FileConflict(path, localMd5, remoteMd5))
+                    } else if (r == PushOutcome.OK) {
+                        changedAny = true
+                    }
                 }
-            } else {
-                LogCatcher.i(TAG, "跳过越界路径:$path")
+
+                Action.Pull -> {
+                    // 只有远端变了:拉下来
+                    val reason = applyRemote(c, target, path, remoteMd5)
+                    if (reason != null) {
+                        refresh.add(target.absolutePath to reason)
+                        changedAny = true
+                    }
+                }
+
+                Action.AlignBaseline -> {
+                    // 两侧改动结果一致,不算冲突,同步基线即可
+                    if (localMd5 != null) baseline[path] = localMd5
+                }
+
+                Action.Conflict -> found.add(FileConflict(path, localMd5, remoteMd5))
             }
             status = status.copy(syncDone = done)
         }
+
+        status = status.copy(conflicts = found)
+        if (found.isNotEmpty()) {
+            LogCatcher.w(TAG, "同步发现 ${found.size} 处冲突,已保留本地内容并等待裁决")
+        }
+        return SyncOutcome(changed = changedAny, refresh = refresh)
     }
+
+    /**
+     * 一轮同步的结果。
+     *
+     * @param changed 是否有文件被实际改动(用于触发 UI 刷新)
+     * @param refresh 需要在主线程刷新的编辑器:绝对路径 -> 原因(用于日志)
+     */
+    private data class SyncOutcome(
+        val changed: Boolean = false,
+        val refresh: List<Pair<String, String>> = emptyList()
+    )
+
+    private enum class PushOutcome { OK, CONFLICT, FAILED }
+
+    /** 单文件同步动作(先算计划再执行,便于在执行前统一做快照)。 */
+    private enum class Action { Skip, Push, Pull, AlignBaseline, Conflict }
+
+    /**
+     * 同步前自动快照。
+     *
+     * 目的很单纯:双向同步会**覆盖本地工作区**(拉远端内容),一旦用户其实更想要
+     * 原来那版,得有东西可回。只有工作区相对 HEAD 有改动时才真提交,避免每轮
+     * 同步都堆一条空提交把历史刷满。
+     *
+     * 失败不阻断同步(快照是保险,不是前置条件),只记日志。
+     */
+    private fun autoSnapshot(reason: String) {
+        val r = repo ?: return
+        try {
+            val dirty = r.git.changedFiles()
+            if (dirty.isEmpty()) return
+            val sha = r.snapshot(reason, "LuaForge Studio(自动)")
+            LogCatcher.i(TAG, "已自动快照 ${sha.take(8)}(改动 ${dirty.size} 个文件):$reason")
+            status = status.copy(head = r.headRevision())
+        } catch (e: Exception) {
+            LogCatcher.w(TAG, "自动快照失败:${e.message}")
+        }
+    }
+
+    /** 把单个本地文件推给共享端;成功后更新基线。 */
+    private fun pushOne(c: CollabClient, path: String, target: File, localMd5: String?): PushOutcome {
+        val baseMd5 = baseline[path]
+        return try {
+            if (localMd5 == null) {
+                // 本地已删除
+                val r = c.delete(path, baseMd5)
+                when {
+                    r.ok -> {
+                        baseline.remove(path)
+                        PushOutcome.OK
+                    }
+                    r.conflict -> PushOutcome.CONFLICT
+                    else -> {
+                        LogCatcher.w(TAG, "推送删除失败 $path: ${r.message}")
+                        PushOutcome.FAILED
+                    }
+                }
+            } else {
+                val bytes = ProjectFileIO.readBytes(target)
+                if (bytes == null) return PushOutcome.FAILED
+                val r = c.put(path, bytes, baseMd5)
+                when {
+                    r.ok -> {
+                        baseline[path] = localMd5
+                        PushOutcome.OK
+                    }
+                    r.conflict -> PushOutcome.CONFLICT
+                    else -> {
+                        LogCatcher.w(TAG, "推送失败 $path: ${r.message}")
+                        PushOutcome.FAILED
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            LogCatcher.e(TAG, "推送异常 $path", e)
+            PushOutcome.FAILED
+        }
+    }
+
+    /**
+     * 应用远端内容到本地(原子写);[remoteMd5] 为 null 表示远端已删除。
+     *
+     * @return 需要刷新编辑器时返回原因描述,无变化返回 null
+     */
+    private fun applyRemote(
+        c: CollabClient,
+        target: File,
+        path: String,
+        remoteMd5: String?
+    ): String? {
+        if (remoteMd5 == null) {
+            if (target.exists() && target.delete()) {
+                baseline.remove(path)
+                return "远端删除"
+            }
+            return null
+        }
+        val file = c.file(path) ?: return null
+        target.parentFile?.mkdirs()
+        ProjectFileIO.writeBytesAtomic(target, file.bytes, ProjectFileIO.lockForProjectFile(target))
+        baseline[path] = file.md5
+        return "远端更新"
+    }
+
+    /** 扫描本地项目,返回 相对路径 -> MD5(排除 `.git` / `.luaforge` / `build` 等)。 */
+    private fun localFileMd5s(base: File): Map<String, String> {
+        val out = LinkedHashMap<String, String>()
+        val git = repo?.git
+        fun walk(dir: File, prefix: String) {
+            val children = dir.listFiles()?.sortedBy { it.name } ?: return
+            for (child in children) {
+                if (git?.isIgnoredName(child.name) == true) continue
+                val rel = if (prefix.isEmpty()) child.name else "$prefix/${child.name}"
+                if (child.isDirectory) walk(child, rel)
+                else if (child.isFile) ProjectFileIO.md5Of(child)?.let { out[rel] = it }
+            }
+        }
+        walk(base, "")
+        return out
+    }
+
+    /**
+     * 把本地改动推给共享端(供 UI 手动"立即上传"以及轮询里定期调用)。
+     *
+     * 与 [syncOnce] 的区别:这里**不拉取**远端,只做上行。轮询里先拉后推,
+     * 所以本地改动最终仍会到达对端。
+     */
+    suspend fun pushLocalChanges(): Int = withContext(Dispatchers.IO) {
+        val c = client ?: return@withContext 0
+        val dir = status.projectPath?.let { File(it) } ?: return@withContext 0
+        val base = try { dir.canonicalFile } catch (_: Exception) { dir.absoluteFile }
+        var pushed = 0
+        val found = ArrayList<FileConflict>()
+        for ((path, md5) in localFileMd5s(base)) {
+            val baseMd5 = baseline[path]
+            if (md5 == baseMd5) continue
+            val target = safeChildOf(base, path) ?: continue
+            when (pushOne(c, path, target, md5)) {
+                PushOutcome.OK -> pushed++
+                PushOutcome.CONFLICT -> found.add(FileConflict(path, md5, null))
+                PushOutcome.FAILED -> Unit
+            }
+        }
+        if (found.isNotEmpty()) {
+            status = status.copy(
+                conflicts = (status.conflicts + found).distinctBy { it.path }
+            )
+        }
+        pushed
+    }
+
+    /**
+     * 裁决一处冲突。
+     *
+     * @param keepLocal true = 用本地覆盖远端;false = 用远端覆盖本地。
+     * @return 是否处理成功
+     */
+    suspend fun resolveConflict(path: String, keepLocal: Boolean): Boolean = withContext(Dispatchers.IO) {
+        val dir = status.projectPath?.let { File(it) } ?: return@withContext false
+        val base = try { dir.canonicalFile } catch (_: Exception) { dir.absoluteFile }
+        val target = safeChildOf(base, path) ?: return@withContext false
+        val ok = if (keepLocal) {
+            val c = client
+            if (c == null) {
+                // 共享端:本地就是唯一真相,直接把当前内容记为基线即可
+                ProjectFileIO.md5Of(target)?.let { baseline[path] = it } ?: baseline.remove(path)
+                true
+            } else {
+                val bytes = ProjectFileIO.readBytes(target)
+                if (bytes == null) {
+                    c.delete(path, null, force = true).ok
+                } else {
+                    val r = c.put(path, bytes, null, force = true)
+                    if (r.ok) ProjectFileIO.md5Of(target)?.let { baseline[path] = it }
+                    r.ok
+                }
+            }
+        } else {
+            val c = client
+            if (c == null) {
+                // 共享端没有"远端"可拉:本地即真相,直接清掉这条冲突即可
+                ProjectFileIO.md5Of(target)?.let { baseline[path] = it } ?: baseline.remove(path)
+                true
+            } else {
+                val remote = c.manifest().firstOrNull { it.path == path }
+                // 以 applyRemote 的实际结果为准:远端读失败时不能假装处理成功
+                applyRemote(c, target, path, remote?.md5) != null
+            }
+        }
+        if (ok) status = status.copy(conflicts = status.conflicts.filterNot { it.path == path })
+        ok
+    }
+
+    /** 当前待裁决的冲突列表。 */
+    fun currentConflicts(): List<FileConflict> = status.conflicts
 
     /** 把远端的相对路径安全地拼到 [base] 下;越界返回 null。 */
     private fun safeChildOf(base: File, relativePath: String): File? {
@@ -249,18 +611,33 @@ object CollabManager {
         }
     }
 
-    /** 若指定文件在编辑器中打开,则用磁盘最新内容刷新其缓冲区。 */
-    private suspend fun refreshEditor(absolutePath: String) {
+    /**
+     * 若指定文件在编辑器中打开,则用磁盘最新内容刷新其缓冲区。
+     *
+     * [source] 只用于日志(便于排查"谁改的");真正的"不覆盖未保存编辑"逻辑
+     * 在 [com.luaforge.studio.ui.editor.viewmodel.EditorViewModel.refreshEditorFromDisk] 内,
+     * 那里会检查 `isModified` 并登记冲突而不是静默覆盖。
+     */
+    private suspend fun refreshEditor(absolutePath: String, source: String = "协同同步") {
         val vm = EditorBridge.currentViewModel() ?: return
         try {
             kotlinx.coroutines.withContext(Dispatchers.Main) {
-                runCatching { vm.refreshEditorFromDisk(absolutePath) }
+                runCatching { vm.refreshEditorFromDisk(absolutePath, fromExternal = true, source = source) }
             }
         } catch (_: Exception) {
         }
     }
 
-    /** 启动增量轮询。 */
+    /**
+     * 启动同步轮询(**双向**)。
+     *
+     * 每一轮做两件事:
+     * 1. 拉远端增量(`changesSince`),但**不直接覆盖本地** —— 改为重跑一次
+     *    [syncOnce] 的三方比对,避免"远端有人动过"就把本地未同步的改动静默冲掉;
+     * 2. 把本地改动推给共享端(`syncOnce` 已包含上行)。
+     *
+     * 只有真的拉到了远端变更才重算,避免每 1.5s 全库算一遍 MD5。
+     */
     private fun startPolling(onChanged: (() -> Unit)?) {
         syncJob?.cancel()
         syncJob = scope.launch {
@@ -268,44 +645,75 @@ object CollabManager {
             while (isActive) {
                 delay(POLL_INTERVAL_MS)
                 val c = client ?: break
-                val changes = c.changesSince(since) ?: continue
-                if (changes.isEmpty()) continue
-                val localDir = status.projectPath?.let { File(it) } ?: continue
-                val base = try { localDir.canonicalFile } catch (_: Exception) { localDir.absoluteFile }
+                val localDir = status.projectPath?.let { File(it) } ?: break
+                val changes = c.changesSince(since)
                 var changedAny = false
-                for (change in changes) {
-                    // 与全量同步同样做越界防护:远端路径不得跳出本地项目目录
-                    val target = safeChildOf(base, change.path)
-                    since = maxOf(since, change.rev)
-                    if (target == null) {
-                        LogCatcher.i(TAG, "跳过越界变更:${change.path}")
-                        continue
-                    }
-                    if (change.deleted) {
-                        target.delete()
-                        refreshEditor(target.absolutePath)
-                        changedAny = true
-                    } else {
-                        val content = c.file(change.path) ?: continue
-                        target.parentFile?.mkdirs()
-                        // 仅在内容变化时写入,避免无谓刷新
-                        val existing = if (target.exists()) target.readText(Charsets.UTF_8) else null
-                        if (existing != content) {
-                            target.writeText(content, Charsets.UTF_8)
-                            // 该文件若正在编辑器中打开,立即把新内容推回,实现编写即刷新
-                            refreshEditor(target.absolutePath)
-                            changedAny = true
-                        }
-                    }
+                if (changes != null && changes.isNotEmpty()) {
+                    for (change in changes) since = maxOf(since, change.rev)
+                    // 远端有变更:走完整三方比对(含上行),冲突会被登记而不是覆盖
+                    val outcome = syncOnce(localDir)
+                    refreshEditors(outcome)
+                    changedAny = outcome.changed
+                } else {
+                    // 远端没变:只做上行,把本地新改的文件推过去
+                    val pushed = runCatching { pushLocalChanges() }.getOrDefault(0)
+                    changedAny = pushed > 0
                 }
                 val info = c.info()
-                status = status.copy(rev = since, head = info?.head ?: status.head)
+                status = status.copy(rev = since, head = info?.head ?: status.head, syncing = false)
                 if (changedAny) {
                     try { onChanged?.invoke() } catch (_: Exception) {}
                 }
             }
         }
     }
+
+    /**
+     * 共享端的本地变更监视。
+     *
+     * 编辑器保存、布局助手回写、回档等路径都不经过协同代码,无法逐个埋点;
+     * 这里用"定期比对内容指纹"的方式兜底:把当前工作区指纹与上一轮对比,
+     * 新增/变化/消失的文件登记为变更,连接端即可增量拉取。
+     *
+     * 相比给每条写入路径加钩子,这种做法的好处是**不会漏**;代价是磁盘 IO,
+     * 因此间隔比客户端轮询长(默认 2s),且只算 MD5 不读全文。
+     */
+    private fun startHostWatch(r: CollabRepo, projectDir: File) {
+        syncJob?.cancel()
+        val base = try { projectDir.canonicalFile } catch (_: Exception) { projectDir.absoluteFile }
+        // 启动时先拍一张,作为"已知状态";此时不应把已有文件当成新变更广播
+        val known = java.util.concurrent.ConcurrentHashMap<String, String>()
+        known.putAll(snapshotProject(base))
+        baseline.clear()
+        baseline.putAll(known)
+
+        syncJob = scope.launch {
+            while (isActive) {
+                delay(HOST_WATCH_INTERVAL_MS)
+                val current = runCatching { snapshotProject(base) }.getOrDefault(emptyMap())
+                var changed = 0
+                for ((path, md5) in current) {
+                    if (known[path] == md5) continue
+                    known[path] = md5
+                    r.recordChange(path, deleted = false)
+                    changed++
+                }
+                for (path in known.keys.toList()) {
+                    if (current.containsKey(path)) continue
+                    known.remove(path)
+                    r.recordChange(path, deleted = true)
+                    changed++
+                }
+                if (changed > 0) {
+                    status = status.copy(rev = r.currentRev())
+                    LogCatcher.i(TAG, "共享端检测到 $changed 处本地变更,已广播")
+                }
+            }
+        }
+    }
+
+    /** 抓取项目当前的内容指纹(排除 `.git` / `.luaforge` / `build` 等)。 */
+    private fun snapshotProject(base: File): Map<String, String> = localFileMd5s(base)
 
     /** 停止协同(共享端 / 连接端通用)。线程安全,可在主线程调用。 */
     fun stop() {
@@ -320,6 +728,7 @@ object CollabManager {
         syncJob = null
         client = null
         repo = null
+        baseline.clear()
         status = CollabStatus()
     }
 
@@ -376,6 +785,9 @@ object CollabManager {
     }
 
     private const val POLL_INTERVAL_MS = 1500L
+
+    /** 共享端本地变更监视间隔:比客户端轮询长,因为要扫全项目算指纹。 */
+    private const val HOST_WATCH_INTERVAL_MS = 2000L
 
     // ------------------------------------------------------------------
     // 共享范围限制
@@ -445,5 +857,23 @@ data class CollabStatus(
     /** 本次全量下载的总文件数 */
     val syncTotal: Int = 0,
     /** 本次全量下载已完成数 */
-    val syncDone: Int = 0
+    val syncDone: Int = 0,
+    /** 待用户裁决的冲突(两端都改过的同一文件) */
+    val conflicts: List<FileConflict> = emptyList()
+)
+
+/**
+ * 一处同步冲突。
+ *
+ * 产生条件:同一文件**两端都相对上次同步有改动,且改后内容不同**。这种情况下无论
+ * 保留哪边都会丢掉另一边的劳动成果,所以必须由用户裁决,不能自动合并。
+ *
+ * @param path      项目内相对路径
+ * @param localMd5  本地当前内容指纹(本地已删除时为 null)
+ * @param remoteMd5 远端当前内容指纹(远端已删除时为 null)
+ */
+data class FileConflict(
+    val path: String,
+    val localMd5: String?,
+    val remoteMd5: String?
 )

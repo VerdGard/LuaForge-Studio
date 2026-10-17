@@ -21,14 +21,35 @@ import java.util.concurrent.TimeUnit
  *
  * 复用与 [com.luaforge.studio.mcp.McpServer] 相同的极简 HTTP/1.1 传输(无第三方依赖),
  * 暴露以下接口:
- * - `GET  /collab/info`            项目元信息(名称、当前版本号、HEAD)
- * - `GET  /collab/manifest?rev=`   受控文件清单(路径 -> sha)
- * - `GET  /collab/file?path=`      读取单个文件内容
- * - `GET  /collab/changes?since=`  自版本 since 起的增量变更
- * - `POST /collab/history`         提交一次 git 快照(共享端记录)
+ *
+ * | 方法 | 路径 | 说明 |
+ * |---|---|---|
+ * | GET  | `/collab/info` | 项目元信息(名称、版本号、HEAD) |
+ * | GET  | `/collab/files` | **工作区全量清单**(路径 → 内容 MD5) |
+ * | GET  | `/collab/manifest` | 同上,兼容旧客户端(带 `status` 字段) |
+ * | GET  | `/collab/file?path=` | 读单个文件(**Base64 + MD5**) |
+ * | GET  | `/collab/changes?since=` | 自版本 since 起的增量变更 |
+ * | GET  | `/collab/history` | 提交历史 |
+ * | POST | `/collab/snapshot` | 提交一次快照 |
+ * | POST | `/collab/put` | **接收对端写入**(带基线 MD5 冲突检测) |
+ * | POST | `/collab/delete` | **接收对端删除**(带基线 MD5 冲突检测) |
  *
  * 服务运行在应用进程内,关闭开关或退出应用即停止。
  * 仅面向局域网使用,可选携带令牌。
+ *
+ * ## 双向与冲突
+ *
+ * `put` / `delete` 都带 `baseMd5`(调用方上次同步时看到的远端内容指纹):
+ * - 与当前远端 MD5 一致 → 正常写入/删除;
+ * - 不一致 → 返回 409 + `remoteMd5`,由调用方决定保留谁(用户明确"以我为准"时带
+ *   `force=true` 再来一次)。
+ *
+ * 这样两端同时改同一文件时不会互相静默覆盖 —— 这正是"同步把项目改坏"的另一半修复。
+ *
+ * ## 路径安全
+ *
+ * 所有接收路径都经 [CollabRepo.resolveSafe]:拒绝 `..`、绝对路径,以及落在
+ * `.git` / `.luaforge` 内的写入 —— 否则对端可以直接改写本端协同元数据。
  */
 class CollabServer(
     private val repo: CollabRepo,
@@ -136,11 +157,16 @@ class CollabServer(
 
             when {
                 method == "GET" && path == "/collab/info" -> handleInfo(client)
-                method == "GET" && path == "/collab/manifest" -> handleManifest(client)
+                method == "GET" && path == "/collab/files" -> handleFiles(client)
+                // 旧客户端仍可能请求 /collab/manifest:语义已改为"全量清单",
+                // 与 /collab/files 同一份数据(附带 status 字段仅供参考)。
+                method == "GET" && path == "/collab/manifest" -> handleFiles(client, withStatus = true)
                 method == "GET" && path == "/collab/file" -> handleFile(client, query["path"].orEmpty())
                 method == "GET" && path == "/collab/changes" -> handleChanges(client, query["since"]?.toLongOrNull() ?: 0L)
                 method == "GET" && path == "/collab/history" -> handleHistory(client)
                 method == "POST" && path == "/collab/snapshot" -> handleSnapshot(client, input, headers)
+                method == "POST" && path == "/collab/put" -> handlePut(client, input, headers)
+                method == "POST" && path == "/collab/delete" -> handleDelete(client, input, headers)
                 else -> writeResponse(client, 404, "application/json", "{\"error\":\"not found\"}")
             }
         } catch (e: Exception) {
@@ -167,11 +193,25 @@ class CollabServer(
         writeResponse(client, 200, "application/json", body)
     }
 
-    private fun handleManifest(client: Socket) {
-        val files = repo.git.changedFiles()
+    /**
+     * 工作区**全量**文件清单。
+     *
+     * 旧实现用 `changedFiles()`(与 HEAD 的 diff):共享端做过快照且工作区干净时
+     * 清单为空,连接端首次同步就下到 0 个文件;非空时也只是变更集,首次连接拿到的是
+     * 残缺项目。现在一律返回工作区全量(排除 `.git` / `.luaforge` / `build` 等),
+     * 每条带内容 MD5,供连接端做"是否已一致"与"冲突基线"判断。
+     *
+     * @param withStatus 兼容旧客户端:额外附 `status` 字段(added/modified/deleted 视作
+     *                   「相对 HEAD 的差异」,仅供参考,不再作为同步依据)
+     */
+    private fun handleFiles(client: Socket, withStatus: Boolean = false) {
+        val files = repo.fileList()
+        val diff = if (withStatus) repo.git.changedFiles().toMap() else emptyMap()
         val arr = JSONArray()
-        files.forEach { (path, status) ->
-            arr.put(JSONObject().put("path", path).put("status", status))
+        files.forEach { (path, md5) ->
+            val o = JSONObject().put("path", path).put("md5", md5)
+            if (withStatus) o.put("status", diff[path] ?: "unchanged")
+            arr.put(o)
         }
         val body = JSONObject()
             .put("rev", repo.currentRev())
@@ -180,20 +220,34 @@ class CollabServer(
         writeResponse(client, 200, "application/json", body)
     }
 
+    /**
+     * 读单个文件:内容一律 Base64 + MD5。
+     *
+     * 不用 JSON 字符串直接承载内容的原因:项目里的 `libs/*.dex`、图片、
+     * 加密后的 lua 都是非 UTF-8 字节,经 String 往返会被替换成 U+FFFD,
+     * 落盘就是**内容损坏**(这正是"同步把项目文件改坏"的一条隐蔽路径)。
+     */
     private fun handleFile(client: Socket, path: String) {
         if (path.isBlank()) {
             writeResponse(client, 400, "application/json", "{\"error\":\"missing path\"}")
             return
         }
-        val content = repo.readFile(path)
-        if (content == null) {
+        val safe = repo.resolveSafe(path)
+        if (safe == null) {
+            writeResponse(client, 400, "application/json", "{\"error\":\"invalid path\"}")
+            return
+        }
+        val bytes = repo.readFileBytes(path)
+        if (bytes == null) {
             writeResponse(client, 404, "application/json", "{\"error\":\"file not found\"}")
             return
         }
         val body = JSONObject()
             .put("path", path)
             .put("rev", repo.currentRev())
-            .put("content", content)
+            .put("md5", com.luaforge.studio.utils.ProjectFileIO.md5Of(bytes))
+            .put("size", bytes.size)
+            .put("contentBase64", Base64Codec.encode(bytes))
             .toString()
         writeResponse(client, 200, "application/json", body)
     }
@@ -246,6 +300,123 @@ class CollabServer(
         )
     }
 
+    /**
+     * 接收对端写入(双向同步的上行通道)。
+     *
+     * 请求体:`{path, contentBase64, md5, baseMd5?, force?}`
+     *
+     * 冲突判定(核心):
+     * - 调用方给了 `baseMd5`(它上次同步时看到的远端内容指纹);
+     * - 与当前远端 MD5 不一致 → 说明**远端在这期间被改过**,返回 409 + `remoteMd5`,
+     *   由调用方决定保留谁。用户明确"以我为准"时带 `force=true` 重试。
+     *
+     * 没有这层校验时,两端各改各的会互相静默覆盖 —— 用户看到的就是"同步把代码改坏了"。
+     */
+    private fun handlePut(client: Socket, input: InputStream, headers: Map<String, String>) {
+        val req = readJsonBody(input, headers)
+        val path = req.optString("path", "")
+        val safe = repo.resolveSafe(path)
+        if (safe == null) {
+            writeResponse(client, 400, "application/json", "{\"error\":\"invalid path\"}")
+            return
+        }
+        val b64 = req.optString("contentBase64", "")
+        if (b64.isEmpty()) {
+            writeResponse(client, 400, "application/json", "{\"error\":\"missing contentBase64\"}")
+            return
+        }
+        val bytes = Base64Codec.decode(b64)
+        val incomingMd5 = req.optString("md5").ifBlank {
+            com.luaforge.studio.utils.ProjectFileIO.md5Of(bytes)
+        }
+        // 传输完整性:调用方声明的 MD5 必须与实际内容一致,否则说明 Base64 被截断
+        val actualMd5 = com.luaforge.studio.utils.ProjectFileIO.md5Of(bytes)
+        if (incomingMd5.isNotBlank() && !incomingMd5.equals(actualMd5, ignoreCase = true)) {
+            writeResponse(
+                client, 400, "application/json",
+                JSONObject().put("error", "md5 mismatch: declared=$incomingMd5 actual=$actualMd5").toString()
+            )
+            return
+        }
+
+        val force = req.optBoolean("force", false)
+        val currentMd5 = repo.md5Of(path)
+        if (!force && req.has("baseMd5") && !req.isNull("baseMd5")) {
+            val baseMd5 = req.optString("baseMd5", "")
+            if (currentMd5 != null && baseMd5.isNotBlank() &&
+                !currentMd5.equals(baseMd5, ignoreCase = true)
+            ) {
+                writeResponse(
+                    client, 409, "application/json",
+                    JSONObject()
+                        .put("error", "conflict")
+                        .put("remoteMd5", currentMd5)
+                        .toString()
+                )
+                return
+            }
+        }
+
+        val rev = repo.writeFileBytes(path, bytes)
+        writeResponse(
+            client, 200, "application/json",
+            JSONObject()
+                .put("path", path)
+                .put("md5", actualMd5)
+                .put("rev", rev)
+                .toString()
+        )
+    }
+
+    /** 接收对端删除(同样带基线 MD5 冲突检测)。 */
+    private fun handleDelete(client: Socket, input: InputStream, headers: Map<String, String>) {
+        val req = readJsonBody(input, headers)
+        val path = req.optString("path", "")
+        val safe = repo.resolveSafe(path)
+        if (safe == null) {
+            writeResponse(client, 400, "application/json", "{\"error\":\"invalid path\"}")
+            return
+        }
+        val force = req.optBoolean("force", false)
+        val currentMd5 = repo.md5Of(path)
+        if (!force && req.has("baseMd5") && !req.isNull("baseMd5")) {
+            val baseMd5 = req.optString("baseMd5", "")
+            if (currentMd5 != null && baseMd5.isNotBlank() &&
+                !currentMd5.equals(baseMd5, ignoreCase = true)
+            ) {
+                writeResponse(
+                    client, 409, "application/json",
+                    JSONObject().put("error", "conflict").put("remoteMd5", currentMd5).toString()
+                )
+                return
+            }
+        }
+        val rev = repo.deleteFile(path)
+        writeResponse(
+            client, 200, "application/json",
+            JSONObject().put("path", path).put("rev", rev).toString()
+        )
+    }
+
+    /** 读取请求体并解析为 JSON。长度上限 32MB,防止恶意超大请求打爆内存。 */
+    private fun readJsonBody(input: InputStream, headers: Map<String, String>): JSONObject {
+        val len = headers["content-length"]?.toIntOrNull() ?: 0
+        if (len <= 0) return JSONObject()
+        val capped = len.coerceAtMost(MAX_BODY_BYTES)
+        val buf = ByteArray(capped)
+        var read = 0
+        while (read < capped) {
+            val n = input.read(buf, read, capped - read)
+            if (n <= 0) break
+            read += n
+        }
+        return try {
+            JSONObject(String(buf, 0, read, StandardCharsets.UTF_8))
+        } catch (_: Exception) {
+            JSONObject()
+        }
+    }
+
     // ------------------------------------------------------------------
     // HTTP 工具
     // ------------------------------------------------------------------
@@ -282,7 +453,8 @@ class CollabServer(
     private fun writeResponse(client: Socket, status: Int, contentType: String, body: String) {
         val bytes = body.toByteArray(StandardCharsets.UTF_8)
         val reason = when (status) {
-            200 -> "OK"; 400 -> "Bad Request"; 401 -> "Unauthorized"; 404 -> "Not Found"; else -> "Error"
+            200 -> "OK"; 400 -> "Bad Request"; 401 -> "Unauthorized"; 404 -> "Not Found"
+            409 -> "Conflict"; 413 -> "Payload Too Large"; else -> "Error"
         }
         val header = "HTTP/1.1 $status $reason\r\n" +
             "Content-Type: $contentType; charset=utf-8\r\n" +
@@ -296,6 +468,9 @@ class CollabServer(
 
     companion object {
         private const val TAG = "CollabServer"
+
+        /** 单个请求体上限:32MB。项目里最大的通常是图片/dex,再大就该分块了。 */
+        private const val MAX_BODY_BYTES = 32 * 1024 * 1024
 
         /**
          * 接口名黑名单前缀:这些网卡上的地址对「局域网协作」不可达或不该暴露。

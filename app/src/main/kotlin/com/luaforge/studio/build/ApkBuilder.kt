@@ -866,6 +866,17 @@ class ApkBuilder {
                     emptySet()
                 }
 
+                // 2.6 探测项目是否用到 Compose,只用于如实播报体积来源。
+                //     Compose 运行时在 core.apk 模板里,模板永不裁剪,所以这里无法"移除"它 ——
+                //     想零 Compose 体积只能换用 lfComposeBundled=false 构建的 core 发行版,
+                //     并让项目自备 libs/compose_bridge.dex(方案 C)。
+                if (BuildSlimmer.usesCompose(projectPath)) {
+                    LogCatcher.i(
+                        "ApkBuilder",
+                        "项目使用 Compose:构建精简只做 keep 保护,不裁剪模板内的 Compose 运行时"
+                    )
+                }
+
                 // 3. 递归分析项目文件和库文件，获取所有引用的模块
                 val referencedModules = recursivelyAnalyzeModules(projectPath, workDir)
                 LogCatcher.i(

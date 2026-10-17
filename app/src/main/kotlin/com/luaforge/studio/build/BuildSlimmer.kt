@@ -38,6 +38,20 @@ import com.android.tools.r8.R8
  * - R8 精简失败时**自动回退**到原先的 D8 直转,保证构建不因精简而失败。
  *
  * 由设置项「构建精简」(`SettingsData.buildSlimEnabled`)控制,默认关闭。
+ *
+ * ## 与 Compose 的关系
+ *
+ * Compose 运行时位于 `core.apk` 模板里,而**模板永不裁剪**(见上面的安全边界),
+ * 因此本模块无法在打包期把 Compose 从产物里"抠掉"—— 那需要在构建 `core` 时决定:
+ *
+ * - `lfComposeBundled=true`(默认):模板内含 Compose,Lua 开箱可用 `compose`;
+ * - `lfComposeBundled=false`:模板零 Compose 体积,项目改用自备的
+ *   `libs/compose_bridge.dex`(方案 C)。
+ *
+ * 本模块只做两件与 Compose 相关的事:
+ * 1. [usesCompose] 探测项目是否真的用到 Compose,供 `ApkBuilder` 提示体积来源;
+ * 2. 项目确实用到时,把 Compose 相关包加进 keep 白名单,避免项目 jar 里
+ *    引用 Compose 类型的类被 R8 判为不可达。
  */
 object BuildSlimmer {
 
@@ -74,6 +88,25 @@ object BuildSlimmer {
         "androidx.coordinatorlayout.widget.**",
         "androidx.swiperefreshlayout.widget.**",
         "androidx.drawerlayout.widget.**"
+    )
+
+    /**
+     * 仅在项目**确实用到 Compose** 时才加入的 keep 包。
+     *
+     * 这些类都在 `core.apk` 模板里(不参与 R8 输入),加 keep 的意义是:项目 jar 中
+     * 引用它们的类不会被判为不可达,同时避免出现"模板有、项目被裁"的悬空引用。
+     * Compose 的组件分发靠反射/字符串(如 `LuaComposeLoader` 按类名查找桥),
+     * 静态可达性分析同样看不见。
+     */
+    private val COMPOSE_KEEP_PACKAGES = listOf(
+        "androidx.compose.runtime.**",
+        "androidx.compose.ui.**",
+        "androidx.compose.foundation.**",
+        "androidx.compose.material3.**",
+        "androidx.compose.animation.**",
+        "androidx.composition.**",
+        // Lua 侧 Compose 桥:compose/composeContent/state 等全局函数入口
+        "com.luaforge.studio.compose.**"
     )
 
     // ------------------------------------------------------------------
@@ -160,7 +193,9 @@ object BuildSlimmer {
             // keep 规则同样放在 outDir 内,随调用方的整目录删除一并清掉。
             val pro = File(outDir, "slim_keep.pro")
             keepFile = pro
-            pro.writeText(buildKeepRules(declared), Charsets.UTF_8)
+            val composeUsed = usesCompose(projectPath)
+            if (composeUsed) LogCatcher.i(TAG, "项目用到 Compose,keep 规则追加 Compose 相关包")
+            pro.writeText(buildKeepRules(declared, composeUsed), Charsets.UTF_8)
 
             val ok = try {
                 runR8(prunedJars, androidJar, outDir, pro)
@@ -338,7 +373,7 @@ object BuildSlimmer {
      * 声明类用**精确类名** keep,并保留其全部成员(`{ *; }`),
      * 这样 R8 才能沿方法体继续做可达性分析,把「相关引用」一并留下。
      */
-    private fun buildKeepRules(declared: Set<String>): String = buildString {
+    private fun buildKeepRules(declared: Set<String>, composeUsed: Boolean = false): String = buildString {
         appendLine("# 由 BuildSlimmer 自动生成 —— 请勿手工维护")
         appendLine("-dontobfuscate")
         appendLine("-dontoptimize")
@@ -347,6 +382,11 @@ object BuildSlimmer {
         appendLine()
         appendLine("# 必须类白名单:运行时经字符串/反射/JNI 触达,静态分析不可见")
         MUST_KEEP_PACKAGES.forEach { appendLine("-keep class $it { *; }") }
+        if (composeUsed) {
+            appendLine()
+            appendLine("# 项目用到 Compose:Lua 侧 compose/Column/Text 等全局函数经反射分发")
+            COMPOSE_KEEP_PACKAGES.forEach { appendLine("-keep class $it { *; }") }
+        }
         appendLine()
         appendLine("# 项目源码声明的类")
         declared.sorted().forEach { appendLine("-keep class $it { *; }") }
@@ -394,6 +434,57 @@ object BuildSlimmer {
             }
         return out
     }
+
+    /**
+     * 探测项目是否用到 Compose。
+     *
+     * 判定依据(Lua 侧没有类型声明,只能看调用形态):
+     * - 源码里出现 Compose 桥的入口/组件名:`compose` / `composeContent` / `composeView` /
+     *   `state(` / `LaunchedEffect` / `remember(`,或容器组件 `Column` / `Row` / `Box` /
+     *   `Card` / `LazyColumn` 后紧跟 `{` 或 `(`;
+     * - 或项目带了外部桥 `libs/compose_bridge.dex`(方案 C)。
+     *
+     * 只用于**提示与 keep 规则**,判错不会让构建失败:宁可多 keep 一片类,
+     * 也不要因为漏判让项目在真机上 NoClassDefFoundError。
+     */
+    fun usesCompose(projectPath: String): Boolean {
+        val root = File(projectPath)
+        if (!root.isDirectory) return false
+        // 方案 C:带了外部桥,无论源码怎么写都算用到
+        if (COMPOSE_BRIDGE_FILES.any { File(root, it).isFile }) return true
+        root.walkTopDown()
+            .filter { it.isFile }
+            .filter {
+                val n = it.name.lowercase()
+                n.endsWith(".lua") || n.endsWith(".aly")
+            }
+            .forEach { f ->
+                val text = try {
+                    f.readText()
+                } catch (_: Exception) {
+                    return@forEach
+                }
+                if (COMPOSE_PATTERNS.any { it.containsMatchIn(text) }) return true
+            }
+        return false
+    }
+
+    /** 外部 Compose 桥的候选路径(与 `LuaComposeLoader` 的约定保持一致)。 */
+    private val COMPOSE_BRIDGE_FILES = listOf(
+        "libs/compose_bridge.dex",
+        "libs/compose.dex",
+        "compose/compose_bridge.dex",
+        "libs/compose_bridge.jar"
+    )
+
+    /** Compose 调用形态;刻意宽松(只用于提示),不追求零误报。 */
+    private val COMPOSE_PATTERNS = listOf(
+        Regex("""\bcomposeContent\s*[({]"""),
+        Regex("""\bcomposeView\s*[({]"""),
+        Regex("""\bcompose\s*[({]"""),
+        Regex("""\bLaunchedEffect\s*[({]"""),
+        Regex("""\b(Column|Row|Box|Card|LazyColumn)\s*[({]""")
+    )
 
     /** 与 [scanDeclaredClasses] 配套的类名提取正则。 */
     private val CLASS_PATTERNS = listOf(

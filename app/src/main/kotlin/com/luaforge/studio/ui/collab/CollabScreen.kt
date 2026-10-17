@@ -169,6 +169,84 @@ fun CollabScreen(
             }
         }
 
+        // ---- 冲突裁决 ----
+        // 双向同步不会自动合并:两端都改过的文件一律留本地并登记在这里,
+        // 由用户决定哪一边胜出。没有这块 UI,冲突就成了"看不见的静默分歧"。
+        if (collabStatus.conflicts.isNotEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = stringResource(
+                                R.string.collab_conflicts_title,
+                                collabStatus.conflicts.size
+                            ),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Text(
+                            text = stringResource(R.string.collab_conflicts_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        collabStatus.conflicts.forEach { conflict ->
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = conflict.path,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    TextButton(onClick = {
+                                        scope.launch {
+                                            val ok = CollabManager.resolveConflict(conflict.path, keepLocal = true)
+                                            toast.showToast(
+                                                context.getString(
+                                                    if (ok) R.string.collab_conflict_resolved
+                                                    else R.string.collab_conflict_failed,
+                                                    conflict.path
+                                                )
+                                            )
+                                            refreshHistory()
+                                        }
+                                    }) {
+                                        Text(stringResource(R.string.collab_conflict_keep_local))
+                                    }
+                                    TextButton(onClick = {
+                                        scope.launch {
+                                            val ok = CollabManager.resolveConflict(conflict.path, keepLocal = false)
+                                            toast.showToast(
+                                                context.getString(
+                                                    if (ok) R.string.collab_conflict_resolved
+                                                    else R.string.collab_conflict_failed,
+                                                    conflict.path
+                                                )
+                                            )
+                                            refreshHistory()
+                                        }
+                                    }) {
+                                        Text(stringResource(R.string.collab_conflict_keep_remote))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // ---- 角色选择 ----
         item {
             Text(
@@ -377,6 +455,17 @@ fun CollabScreen(
                                 }
                             }
                         ) { Text(stringResource(R.string.collab_connect)) }
+
+                        OutlinedButton(onClick = {
+                            // 手动上行:不等轮询,把本地改动立刻推给共享端
+                            scope.launch {
+                                val n = CollabManager.pushLocalChanges()
+                                toast.showToast(
+                                    context.getString(R.string.collab_uploaded, n)
+                                )
+                                refreshHistory()
+                            }
+                        }) { Text(stringResource(R.string.collab_upload_now)) }
 
                         OutlinedButton(onClick = { CollabManager.stop() }) {
                             Text(stringResource(R.string.collab_stop))

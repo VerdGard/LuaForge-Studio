@@ -1,5 +1,43 @@
 # 更新日志
 
+## 1.6.9
+
+- **新增:Lua 原生 Compose(两套发行方案 A / C 共存)**
+  - Lua 可直接书写 Compose 界面:`compose(fn)` / `composeView(fn)` / `composeContent(fn)` 返回挂到 Compose 的 SlotTable,`state(v)` 的读写走快照系统,状态变化**按 group 精确重组**
+  - **65 个组件**:布局 `Column`/`Row`/`Box`/`FlowRow`/`FlowColumn`/`ScrollColumn`/`ScrollRow`;容器 `Card`/`ElevatedCard`/`OutlinedCard`/`Surface`/`Scaffold`;懒加载 `LazyColumn`/`LazyRow`/`LazyVerticalGrid`/`LazyHorizontalGrid`;文本图形 `Text`/`Icon`/`Image`/`Spacer`/`Divider`/`VerticalDivider`/`CircularProgressIndicator`/`LinearProgressIndicator`/`Badge`/`BadgedBox`;按钮族 12 种(`Button`/`ElevatedButton`/`FilledTonalButton`/`OutlinedButton`/`TextButton`/`IconButton` 3 种/FAB 4 种);选择输入 `Switch`/`Checkbox`/`RadioButton`/`Slider`/`RangeSlider`/`TextField`/`OutlinedTextField`;Chip 4 种;导航 `TopAppBar` 4 种/`BottomAppBar`/`NavigationBar`/`NavigationRail`/`TabRow`/`ScrollableTabRow`/`Tab`;`AlertDialog`/`Dialog`;`AndroidView`;`LaunchedEffect`
+    - 另含 `state(v)`、`rangeState(a,b)`、`remember(fn)` 三个状态函数
+    - **`AndroidView` 让现有控件都能用**:`AndroidView({ view = 某个原生View })` 可把任何 Android 控件(`BottomNavigationView`/`TabLayout`/`RecyclerView`/`ExoVideoView`/`MaterialTextField`/`WebView`...)直接嵌进 Compose 树 —— "未封装"不等于"不能用"
+  - 属性转换统一:间距 `padding`/`paddingH`/`paddingV`/`gap`/`contentPadding`、尺寸 `width`/`height`/`size`/`fillMax*`/`aspectRatio`、视觉 `background`/`corner`/`borderWidth`+`borderColor`/`shadow`/`alpha`/`offsetX`+`offsetY`、子项弹性 `weight`、颜色 `0xAARRGGBB` 或 `"#RRGGBB"`/`"#AARRGGBB"`、`size`(sp)/`bold`/`maxLines`/`align`/`space`/`overflow`/`scale`
+    - Modifier 应用顺序为**尺寸 → 位移 → 圆角/背景/描边/阴影/透明 → 间距 → 点击**,背景与圆角在 `padding` 之前,避免边缘露白
+  - **全局名与 `import` 的冲突**:通配 `import "android.widget.*"` 走 `_G.__index`,不会覆盖同名组件;但**显式** `import "android.widget.Button"` 会覆盖。为此额外注册 `Compose` 命名空间表(`Compose.Button` / `Compose.state` ...),与全局名是同一份实现
+  - **方案 A(内置)**:`LuaCompose` 随 `core` 编译,开箱可用;**方案 C(外部)**:项目自带 `libs/compose_bridge.dex`,按需加载
+  - **内置优先、外部兜底**:两套 Compose 运行时混用会在真机随机抛 `NoSuchMethodError`,因此内置桥可用时**主动跳过**外部 dex 并记日志
+  - **零 Compose 体积发行版**:`./gradlew -PlfComposeBundled=false :core:assembleRelease` —— 排除内置桥源码且不引任何 Compose 依赖,该发行版只能用方案 C
+    - 内置桥源码移到独立源集 `core/src/compose/kotlin`,用**条件 `srcDir`** 控制是否编入(不用 `kotlin.exclude`,避免不同 AGP 版本下静默不生效)
+  - 打包侧:`BuildSlimmer.usesCompose` 探测项目是否真用 Compose,只在用到时追加 Compose 的 keep 规则;`ApkBuilder` 如实播报体积来源
+  - 新增文档 `assets/doc/Compose.md`(MCP `read_dev_doc` 可读);`SKILL.md` 增 §1.10.1
+- **协同改为双向同步,并修复"同步把项目文件改坏"** (P0–P3)
+  - **P0 根因修复:统一原子写 + 项目级写锁**
+    - 新增 `utils/ProjectFileIO`:`writeTextAtomic`/`writeBytesAtomic`(同目录 tmp → `fd.sync()` → rename)、`lockFor`/`lockForProjectFile`(按 `settings.json`/`.luaforge`/`.git` 向上探测项目根)、`md5Of`
+    - 编辑器保存(`saveAllModifiedFiles`/`saveAllFilesSilently`/`saveCurrentFileSilently`)、布局助手回写、MCP 写入、`CollabRepo`、`GitStore`(对象/ref/HEAD/config/checkout)**全部改走原子写**,读者不再可能看到半截文件
+  - **P0 协议修复:清单与传输**
+    - 新增 `GET /collab/files` 返回**工作区全量清单 + MD5**;修掉旧实现用 `changedFiles()`(与 HEAD 的 diff)当清单、共享端工作区干净时**首次同步下 0 个文件**的致命 bug
+    - `GET /collab/file` 改 **Base64 + MD5**,修二进制(图片/`libs/*.dex`/加密 lua)经 JSON 字符串往返被替换成 U+FFFD 的内容损坏
+    - `.luaforge` 加入忽略名单,修元数据被互相同步污染 rev 的问题
+  - **P1 双向同步**
+    - 新增 `POST /collab/put`、`POST /collab/delete`,带 `baseMd5` 冲突检测(不一致返 409 + `remoteMd5`,`force` 可强推)
+    - 连接端 `CollabManager` 重写为**三方比对**(本地 / 远端 / 上次同步基线):只有本地变了→推,只有远端变了→拉,两边都变且不同→**记冲突、保留本地**,不再"谁新算谁赢"地互相静默覆盖
+    - 首次同步同样走三方比对,连一个已有内容的本地目录**不会再把本地代码冲掉**
+    - 首个 `runBlocking` 死锁隐患消除:同步函数改为**纯同步只做磁盘 IO**,待刷新路径由 suspend 调用方在主线程统一刷新
+  - **P2 自动快照 + 冲突可见**
+    - 本轮将覆盖本地时**先自动快照**(工作区干净则跳过,不堆空提交),留一条回档后路
+    - 变更日志与 rev 的崩溃补偿:**先写日志、后写 rev**,`currentRev()` 取两者较大值 —— 修掉"rev 已增、日志未写"导致增量同步永久漏文件的断链
+    - 协同页新增冲突裁决卡(逐条「用我的」/「用对端」)与「上传本地改动」按钮
+  - **P3 编辑器侧冲突与只读保护**
+    - `refreshEditorFromDisk` 增 `fromExternal` / `source`:外部写入(MCP、协同)遇到**用户未保存的编辑**不再静默覆盖,登记冲突由用户裁决(MCP 的 `write_file`/批量替换已按外部写入传参)
+    - 修复 `>1MB` 文件把 `"文件过大"` **当成文件内容载入**、用户一保存就用这句提示覆盖真实文件的严重 bug;改为**只读占位**(`readOnlyReason` + `isWritable`)并在全部保存路径拒绝写盘
+
+
 ## 1.6.8
 
 - **新增「构建精简」开关**(设置 → 构建与签名,位于自定义签名之上,默认关闭)

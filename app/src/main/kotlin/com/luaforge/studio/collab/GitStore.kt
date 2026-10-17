@@ -1,5 +1,6 @@
 package com.luaforge.studio.collab
 
+import com.luaforge.studio.utils.ProjectFileIO
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
@@ -39,21 +40,30 @@ class GitStore(private val root: File) {
     private val headFile = File(gitDir, "HEAD")
     private val defaultBranch = "master"
 
-    /** 参与版本控制时需要忽略的目录/文件名。 */
-    private val ignored = setOf(".git", "build", "node_modules", ".gradle", "apk", "out", "dist")
+    /**
+     * 参与版本控制时需要忽略的目录/文件名。
+     *
+     * `.luaforge` 是**协同仓库自己的元数据**(版本号 + 变更日志),必须排除:
+     * 否则它会进入快照/清单,被同步到对端并覆盖对端自己的 rev 与日志,
+     * 两端版本号互相污染,增量同步直接错乱。
+     */
+    private val ignored = setOf(
+        ".git", ".luaforge", "build", "node_modules", ".gradle", "apk", "out", "dist"
+    )
 
     /** 初始化仓库(幂等)。 */
     fun init() {
         if (!gitDir.exists()) gitDir.mkdirs()
         if (!objectsDir.exists()) objectsDir.mkdirs()
         if (!refsDir.exists()) refsDir.mkdirs()
-        if (!headFile.exists()) headFile.writeText("ref: refs/heads/$defaultBranch\n", Charsets.UTF_8)
+        if (!headFile.exists()) ProjectFileIO.writeTextAtomic(headFile, "ref: refs/heads/$defaultBranch\n", ProjectFileIO.lockFor(root))
         val configFile = File(gitDir, "config")
         if (!configFile.exists()) {
-            configFile.writeText(
+            ProjectFileIO.writeTextAtomic(
+                configFile,
                 "[core]\n\trepositoryformatversion = 0\n\tfilemode = false\n\tbare = false\n" +
                     "[branch \"$defaultBranch\"]\n",
-                Charsets.UTF_8
+                ProjectFileIO.lockFor(root)
             )
         }
     }
@@ -112,7 +122,7 @@ class GitStore(private val root: File) {
         val ref = readHeadRef() ?: "refs/heads/$defaultBranch"
         val refFile = File(gitDir, ref)
         refFile.parentFile?.mkdirs()
-        refFile.writeText("$sha\n", Charsets.UTF_8)
+        ProjectFileIO.writeTextAtomic(refFile, "$sha\n", ProjectFileIO.lockFor(root))
     }
 
     /** 递归写入目录,返回 tree sha。 */
@@ -157,8 +167,8 @@ class GitStore(private val root: File) {
         val sha = sha1Hex(full)
         val path = objectPath(sha)
         if (!path.exists()) {
-            path.parentFile?.mkdirs()
-            path.writeBytes(zlibCompress(full))
+            // 原子写:git 对象是不可变的,半截对象会永久污染仓库(且 sha 校验永远失败)
+            ProjectFileIO.writeBytesAtomic(path, zlibCompress(full))
         }
         return sha
     }
@@ -281,6 +291,38 @@ class GitStore(private val root: File) {
         return result
     }
 
+    /**
+     * 工作区文件清单:相对路径 -> **内容 MD5**。
+     *
+     * 与 [changedFiles] 的区别:[changedFiles] 是与 HEAD 的 diff,而这里是**全量**清单。
+     * 协同的首次同步必须用全量 —— 旧实现拿 diff 当清单,共享端做过快照且工作区干净时
+     * diff 为空,连接端一个文件都下不到,项目于是"同步成空目录"。
+     *
+     * MD5 用于两端判定"内容是否真的变了"以及做冲突检测的基线,必须与
+     * [ProjectFileIO.md5Of] 口径一致(直接对原始字节求 MD5,不做 blob 包装)。
+     */
+    fun workingFileMd5s(): List<Pair<String, String>> {
+        val out = ArrayList<Pair<String, String>>()
+        collectMd5(root, "", out)
+        return out
+    }
+
+    private fun collectMd5(dir: File, prefix: String, out: MutableList<Pair<String, String>>) {
+        val children = dir.listFiles()?.sortedBy { it.name } ?: return
+        for (child in children) {
+            if (child.name in ignored) continue
+            val rel = if (prefix.isEmpty()) child.name else "$prefix/${child.name}"
+            if (child.isDirectory) {
+                collectMd5(child, rel, out)
+            } else if (child.isFile) {
+                ProjectFileIO.md5Of(child)?.let { out.add(rel to it) }
+            }
+        }
+    }
+
+    /** 该名称是否属于被忽略的目录/文件(协同侧判断路径合法性也要用)。 */
+    fun isIgnoredName(name: String): Boolean = name in ignored
+
     /** 收集工作区文件(相对路径 -> blob sha)。 */
     private fun collectWorkingFiles(): Map<String, String> {
         val map = LinkedHashMap<String, String>()
@@ -322,7 +364,9 @@ class GitStore(private val root: File) {
             if (type != "blob") continue
             val target = File(root, path)
             target.parentFile?.mkdirs()
-            target.writeBytes(body)
+            // 回档同样是写项目文件,必须与编辑器保存/协同落盘互斥,否则回档途中被
+            // 编辑器保存覆盖回去,用户会看到"回档没生效"。
+            ProjectFileIO.writeBytesAtomic(target, body, ProjectFileIO.lockFor(root))
         }
         updateHead(sha)
         return true

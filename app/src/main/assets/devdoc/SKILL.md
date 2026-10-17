@@ -389,6 +389,58 @@ Http.post("https://api.example.com/login", {user = "a", pass = "b"},
 - **网络**:`Http.get` / `Http.post` / `Http.put` / `Http.delete` / `Http.download`(`com.androlua.Http`,见 §1.9),比纯 Lua socket 省事得多。
 - **`global_utils` 白名单**(项目 `settings.json`,见 §1.3):开启后其函数直接成为全局函数 —— 位图 `BitmapUtil`、图片加载 `GlideUtil`、网络 `OkHttpUtil`(→ `Https.*`)、UI `UiUtil`、列表 `RecyclerAdapterUtil`、主题 `ThemeUtil`。各函数清单见 `app/src/main/assets/doc/*.md`。
 
+### 1.10.1 Compose(用 Lua 直接写界面)
+
+除传统 `loadlayout` 之外,还可以用 **Lua 原生 Compose DSL** 描述界面。节点最终进入
+Compose 的 SlotTable,`state.value` 的读取会被快照系统观测,状态变化按 group 精确重组。
+**完整参考见 `app/src/main/assets/doc/Compose.md`**;MCP `read_dev_doc("Compose.md")` 可读。
+
+```lua
+local count = state(0)
+
+local view = compose(function()
+  Column({ padding = 16, gap = 12, fillMaxWidth = true, content = function()
+    Text("计数:" .. count.value, size = 20, bold = true)
+    Button({ text = "+1", onClick = function() count.value = count.value + 1 end })
+  end })
+end)
+
+activity.setContentView(view)
+```
+
+关键点(违反会静默出错,不报异常):
+
+| 事项 | 正确做法 |
+|---|---|
+| 入口 | `compose(fn)` / `composeView(fn)` 返回 `ComposeView`;`composeContent(fn)` 直接设为内容 |
+| 状态 | `local s = state(0)`;读 `s.value`,写 `s.value = x`(走 LuaJava getter/setter → `getValue`/`setValue`) |
+| 记忆化 | `remember(function() ... end)` 按**调用位置**缓存 |
+| 属性 | 单位是 dp/sp 的**数字**(不是字符串);颜色写 `0xAARRGGBB` 或 `"#RRGGBB"` |
+| 顺序 | 同一 group 内组件调用顺序必须稳定(与手写 Compose 同约束) |
+| 变长列表 | 用 `LazyColumn({ items = t, content = function(item, i) ... end })`,**不要**用 `for` 循环堆节点 |
+| 副作用 | `LaunchedEffect({ key = "k", content = function() ... end })`,里面不能登记节点 |
+| 重名 | 显式 `import "android.widget.Button"` 会覆盖同名组件,改用 `Compose.Button` |
+
+**控件覆盖(65 个)**:布局(`Column`/`Row`/`Box`/`FlowRow`/`FlowColumn`/`ScrollColumn`/`ScrollRow`)、
+容器(`Card`/`ElevatedCard`/`OutlinedCard`/`Surface`/`Scaffold`)、懒加载(`LazyColumn`/`LazyRow`/
+`LazyVerticalGrid`/`LazyHorizontalGrid`)、文本图形(`Text`/`Icon`/`Image`/`Spacer`/`Divider`/
+`VerticalDivider`/`CircularProgressIndicator`/`LinearProgressIndicator`/`Badge`/`BadgedBox`)、
+按钮族 12 种、选择输入(`Switch`/`Checkbox`/`RadioButton`/`Slider`/`RangeSlider`/`TextField`/
+`OutlinedTextField`)、Chip 4 种、导航(`TopAppBar` 4 种/`BottomAppBar`/`NavigationBar`/
+`NavigationRail`/`TabRow`/`Tab`)、`AlertDialog`/`Dialog`、`AndroidView`、`LaunchedEffect`。
+完整属性见 `Compose.md`。
+
+**用上现有全部控件**:`AndroidView({ view = 某个原生View })` 可把任何现有 Android 控件
+(`BottomNavigationView`/`TabLayout`/`RecyclerView`/`ExoVideoView`/`MaterialTextField`/`WebView` ...)
+直接嵌进 Compose 树,所以"Compose 里没封装"不等于不能用。
+
+**选型**:纯静态/少量状态的现代 UI 走 Compose;要复用 `WidgetsCatalog.md` 的成熟控件时,
+既可以 `loadlayout`,也可以 `AndroidView` 嵌进 Compose —— 两者可在同一项目共存。
+
+**体积**:默认发行版(A 方案)把 Compose 运行时打进每个 APK;要零增重需用
+`-PlfComposeBundled=false` 构建的 core + 项目自带 `libs/compose_bridge.dex`(C 方案)。
+**两套 Compose 运行时不能混用**,内置桥可用时会忽略外部 dex。
+
 ### 1.11 易错点
 
 1. `main.lua` 与 `settings.json` **必须同时存在**才算合法项目(`LuaActivity.java:413` 按这两个文件识别项目)。

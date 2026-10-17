@@ -1,6 +1,19 @@
+// 是否把 Compose 桥(方案 A)编进 core —— 决定用户 APK 是否背上 Compose 运行时。
+//
+// - true (默认):LuaCompose.kt 随 core 编译,core.apk 内含 Compose,项目开箱可用 compose。
+// - false:整体排除 LuaCompose.kt 与 Compose 依赖,产物**零 Compose 体积**;
+//          此时 Lua 侧只能用项目自带的 libs/compose_bridge.dex(方案 C)。
+//
+// 用法:`./gradlew -PlfComposeBundled=false ...`,或在 gradle.properties 里改。
+val lfComposeBundled: Boolean =
+    (project.findProperty("lfComposeBundled") as String?)?.toBoolean() ?: true
+
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    // Lua 侧 Compose 桥(方案 A)需要 Compose 编译器插件。
+    // 不启用它,@Composable 不会被改写签名,LuaCompose.kt 无法通过编译。
+    alias(libs.plugins.kotlin.compose)
 }
 
 android {
@@ -49,6 +62,20 @@ android {
 
     buildFeatures {
         buildConfig = true
+        // 方案 A:Compose 桥随 core 编译进 core-apk,用户 APK 可直接用 compose。
+        // 关掉 lfComposeBundled 时同时排掉 LuaCompose.kt,编译期不需要 Compose 编译器。
+        compose = lfComposeBundled
+    }
+
+    // 方案 A 的桥单独放在 `src/compose/kotlin` 下,只有 lfComposeBundled=true 才把它
+    // 加进 main 的源码目录。
+    //
+    // 为什么不用 `kotlin.exclude("...")`:AGP 的 Kotlin 源码集对 exclude() 的支持依赖
+    // 具体插件版本,不同版本下可能**静默不生效**,结果就是"以为排掉了 Compose,
+    // 实际产物里仍然有",而那时 buildFeatures.compose=false 又会让 LuaCompose.kt
+    // 编不过 —— 变成构建期随机失败。条件 srcDir 是 AGP 的稳定契约,不会有这个歧义。
+    if (lfComposeBundled) {
+        sourceSets.getByName("main").kotlin.srcDir("src/compose/kotlin")
     }
 
     packaging {
@@ -76,6 +103,19 @@ kotlin {
 
 dependencies {
     api(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
+
+    // Jetpack Compose:Lua 脚本 Compose 桥(compose / composeContent / state ...)。
+    // 用 api 传递,使打包产物 core-apk 一并带上 Compose 运行时 —— 否则用户 APK
+    // 里 Lua 调 compose 时会 NoClassDefFoundError。
+    //
+    // lfComposeBundled=false 时整块跳过:该发行版依赖项目自备的
+    // libs/compose_bridge.dex(方案 C),core 本身不带任何 Compose 类。
+    if (lfComposeBundled) {
+        api(libs.compose.ui)
+        api(libs.compose.foundation)
+        api(libs.compose.material3)
+        api(libs.compose.runtime)
+    }
 
     // Navigation
     api(libs.navigation.fragment)

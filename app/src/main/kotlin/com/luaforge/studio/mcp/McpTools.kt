@@ -23,6 +23,7 @@ import com.luaforge.studio.utils.LuaParserUtil
 import com.luaforge.studio.utils.FileUtil
 import com.luaforge.studio.utils.LogCatcher
 import com.luaforge.studio.collab.CollabManager
+import com.luaforge.studio.utils.ProjectFileIO
 import com.luaforge.studio.utils.ProjectUtil
 import com.luaforge.studio.widget.BuiltinWidgets
 import com.luajava.LuaObject
@@ -979,7 +980,8 @@ object McpTools {
 
         withContext(Dispatchers.IO) {
             file.parentFile?.mkdirs()
-            file.writeText(finalContent, Charsets.UTF_8)
+            // 原子写 + 项目级锁:与编辑器保存、协同落盘互斥,避免交错写/半截文件
+            ProjectFileIO.writeTextAtomic(file, finalContent, ProjectFileIO.lockForProjectFile(file))
         }
         // 该文件若正在编辑器中打开,必须把新内容推回编辑器;
         // 否则编辑器仍持有旧内容,用户之后一保存就会把外部写入覆盖掉。
@@ -1141,7 +1143,7 @@ object McpTools {
         val content = args.optString("content", "")
         withContext(Dispatchers.IO) {
             file.parentFile?.mkdirs()
-            file.writeText(content, Charsets.UTF_8)
+            ProjectFileIO.writeTextAtomic(file, content, ProjectFileIO.lockForProjectFile(file))
         }
         // 覆盖已有文件时同样要刷新编辑器,避免旧缓冲区回写覆盖
         val synced = syncEditorIfOpen(file.absolutePath)
@@ -1312,7 +1314,7 @@ object McpTools {
 
         val content = args.optString("content", "")
         withContext(Dispatchers.IO) {
-            file.writeText(content, Charsets.UTF_8)
+            ProjectFileIO.writeTextAtomic(file, content, ProjectFileIO.lockForProjectFile(file))
         }
         val reloaded = withContext(Dispatchers.Main) { vm.reloadCurrentFile() }
         return textResult(
@@ -1370,10 +1372,19 @@ object McpTools {
         }
     }
 
-    private suspend fun syncEditorIfOpen(filePath: String): Boolean {
+    /**
+     * 把磁盘上的最新内容同步到已打开的编辑器。
+     *
+     * 标记 `fromExternal = true`:这是 MCP 的外部写入,如果用户此刻正有未保存的编辑,
+     * 不能静默覆盖 —— 由 [EditorViewModel.refreshEditorFromDisk] 登记冲突并交给用户裁决。
+     * 返回 false 表示"没有覆盖缓冲区"(未打开 / 冲突被拦下),不是错误。
+     */
+    private suspend fun syncEditorIfOpen(filePath: String, source: String = "MCP 写入"): Boolean {
         val vm = EditorBridge.currentViewModel() ?: return false
         return withContext(Dispatchers.Main) {
-            runCatching { vm.refreshEditorFromDisk(filePath) }.getOrDefault(false)
+            runCatching {
+                vm.refreshEditorFromDisk(filePath, fromExternal = true, source = source)
+            }.getOrDefault(false)
         }
     }
 
@@ -1386,6 +1397,7 @@ object McpTools {
             val refreshed = ArrayList<String>()
             for (state in vm.openFiles) {
                 val path = state.file.absolutePath
+                // 这是用户显式要求"以磁盘为准"的工具调用,不拦冲突
                 val ok = withContext(Dispatchers.Main) {
                     runCatching { vm.refreshEditorFromDisk(path) }.getOrDefault(false)
                 }
@@ -2489,7 +2501,9 @@ object McpTools {
             )
         }
 
-        withContext(Dispatchers.IO) { file.writeText(updated, Charsets.UTF_8) }
+        withContext(Dispatchers.IO) {
+            ProjectFileIO.writeTextAtomic(file, updated, ProjectFileIO.lockForProjectFile(file))
+        }
         val synced = syncEditorIfOpen(file.absolutePath)
         return textResult(
             JSONObject()
@@ -2547,7 +2561,9 @@ object McpTools {
                 if (count == 0) continue
                 fileCount++
                 totalOccurrences += count
-                if (!dryRun) file.writeText(updated, Charsets.UTF_8)
+                if (!dryRun) {
+                    ProjectFileIO.writeTextAtomic(file, updated, ProjectFileIO.lockForProjectFile(file))
+                }
                 details.put(
                     JSONObject()
                         .put("path", file.absolutePath)
@@ -2562,7 +2578,16 @@ object McpTools {
             val vm = EditorBridge.currentViewModel()
             if (vm != null) {
                 withContext(Dispatchers.Main) {
-                    vm.openFiles.forEach { runCatching { vm.refreshEditorFromDisk(it.file.absolutePath) } }
+                    // 批量替换是外部写入,冲突由编辑器登记而不是静默覆盖
+                    vm.openFiles.forEach {
+                        runCatching {
+                            vm.refreshEditorFromDisk(
+                                it.file.absolutePath,
+                                fromExternal = true,
+                                source = "MCP 批量替换"
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -3773,6 +3798,7 @@ object McpTools {
     /** 控件/运行时参考文档(与 assets/doc 保持一致)。 */
     private val REF_DEV_DOCS = listOf(
         "WidgetsCatalog.md" to "全部内置控件索引(先在这里找现成控件)",
+        "Compose.md" to "在 Lua 里写 Compose:compose/state/remember 与组件属性速查",
         "RuntimeAPI.md" to "全局对象与内置工具类(避免手写已有能力)",
         "MaterialTextField.md" to "输入框控件",
         "ExoVideoView.md" to "视频播放器(自带控制器)",
