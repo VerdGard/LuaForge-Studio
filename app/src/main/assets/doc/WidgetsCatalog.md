@@ -78,6 +78,29 @@
 | `MusicPlayerBar` | 一体化音乐播放条(上一首/播放/下一首/进度) | `MusicPlayerBar.md` |
 | `ExoAudioPlayer` | 纯音频播放器(背景音乐/音效) | `ExoAudioPlayer.md` |
 
+### 媒体格式支持(4 个播放控件共用)
+
+`ExoVideoView` / `SimpleVideoView` / `ExoAudioPlayer` / `MusicPlayerBar` 共用 `MediaFormats`,
+**不需要为不同容器格式换控件或转码**,把地址或本地路径直接丢给 `setMediaUri()` 即可。
+
+| 类别 | 已支持格式 |
+| --- | --- |
+| 视频容器 | `mp4` `mkv`(Matroska) `webm` `flv` `ts` `ps` `mpg` `avi` `mov` `3gp` `m4v` `wmv` |
+| 音频容器 | `mp3` `aac`(ADTS) `m4a` `flac` `ogg`(Vorbis/Opus) `wav` `amr` `ac3` `ac4` `opus` `mka` |
+| 自适应流 | `m3u8`(HLS) `mpd`(DASH) `ism`/`Manifest`(SmoothStreaming) |
+| 实时流 | `rtsp://` `rtmp://` `rtmps://` `udp://` `rtp://` |
+| 其他 | `data:`(内存/base64) `content://` `file://` 与普通本地路径 |
+
+- **无后缀地址也能播**:`inferMimeType()` 会对带 query 的 URL 去掉参数再判断,判断不出时交给
+  Media3 的 `DefaultExtractorsFactory` 嗅探文件头,因此 CDN 的 `.../play?id=123` 这类地址同样可用。
+- **直播必须显式声明**:`live = true` 才会启用 `LiveConfiguration`(targetOffset 3s / min 1s / max 8s)。
+  网络直播/边下边播的 m3u8 不设 `live` 会被当成点播,进度条走完后画面停止刷新。
+- **自定义请求头 / UA / 超时**:需要防盗链 `Referer`、鉴权 `Cookie` 或服务端只认特定 UA 时,
+  调用 `setHeaders(mapOf("Referer" to "..."))` 再 `setMediaUri()`,不要指望系统默认 UA。
+- **支持的协议清单**与所需媒体模块已由 `core` 显式依赖,APK 内已带全,无需 gradle 追加依赖。
+
+> 详细参数见各控件文档;`SKILL.md` 里有"播放器选型"的对照表。
+
 > 还可以用 MCP `list_widgets` 列出全部内置控件及其可写属性。
 
 ---

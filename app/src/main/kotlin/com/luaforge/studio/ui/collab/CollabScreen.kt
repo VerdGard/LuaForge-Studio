@@ -258,15 +258,18 @@ fun CollabScreen(
                                     toast.showToast(context.getString(R.string.collab_need_project))
                                     return@Button
                                 }
-                                val ok = CollabManager.startHost(
-                                    File(dir), File(dir).name, state.collabPort, state.collabToken
-                                )
-                                toast.showToast(
-                                    context.getString(
-                                        if (ok) R.string.collab_started else R.string.collab_start_failed
+                                // 绑定端口/枚举网卡等属阻塞操作,放到 IO 线程,避免主线程 ANR
+                                scope.launch {
+                                    val ok = CollabManager.startHost(
+                                        File(dir), File(dir).name, state.collabPort, state.collabToken
                                     )
-                                )
-                                refreshHistory()
+                                    toast.showToast(
+                                        context.getString(
+                                            if (ok) R.string.collab_started else R.string.collab_start_failed
+                                        )
+                                    )
+                                    refreshHistory()
+                                }
                             }
                         ) { Text(stringResource(R.string.collab_start)) }
 
@@ -347,18 +350,21 @@ fun CollabScreen(
                                     toast.showToast(context.getString(R.string.collab_need_project))
                                     return@Button
                                 }
-                                val ok = CollabManager.startClient(
-                                    remoteHostText,
-                                    state.collabRemotePort,
-                                    state.collabToken,
-                                    File(state.collabLocalProject)
-                                )
-                                toast.showToast(
-                                    context.getString(
-                                        if (ok) R.string.collab_started else R.string.collab_start_failed
+                                // 首次 info()/全量同步都要走网络,必须离开主线程
+                                scope.launch {
+                                    val ok = CollabManager.startClient(
+                                        remoteHostText,
+                                        state.collabRemotePort,
+                                        state.collabToken,
+                                        File(state.collabLocalProject)
                                     )
-                                )
-                                refreshHistory()
+                                    toast.showToast(
+                                        context.getString(
+                                            if (ok) R.string.collab_started else R.string.collab_start_failed
+                                        )
+                                    )
+                                    refreshHistory()
+                                }
                             }
                         ) { Text(stringResource(R.string.collab_connect)) }
 

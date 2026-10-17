@@ -133,7 +133,14 @@ class ApkBuilder {
             /** 打包目标架构:通用 / 仅 64 位 / 仅 32 位。默认通用版以保持向后兼容。 */
             abiTarget: AbiTarget = AbiTarget.UNIVERSAL,
             /** 跳过编译(不加密)的文件:相对项目根的路径,打包时保持明文。 */
-            skipCompileFiles: List<String> = emptyList()
+            skipCompileFiles: List<String> = emptyList(),
+            /**
+             * 构建精简:只为项目实际声明/引用的类生成 dex,并剔除与模板重复的类。
+             *
+             * 必须放在参数表末尾 —— 调用方(EditorFunctions)是位置传参,插在中间会错位。
+             * 默认 false,关闭时构建行为与旧版一致。
+             */
+            buildSlimEnabled: Boolean = false
         ): String {
             LogCatcher.i("ApkBuilder", "开始构建APK")
             LogCatcher.i("ApkBuilder", "项目路径: $projectPath")
@@ -156,6 +163,7 @@ class ApkBuilder {
             }
             LogCatcher.i("ApkBuilder", "是否加密 Lua/ALY 源码: $encryptLua")
             LogCatcher.i("ApkBuilder", "跳过编译(不加密)文件数: ${skipCompileFiles.size}")
+            LogCatcher.i("ApkBuilder", "构建精简: ${if (buildSlimEnabled) "开启" else "关闭"}")
 
             var unsignedApkPath: String? = null
 
@@ -218,7 +226,8 @@ class ApkBuilder {
                     encryptLua,
                     mergeDexEnabled,
                     abiTarget,
-                    skipCompileFiles
+                    skipCompileFiles,
+                    buildSlimEnabled
                 )
 
                 if (unsignedApkPath == null) {
@@ -317,41 +326,46 @@ class ApkBuilder {
             context: Context,
             jarFiles: List<File>,
             workDir: File,
-            androidJarPath: String?
+            androidJarPath: String?,
+            templateClasses: Set<String> = emptySet(),
+            projectPath: String = "",
+            buildSlimEnabled: Boolean = false
         ) {
             if (jarFiles.isEmpty()) return
-            
+
+            val lib = androidJarPath ?: extractAndroidJarToCache(context) ?: run {
+                LogCatcher.w("ApkBuilder", "缺少 android.jar,Maven JAR 无法转 DEX")
+                return
+            }
+
             LogCatcher.i("ApkBuilder", "将 ${jarFiles.size} 个 JAR 添加到 DEX 编译")
-            
+
             try {
                 val dexOutputDir = File(workDir, "maven_dex_output")
                 dexOutputDir.mkdirs()
-                
-                val d8Args = mutableListOf<String>()
-                d8Args.add("--lib")
-                d8Args.add(androidJarPath ?: extractAndroidJarToCache(context)!!)
-                d8Args.add("--output")
-                d8Args.add(dexOutputDir.absolutePath)
-                
-                // 添加所有 JAR 文件
-                jarFiles.forEach { jar ->
-                    d8Args.add(jar.absolutePath)
-                }
-                
-                d8Args.add("--min-api")
-                d8Args.add("21")
-                
-                LogCatcher.i("ApkBuilder", "执行 D8 转换 Maven JAR")
-                D8.main(d8Args.toTypedArray())
-                
+
+                // 统一由 BuildSlimmer 处理:开关关闭时等价于原来的 D8 直转,
+                // 开启时先剔除模板已有类再做 R8 可达性裁剪(失败自动回退 D8)。
+                val slim = BuildSlimmer.jarsToDex(
+                    jars = jarFiles,
+                    androidJar = lib,
+                    templateClasses = templateClasses,
+                    projectPath = projectPath,
+                    outDir = dexOutputDir,
+                    enabled = buildSlimEnabled
+                )
+                LogCatcher.i(
+                    "ApkBuilder",
+                    "Maven JAR 转 DEX 完成: 精简=${slim.shrunk}, " +
+                        "剔除重复类=${slim.duplicateClasses.size}, 声明类=${slim.declaredClasses.size}"
+                )
+
                 // 将生成的 DEX 复制到 APK 工作目录
                 addDexFilesToApkWorkDir(dexOutputDir, workDir)
-                
+
                 // 清理临时目录
                 dexOutputDir.deleteRecursively()
-                
-                LogCatcher.i("ApkBuilder", "Maven JAR 转 DEX 完成")
-                
+
             } catch (e: Exception) {
                 LogCatcher.e("ApkBuilder", "Maven JAR 转 DEX 失败", e)
             }
@@ -826,7 +840,8 @@ class ApkBuilder {
             encryptLua: Boolean = true,
             mergeDexEnabled: Boolean = true,
             abiTarget: AbiTarget = AbiTarget.UNIVERSAL,
-            skipCompileFiles: List<String> = emptyList()
+            skipCompileFiles: List<String> = emptyList(),
+            buildSlimEnabled: Boolean = false
         ): String? {
             val L = getSharedLuaState()
 
@@ -839,6 +854,17 @@ class ApkBuilder {
 
                 // 2. 解压临时APK
                 unzipFile(tempApkPath, workDir.absolutePath)
+
+                // 2.5 收集模板自带类,供构建精简做重复类剔除
+                //     解压后的 workDir 根目录就是模板的 classes*.dex,直接读比再开一遍
+                //     core.apk 更贴合实际产物。开关关闭时不扫,避免无谓开销。
+                val templateClasses = if (buildSlimEnabled) {
+                    BuildSlimmer.collectDexClassDescriptorsIn(workDir).also {
+                        LogCatcher.i("ApkBuilder", "模板自带类 ${it.size} 个")
+                    }
+                } else {
+                    emptySet()
+                }
 
                 // 3. 递归分析项目文件和库文件，获取所有引用的模块
                 val referencedModules = recursivelyAnalyzeModules(projectPath, workDir)
@@ -869,6 +895,15 @@ class ApkBuilder {
                 // 7. 复制项目文件到assets
                 copyProjectToAssets(projectPath, assetsDir.absolutePath)
 
+                // 7.5 精简项目 libs/ 目录(开关关闭时零开销跳过)
+                if (buildSlimEnabled) {
+                    val slimLibs = BuildSlimmer.slimProjectLibs(File(assetsDir, "libs"), templateClasses)
+                    LogCatcher.i(
+                        "ApkBuilder",
+                        "项目 libs 精简完成: 生效=${slimLibs.shrunk}, 剔除重复类=${slimLibs.duplicateClasses.size}"
+                    )
+                }
+
                 // 8. 按构建类型覆盖 settings.json 的调试模式
                 applyBuildSettingsOverrides(assetsDir, buildType.debugOverride)
 
@@ -885,7 +920,12 @@ class ApkBuilder {
                 if (androidJarPath != null) {
                     // 先处理 Maven JAR 转 DEX（如果没有 Java 源文件也要处理）
                     if (mavenJars.isNotEmpty()) {
-                        addMavenJarsToDexCompilation(context, mavenJars, workDir, androidJarPath)
+                        addMavenJarsToDexCompilation(
+                            context, mavenJars, workDir, androidJarPath,
+                            templateClasses = templateClasses,
+                            projectPath = projectPath,
+                            buildSlimEnabled = buildSlimEnabled
+                        )
                     }
                     
                     // 编译 Java 并生成 DEX（传入 Maven JAR）
@@ -894,7 +934,9 @@ class ApkBuilder {
                         projectPath,
                         workDir,
                         androidJarPath,
-                        mavenJars
+                        mavenJars,
+                        templateClasses = templateClasses,
+                        buildSlimEnabled = buildSlimEnabled
                     )
 
                     // 删除 assets 下的 java 源文件（避免打包进 APK）
@@ -1941,7 +1983,9 @@ class ApkBuilder {
             projectPath: String,
             workDir: File,
             androidJarPath: String,
-            mavenJars: List<File> = emptyList()
+            mavenJars: List<File> = emptyList(),
+            templateClasses: Set<String> = emptySet(),
+            buildSlimEnabled: Boolean = false
         ) {
             // 1. 检查 java 目录
             val javaDir = File(projectPath, "java")
@@ -2017,28 +2061,31 @@ class ApkBuilder {
             createJarFromDirectory(classOutputDir, jarFile)
 
             // 8. 收集所有需要转 DEX 的输入
+            //
+            // 只放项目自身的 java 编译产物:Maven JAR 已在 addMavenJarsToDexCompilation()
+            // 里转成 dex 放进 workDir,这里再传一次会让同一批类落进两个 classes*.dex
+            // —— 既白涨体积,又可能让运行期命中旧的一份。mavenJars 仅作 ECJ 的 classpath。
             val dexInputs = mutableListOf<File>()
             dexInputs.add(jarFile)
-            dexInputs.addAll(mavenJars)
 
-            // 9. 使用 D8 生成 DEX
-            LogCatcher.i("ApkBuilder", "开始使用 D8 生成 DEX，输入: ${dexInputs.size} 个")
+            // 9. 生成 DEX:统一走 BuildSlimmer(开关关闭时等价于原 D8 直转)
+            LogCatcher.i("ApkBuilder", "开始生成项目 Java DEX,输入: ${dexInputs.size} 个")
             try {
                 val dexOutputDir = File(workDir, "java_build_dex")
                 dexOutputDir.mkdirs()
 
-                val d8Args = mutableListOf<String>()
-                d8Args.add("--lib")
-                d8Args.add(androidJarPath)
-                d8Args.add("--output")
-                d8Args.add(dexOutputDir.absolutePath)
-                dexInputs.forEach { input ->
-                    d8Args.add(input.absolutePath)
-                }
-                d8Args.add("--min-api")
-                d8Args.add("21")
-
-                D8.main(d8Args.toTypedArray())
+                val slim = BuildSlimmer.jarsToDex(
+                    jars = dexInputs,
+                    androidJar = androidJarPath,
+                    templateClasses = templateClasses,
+                    projectPath = projectPath,
+                    outDir = dexOutputDir,
+                    enabled = buildSlimEnabled
+                )
+                LogCatcher.i(
+                    "ApkBuilder",
+                    "项目 Java DEX 完成: 精简=${slim.shrunk}, 剔除重复类=${slim.duplicateClasses.size}"
+                )
 
                 // 将生成的 dex 文件复制到 APK 工作目录
                 addDexFilesToApkWorkDir(dexOutputDir, workDir)

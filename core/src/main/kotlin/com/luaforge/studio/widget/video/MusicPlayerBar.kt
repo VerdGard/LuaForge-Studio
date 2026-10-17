@@ -3,7 +3,6 @@ package com.luaforge.studio.widget.video
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
-import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
@@ -19,7 +18,6 @@ import androidx.annotation.Keep
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
-import java.io.File
 
 /**
  * 一体化音乐播放条(短名 `MusicPlayerBar`)。
@@ -58,7 +56,14 @@ class MusicPlayerBar @JvmOverloads constructor(
     private val timeView = TextView(context)
 
     /** 播放列表条目。 */
-    data class Track(val title: String, val uri: String)
+    data class Track(
+        val title: String,
+        val uri: String,
+        /** 显式格式(后缀或完整 MIME),为空则按地址推断。 */
+        val format: String? = null,
+        /** 是否直播流。 */
+        val live: Boolean = false
+    )
 
     private val tracks = ArrayList<Track>()
     private var currentIndex = 0
@@ -161,9 +166,29 @@ class MusicPlayerBar @JvmOverloads constructor(
         btn.layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
     }
 
+    /** 默认请求头(如防盗链 Referer、Cookie),对之后设置的播放列表生效。 */
+    var httpHeaders: Map<String, String>? = null
+
+    /** 自定义 User-Agent;为空则用 Media3 默认值。 */
+    var userAgent: String? = null
+
+    /** 网络连接/读取超时(毫秒)。 */
+    var connectTimeoutMs: Int = 15000
+    var readTimeoutMs: Int = 15000
+
+    /**
+     * 懒创建播放器。通过 [MediaFormats.buildPlayer] 组装,
+     * 因此 m3u8 / mpd / rtmp 等协议在依赖齐备时自动可用。
+     */
     private fun ensurePlayer(): ExoPlayer {
         player?.let { return it }
-        val p = ExoPlayer.Builder(context).build()
+        val p = MediaFormats.buildPlayer(
+            context = context,
+            headers = httpHeaders,
+            userAgent = userAgent,
+            connectTimeoutMs = connectTimeoutMs,
+            readTimeoutMs = readTimeoutMs
+        )
         p.repeatMode = Player.REPEAT_MODE_ALL
         p.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -202,11 +227,18 @@ class MusicPlayerBar @JvmOverloads constructor(
         items.forEach { item ->
             val title = item["title"] ?: item["path"]?.substringAfterLast('/') ?: "Track"
             val uri = item["url"] ?: item["path"] ?: return@forEach
-            tracks.add(Track(title, uri))
+            val fmt = item["format"] ?: item["mime"]
+            val isLive = item["live"]?.equals("true", ignoreCase = true) == true
+            tracks.add(Track(title, uri, fmt, isLive))
         }
         val p = ensurePlayer()
         p.clearMediaItems()
-        tracks.forEach { p.addMediaItem(MediaItem.fromUri(toUri(it.uri))) }
+        tracks.forEach { track ->
+            val uri = MediaFormats.toUri(track.uri)
+            val mime = MediaFormats.inferMimeType(uri, track.format)
+            val isLive = track.live || MediaFormats.isStreamingScheme(uri)
+            p.addMediaItem(MediaFormats.buildMediaItem(uri, mime, isLive, tag = track.title))
+        }
         currentIndex = 0
         p.shuffleModeEnabled = shuffle
         p.prepare()
@@ -298,12 +330,15 @@ class MusicPlayerBar @JvmOverloads constructor(
         release()
     }
 
-    private fun toUri(path: String): Uri {
-        val lowered = path.lowercase()
-        val hasScheme = lowered.startsWith("http://") || lowered.startsWith("https://") ||
-            lowered.startsWith("rtsp://") || lowered.startsWith("file://") ||
-            lowered.startsWith("content://") || lowered.startsWith("asset://")
-        return if (hasScheme) Uri.parse(path) else Uri.fromFile(File(path))
+    /**
+     * 设置请求头(防盗链 / 鉴权),对之后调用 [setPlaylist] 生效。
+     *
+     * 由于数据源工厂在建造时固化,已创建播放器的请求头变更需重建:
+     * 这里直接释放,下一次 setPlaylist/play 会按新头重建。
+     */
+    fun setHeaders(headers: Map<String, String>?) {
+        httpHeaders = headers
+        if (player != null) release()
     }
 
     private fun dp(v: Number): Int =

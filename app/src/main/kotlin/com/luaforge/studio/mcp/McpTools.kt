@@ -642,6 +642,35 @@ object McpTools {
             )
         )
 
+        tools.put(
+            tool(
+                "list_dev_docs",
+                "列出随 IDE 打包的开发文档(开发文档目录 devdoc/)。" +
+                    "开始写代码前应先调用本工具,再按需用 read_dev_doc 读取具体内容",
+                obj()
+            )
+        )
+
+        tools.put(
+            tool(
+                "read_dev_doc",
+                "读取开发文档。**写 Lua/ALY 代码前应优先查文档**,而不是猜测 API:" +
+                    "SKILL.md(控件复用铁律/运行时/工具清单)、MCP.md(MCP 协议与工具参考)、" +
+                    "NETWORK.md(网络请求与防火墙限制)、" +
+                    "WidgetsCatalog.md(全部内置控件索引)、RuntimeAPI.md(全局对象与工具类)、" +
+                    "以及各控件/工具类的独立文档。省略 name 时返回目录与推荐阅读顺序",
+                obj(
+                    "name" to strProp(
+                        "文档名,如 SKILL.md / MCP.md / NETWORK.md / WidgetsCatalog.md / " +
+                            "RuntimeAPI.md / ExoVideoView.md;省略则返回文档目录"
+                    ),
+                    "startLine" to intProp("起始行号,1 起算;省略则从第 1 行"),
+                    "endLine" to intProp("结束行号,含该行;省略则到文档末尾"),
+                    "maxChars" to intProp("单次返回的最大字符数,默认 40000;超出请用 startLine/endLine 分段读取")
+                )
+            )
+        )
+
         return tools
     }
 
@@ -706,6 +735,8 @@ object McpTools {
                 "call_global_util" -> callGlobalUtil(context, args)
                 "list_lib_classes" -> listLibClasses(context, args)
                 "invoke_lib_method" -> invokeLibMethod(context, args)
+                "list_dev_docs" -> listDevDocs(context)
+                "read_dev_doc" -> readDevDoc(context, args)
                 else -> errorResult("未知工具: $name")
             }
         } catch (e: Exception) {
@@ -3719,6 +3750,162 @@ object McpTools {
         if (a.isNullOrBlank() || b.isNullOrBlank()) return false
         return runCatching { File(a).canonicalPath == File(b).canonicalPath }.getOrDefault(false)
     }
+
+    // ------------------------------------------------------------------
+    // 开发文档
+    // ------------------------------------------------------------------
+
+    /**
+     * 读取并缓存某个 assets 下的文档文本。
+     *
+     * 文档随 APK 打包、构建后不再变化,因此首次读取后常驻内存,避免每次调用都做
+     * 一次 IO + 解码。缓存键是 assets 内相对路径。
+     */
+    private val devDocCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** 必读文档及其推荐阅读顺序(与 assets/devdoc 保持一致)。 */
+    private val CORE_DEV_DOCS = listOf(
+        "SKILL.md" to "首要入口:控件复用铁律、Lua 运行时、MCP 工具清单与端到端流程",
+        "MCP.md" to "MCP 协议细节与全部工具的参数参考",
+        "NETWORK.md" to "网络请求限制与防火墙拦截规则(踩坑高发区)"
+    )
+
+    /** 控件/运行时参考文档(与 assets/doc 保持一致)。 */
+    private val REF_DEV_DOCS = listOf(
+        "WidgetsCatalog.md" to "全部内置控件索引(先在这里找现成控件)",
+        "RuntimeAPI.md" to "全局对象与内置工具类(避免手写已有能力)",
+        "MaterialTextField.md" to "输入框控件",
+        "ExoVideoView.md" to "视频播放器(自带控制器)",
+        "SimpleVideoView.md" to "视频播放器(自定义控制条)",
+        "ExoAudioPlayer.md" to "纯音频播放器",
+        "MusicPlayerBar.md" to "一体化音乐播放条",
+        "BitmapUtil.md" to "位图工具",
+        "GlideUtil.md" to "图片加载工具",
+        "OkHttpUtil.md" to "网络请求工具",
+        "UiUtil.md" to "UI 工具",
+        "ThemeUtil.md" to "主题工具",
+        "RecyclerAdapterUtil.md" to "列表适配器工具"
+    )
+
+    private suspend fun listDevDocs(context: Context): JSONObject = withContext(Dispatchers.IO) {
+        val listed = JSONArray()
+        CORE_DEV_DOCS.forEachIndexed { index, (name, desc) ->
+            listed.put(
+                JSONObject()
+                    .put("name", name)
+                    .put("dir", DEVDOC_DIR)
+                    .put("priority", index + 1)
+                    .put("description", desc)
+                    .put("available", devDocExists(context, DEVDOC_DIR, name))
+            )
+        }
+        REF_DEV_DOCS.forEachIndexed { index, (name, desc) ->
+            listed.put(
+                JSONObject()
+                    .put("name", name)
+                    .put("dir", DOC_DIR)
+                    .put("priority", CORE_DEV_DOCS.size + index + 1)
+                    .put("description", desc)
+                    .put("available", devDocExists(context, DOC_DIR, name))
+            )
+        }
+
+        // 附带实际存在于 assets 的文件,便于发现清单之外新增的文档
+        val onDisk = JSONArray()
+        (readAssetList(context, DEVDOC_DIR) + readAssetList(context, DOC_DIR)).forEach { onDisk.put(it) }
+
+        textResult(
+            JSONObject()
+                .put("hint", "写代码前先读 SKILL.md;需要具体控件/工具类时再读对应文档")
+                .put("docs", listed)
+                .put("filesOnDisk", onDisk)
+                .toString(2)
+        )
+    }
+
+    private suspend fun readDevDoc(context: Context, args: JSONObject): JSONObject = withContext(Dispatchers.IO) {
+        val rawName = args.optString("name", "").trim()
+
+        // 省略 name:返回目录,等价于 list_dev_docs,方便"先看一眼有哪些"
+        if (rawName.isEmpty()) return@withContext listDevDocs(context)
+
+        val fileName = rawName.replace('\\', '/').substringAfterLast('/')
+        if (!fileName.endsWith(".md", ignoreCase = true)) {
+            return@withContext errorResult("只支持读取 .md 文档: $rawName")
+        }
+        if (fileName.contains("..")) {
+            return@withContext errorResult("文档名非法: $rawName")
+        }
+
+        // 先查 devdoc/(核心开发文档),再查 doc/(控件参考)
+        val dir = when {
+            devDocExists(context, DEVDOC_DIR, fileName) -> DEVDOC_DIR
+            devDocExists(context, DOC_DIR, fileName) -> DOC_DIR
+            else -> return@withContext errorResult(
+                "未找到文档: $fileName。可用 list_dev_docs 查看全部可用文档"
+            )
+        }
+
+        val text = devDocCache.getOrPut("$dir/$fileName") {
+            context.assets.open("$dir/$fileName").use { it.readBytes().toString(Charsets.UTF_8) }
+        }
+        val lines = text.split("\n")
+
+        val startLine = args.optInt("startLine", 1).coerceAtLeast(1)
+        val endLine = args.optInt("endLine", lines.size).let {
+            if (it <= 0) lines.size else it.coerceAtMost(lines.size)
+        }
+        val maxChars = args.optInt("maxChars", 40000).let {
+            if (it <= 0) 40000 else it.coerceAtMost(200000)
+        }
+        if (startLine > endLine) {
+            return@withContext errorResult("startLine($startLine) 大于 endLine($endLine)")
+        }
+
+        val totalLines = lines.size
+        var slice = lines.subList(startLine - 1, endLine).joinToString("\n")
+
+        // 还有下文却被 maxChars 截断时,给出准确的续读位置
+        var truncatedAt: Int? = null
+        if (slice.length > maxChars) {
+            val cut = slice.substring(0, maxChars)
+            truncatedAt = startLine - 1 + cut.count { it == '\n' }
+            slice = cut
+        }
+
+        textResult(
+            JSONObject()
+                .put("name", fileName)
+                .put("dir", dir)
+                .put("totalLines", totalLines)
+                .put("startLine", startLine)
+                .put("endLine", endLine)
+                .put("truncated", truncatedAt != null)
+                .put(
+                    "nextStartLine",
+                    truncatedAt?.let { it + 2 } ?: (if (endLine < totalLines) endLine + 1 else JSONObject.NULL)
+                )
+                .put("content", slice)
+                .toString(2)
+        )
+    }
+
+    /** assets 内的开发文档目录。 */
+    private const val DEVDOC_DIR = "devdoc"
+
+    /** assets 内的控件/运行时参考文档目录。 */
+    private const val DOC_DIR = "doc"
+
+    private fun devDocExists(context: Context, dir: String, name: String): Boolean =
+        runCatching { context.assets.open("$dir/$name").use { true } }.getOrDefault(false)
+
+    private fun readAssetList(context: Context, dir: String): List<String> =
+        runCatching {
+            context.assets.list(dir)?.filter { it.endsWith(".md", ignoreCase = true) }
+                ?.map { "$dir/$it" }
+                ?.sorted()
+                ?: emptyList()
+        }.getOrDefault(emptyList())
 
     // ------------------------------------------------------------------
     // JSON 辅助

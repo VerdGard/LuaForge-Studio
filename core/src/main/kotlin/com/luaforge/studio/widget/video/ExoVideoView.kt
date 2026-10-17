@@ -6,12 +6,10 @@ import android.util.AttributeSet
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.annotation.Keep
-import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
-import java.io.File
 
 /**
  * 基于 Media3 / ExoPlayer 的视频播放控件(自带播放控制器)。
@@ -43,10 +41,44 @@ open class ExoVideoView @JvmOverloads constructor(
         addView(playerView)
     }
 
-    /** 懒创建播放器,避免仅作为布局占位时也占用解码资源。 */
+    /** 默认请求头(如防盗链 Referer、Cookie);设置后对后续设置的媒体源生效。 */
+    var httpHeaders: Map<String, String>? = null
+
+    /** 自定义 User-Agent;为空则用 Media3 默认值。 */
+    var userAgent: String? = null
+
+    /** 网络连接/读取超时(毫秒),默认 15s。 */
+    var connectTimeoutMs: Int = 15000
+    var readTimeoutMs: Int = 15000
+
+    /**
+     * 是否按直播处理:会写入较小的 live target offset 以降低起播延迟。
+     *
+     * 直播流(RTSP/RTMP)即使不设置也能播放,但显式开启可减少追帧抖动。
+     */
+    var live: Boolean = false
+
+    /** 显式指定媒体格式(后缀如 `flv`/`m3u8`,或完整 MIME);为空则按地址自动推断。 */
+    var format: String? = null
+
+    /** 最近一次设置的媒体源,供 [setHeaders] 重建播放器后重新装载。 */
+    private var lastUri: Uri? = null
+
+    /**
+     * 懒创建播放器,避免仅作为布局占位时也占用解码资源。
+     *
+     * 通过 [MediaFormats.buildPlayer] 组装,因此 HLS(m3u8)/DASH(mpd)/
+     * SmoothStreaming(ism)/RTSP/RTMP 在依赖齐备时自动可用。
+     */
     protected fun ensurePlayer(): ExoPlayer {
         player?.let { return it }
-        val created = ExoPlayer.Builder(context).build()
+        val created = MediaFormats.buildPlayer(
+            context = context,
+            headers = httpHeaders,
+            userAgent = userAgent,
+            connectTimeoutMs = connectTimeoutMs,
+            readTimeoutMs = readTimeoutMs
+        )
         created.repeatMode = Player.REPEAT_MODE_OFF
         player = created
         playerView.player = created
@@ -84,17 +116,27 @@ open class ExoVideoView @JvmOverloads constructor(
     }
 
     /** 按普通路径/URL 设置媒体源(相对路径按项目工作目录解析)。 */
-    fun setVideoPath(path: String) = setMediaUri(toUri(path))
+    fun setVideoPath(path: String) = setMediaUri(MediaFormats.toUri(path))
 
-    /** 按 URL 设置媒体源(http/https/rtsp 等)。 */
+    /** 按 URL 设置媒体源(http/https/rtsp/rtmp 等)。 */
     fun setVideoUrl(url: String) = setMediaUri(Uri.parse(url))
 
     /** 按 Uri 设置媒体源。 */
     fun setVideoUri(uri: Uri) = setMediaUri(uri)
 
+    /**
+     * 设置媒体源。
+     *
+     * MIME 由 [MediaFormats.inferMimeType] 从地址后缀推断(可由 [format] 覆盖),
+     * 这样 `xxx.m3u8?token=...` 这类带查询参数的地址也能正确走 HLS 分支;
+     * 推断不出时留空,交给 ExoPlayer 自行嗅探。
+     */
     private fun setMediaUri(uri: Uri) {
+        lastUri = uri
         val p = ensurePlayer()
-        p.setMediaItem(MediaItem.fromUri(uri))
+        val mime = MediaFormats.inferMimeType(uri, format)
+        val isLive = live || MediaFormats.isStreamingScheme(uri)
+        p.setMediaItem(MediaFormats.buildMediaItem(uri, mime, isLive))
         p.playWhenReady = autoPlay
         p.prepare()
     }
@@ -161,13 +203,24 @@ open class ExoVideoView @JvmOverloads constructor(
         release()
     }
 
-    /** 普通路径视为本地文件;带协议头的按 URI 处理。 */
-    protected fun toUri(path: String): Uri {
-        val lowered = path.lowercase()
-        val hasScheme = lowered.startsWith("http://") || lowered.startsWith("https://") ||
-            lowered.startsWith("rtsp://") || lowered.startsWith("rtmp://") ||
-            lowered.startsWith("file://") || lowered.startsWith("content://") ||
-            lowered.startsWith("asset://") || lowered.startsWith("android.resource://")
-        return if (hasScheme) Uri.parse(path) else Uri.fromFile(File(path))
+    /** 普通路径视为本地文件;带协议头的按 URI 处理(兼容旧调用,实现见 [MediaFormats.toUri])。 */
+    protected fun toUri(path: String): Uri = MediaFormats.toUri(path)
+
+    /**
+     * 设置请求头,用于防盗链 / 鉴权等场景。
+     *
+     * ```lua
+     * video.setHeaders({ ["Referer"] = "https://example.com/", ["Cookie"] = "a=1" })
+     * ```
+     * 对之后设置的媒体源生效;由于播放器是懒创建的,通常无需重建即可生效。
+     */
+    fun setHeaders(headers: Map<String, String>?) {
+        httpHeaders = headers
+        // 数据源工厂在建造时就固化进 ExoPlayer,不能热替换:
+        // 已有媒体源时重建播放器并重新装载,否则下次 ensurePlayer 自然生效。
+        val pending = lastUri
+        if (player == null || pending == null) return
+        release()
+        setMediaUri(pending)
     }
 }

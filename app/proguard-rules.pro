@@ -159,6 +159,39 @@
 -keepattributes Exceptions
 -keepattributes InnerClasses
 -keepattributes EnclosingMethod
+# ============================================================
+# Media3 / ExoPlayer 反射保留
+#
+# ExoPlayer 的 DefaultMediaSourceFactory / DefaultDataSource /
+# DefaultExtractorsFactory 都用 Class.forName 在**运行时**发现实现类:
+# 缺 keep 时 release(minify)会把类名混淆成 a.b.c,反射随即失败,
+# 表现为「HLS/RTMP 明明加了依赖却ClassNotFoundException」。
+# 下面按各工厂里硬编码的字符串逐一保留,名字必须与 Media3 源码一致。
+# ============================================================
+-keep class androidx.media3.exoplayer.hls.HlsMediaSource$Factory { *; }
+-keep class androidx.media3.exoplayer.dash.DashMediaSource$Factory { *; }
+-keep class androidx.media3.exoplayer.smoothstreaming.SsMediaSource$Factory { *; }
+-keep class androidx.media3.exoplayer.rtsp.RtspMediaSource$Factory { *; }
+-keep class androidx.media3.datasource.rtmp.RtmpDataSource { *; }
+-keep class androidx.media3.decoder.midi.MidiExtractor { *; }
+-keep class androidx.media3.decoder.flac.FlacExtractor { *; }
+-keep class androidx.media3.decoder.flac.FlacLibrary { *; }
+
+# 兜底:整个 media3 全家族的实现类都保留,避免后续升级模块时漏 keep。
+-keep class androidx.media3.exoplayer.hls.** { *; }
+-keep class androidx.media3.exoplayer.dash.** { *; }
+-keep class androidx.media3.exoplayer.smoothstreaming.** { *; }
+-keep class androidx.media3.exoplayer.rtsp.** { *; }
+-keep class androidx.media3.datasource.rtmp.** { *; }
+
+# librtmp 走 JNI,类名/方法名被混淆会导致 native 侧找不到符号。
+-keep class io.antmedia.rtmp_client.** { *; }
+-keepclasseswithmembernames class io.antmedia.rtmp_client.** { native <methods>; }
+
+# Media3 内部用注解做 UnstableApi 校验,混淆时丢弃注解会引发 lint 期间误报;
+# 同时保留 Parcelable/枚举等基础约定(见文末通用规则)。
+-dontwarn androidx.media3.**
+
 # 调试控制台:core(产物) 经 ConsoleBridgeRef 反射这些 IDE 侧类的
 # 类名/方法/字段名,必须保留名称与成员(否则 release 混淆后反射失败、控制台静默失效)。
 -keep class com.luaforge.studio.console.core.ConsoleRegistry { *; }

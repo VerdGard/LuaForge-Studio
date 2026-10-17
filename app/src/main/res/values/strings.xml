@@ -653,7 +653,7 @@
     <string name="settings_mcp_notification_permission_toast">请允许通知权限,否则常驻通知无法显示</string>
 
     <string name="settings_network">网络请求拦截</string>
-    <string name="settings_security">安全防护</string>
+    <string name="settings_security">安全与日志</string>
     <string name="settings_network_enable">拦截网络请求</string>
     <string name="settings_network_enable_desc">请求发出前弹出确认框,用户允许后才放行</string>
     <string name="settings_network_allowed">已允许的主机</string>
@@ -714,6 +714,10 @@
 
     <string name="settings_build_signing">构建与签名</string>
     <string name="settings_build_signing_desc">打包架构与 APK 签名配置</string>
+    <string name="settings_build_slim">构建精简</string>
+    <string name="settings_build_slim_desc">开启后只把项目声明或引用到的类打进 APK,并剔除与内置模板重复的类;依赖 R8 做可达性裁剪,失败时自动回退普通构建</string>
+    <string name="settings_build_slim_on">已开启:APK 体积更小,首次构建略慢</string>
+    <string name="settings_build_slim_off">已关闭:打包全部依赖类</string>
     <string name="settings_sign_custom_enable">使用自定义签名文件</string>
     <string name="settings_sign_custom_enable_desc">关闭时使用内置默认签名;开启后可指定自己的 keystore</string>
     <string name="settings_sign_store_path">签名文件路径</string>

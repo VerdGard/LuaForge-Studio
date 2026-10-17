@@ -652,7 +652,7 @@
     <string name="settings_mcp_notification_permission_toast">Please allow notification permission, otherwise the persistent notification cannot be shown</string>
 
     <string name="settings_network">Network Request Interception</string>
-    <string name="settings_security">Security</string>
+    <string name="settings_security">Security &amp; Logs</string>
     <string name="settings_network_enable">Intercept Network Requests</string>
     <string name="settings_network_enable_desc">Show a confirmation dialog before each request; proceed only if allowed</string>
     <string name="settings_network_allowed">Allowed Hosts</string>
@@ -713,6 +713,10 @@
 
     <string name="settings_build_signing">Build &amp; Signing</string>
     <string name="settings_build_signing_desc">Packaging ABI and APK signing configuration</string>
+    <string name="settings_build_slim">Build Slimming</string>
+    <string name="settings_build_slim_desc">When on, only classes declared or referenced by the project are packaged, and classes duplicated with the built-in template are removed. Uses R8 reachability shrinking and falls back to a normal build on failure.</string>
+    <string name="settings_build_slim_on">On: smaller APK, slightly slower first build</string>
+    <string name="settings_build_slim_off">Off: all dependency classes are packaged</string>
     <string name="settings_sign_custom_enable">Use custom signing file</string>
     <string name="settings_sign_custom_enable_desc">When off, the built-in default signing is used; turn on to specify your own keystore</string>
     <string name="settings_sign_store_path">Keystore path</string>

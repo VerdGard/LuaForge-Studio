@@ -49,7 +49,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 { "headers": { "Authorization": "Bearer <你的令牌>" } }
 ```
 
-## 4. 工具清单(53 个)
+## 4. 工具清单(55 个)
 
 参数均为可选,除非标 **必填**。带 `array` 的参数可传 JSON 数组,也可传换行/逗号分隔的字符串。
 
@@ -80,6 +80,8 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 | `list_project_libraries` | 列出项目的原生库与三方库:`lib/<abi>/*.so`(按 ABI 分组 + 设备匹配)与 `libs/*.dex\|jar`/`libs/*.so`,并返回设备首选 ABI | `path` |
 | `list_lib_classes` | 列出用户导入 `libs/*.dex\|jar` **内含的类**(解析 dex/jar 字符串池,离线可用;`filter` 子串过滤,`className` 时额外返回该类的构造器/方法/字段) | `path`、`lib`、`filter`、`className`、`page`、`maxResults` |
 | `invoke_lib_method` | 反射调用项目 `libs/` 库内类的**静态方法**或**构造器**(仅标量参数) | `className` **必填**、`method`、`args`、`constructor`、`page`、`path`、`timeoutMs`(默认 5000) |
+| `list_dev_docs` | 列出随 IDE 打包的开发文档(核心文档 `assets/devdoc/` + 控件参考 `assets/doc/`),含优先级与推荐阅读顺序,并附 `filesOnDisk` 便于发现新增文档 | — |
+| `read_dev_doc` | **读取开发文档,写代码前应优先调用**。省略 `name` 时等价于 `list_dev_docs`;`name` 只取 basename,先查 `devdoc/` 再查 `doc/` | `name`、`startLine`、`endLine`、`maxChars`(默认 40000,上限 200000) |
 
 > `delete_file` 只能删空目录,递归删除请由客户端先列目录再逐个删除。
 

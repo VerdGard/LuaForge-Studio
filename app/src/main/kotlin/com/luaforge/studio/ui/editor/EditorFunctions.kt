@@ -231,6 +231,10 @@ val mavenDependencies = try {
             emptyList()
         }
 
+        // 构建精简:全局设置开关(默认关闭)。开启后只把项目声明/引用的类打进 APK,
+        // 并剔除与模板重复的类;详见 BuildSlimmer。
+        val buildSlimEnabled = SettingsManager.currentSettings.buildSlimEnabled
+
         // 获取minSdkVersion和targetSdkVersion
         var minSdkVersion = 21  // 默认值
         var targetSdkVersion = 29 // 默认值
@@ -327,7 +331,8 @@ val mavenDependencies = try {
                 encryptProject,              // settings.json 的 encrypt（PROJECT_DEFAULT 时生效）
                 mergeDexEnabled,             // settings.json 的 mergeDex
                 abiTarget,                   // 打包目标架构(通用/arm64-v8a/armeabi-v7a)
-                skipCompileFiles             // 跳过编译(不加密)的文件
+                skipCompileFiles,            // 跳过编译(不加密)的文件
+                buildSlimEnabled             // 构建精简(全局设置,默认关闭)
             )
 
             // 构建后再次检查内存

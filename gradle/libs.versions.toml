@@ -173,6 +173,16 @@ ktoast = { module = "io.github.tarifchakder.ktoast:ktoast", version.ref = "ktoas
 media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
 media3-ui = { module = "androidx.media3:media3-ui", version.ref = "media3" }
 media3-common = { module = "androidx.media3:media3-common", version.ref = "media3" }
+# 自适应流/协议扩展:HLS(m3u8)、DASH(mpd)、SmoothStreaming(ism)、RTSP、RTMP。
+# 这些模块由 DefaultMediaSourceFactory / DefaultDataSource 通过反射发现,
+# 只加依赖即可生效,但 release 混淆必须配 keep 规则(见 proguard-rules.pro)。
+media3-exoplayer-hls = { module = "androidx.media3:media3-exoplayer-hls", version.ref = "media3" }
+media3-exoplayer-dash = { module = "androidx.media3:media3-exoplayer-dash", version.ref = "media3" }
+media3-exoplayer-smoothstreaming = { module = "androidx.media3:media3-exoplayer-smoothstreaming", version.ref = "media3" }
+media3-exoplayer-rtsp = { module = "androidx.media3:media3-exoplayer-rtsp", version.ref = "media3" }
+# RTMP 依赖第三方 librtmp 实现(Apache-2.0)
+media3-datasource-rtmp = { module = "androidx.media3:media3-datasource-rtmp", version.ref = "media3" }
+rtmp-client = { module = "io.antmedia:rtmp-client", version = "3.2.0" }
 
 # Editor module dependencies (for :editor module)
 androidx-annotation = { module = "androidx.annotation:annotation", version.ref = "androidx-annotation" }

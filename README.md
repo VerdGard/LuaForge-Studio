@@ -2,6 +2,18 @@
 
 ## 1.6.8
 
+- **新增「构建精简」开关**(设置 → 构建与签名,位于自定义签名之上,默认关闭)
+  - 开启后只为项目**声明/引用**到的类生成 dex:扫描 `.lua/.aly` 里的 `import "..."`、`luajava.bindClass/newInstance("...")` 收集类名,连同必须类白名单生成 R8 keep 规则做可达性裁剪
+  - **自动剔除 APK 内重复类**:项目 jar 中与 `core.apk` 模板重复的类被移除;整个 jar 都被模板覆盖时直接跳过;`libs/*.dex` 只做检测(全量重复才整体丢弃),避免破坏仍被需要的 dex
+  - 必须类白名单覆盖 Lua 运行时/JNI 桥、Media3 反射发现的 HLS/DASH/SS/RTSP/RTMP、常用 Material/AndroidX 控件等静态分析不可见的入口
+  - **不开启混淆**(`-dontobfuscate`):`luajava.bindClass("com.foo.Bar")` 依赖字符串类名,混淆后运行期即崩
+  - R8 失败自动回退 D8 直转,构建不会因精简而失败;关闭开关时行为与旧版一致
+  - 顺带修复 Maven 依赖被重复转 dex 的既有问题(此前 Java 编译链会把同一批 Maven JAR 再转一遍,导致同类落进两个 `classes*.dex`)
+- **设置项合并**
+  - 「通知提示」并入**主题与外观**;「错误日志」并入安全防护分区,该分区更名为**安全与日志**
+- **开发文档随 APK 打包 + 新增 MCP 文档工具**
+  - `SKILL.md`、`MCP.md`、`NETWORK.md` 由仓库根/`docs/` 移入 `app/src/main/assets/devdoc/`,构建后可直接在设备内读取
+  - 新增 MCP `list_dev_docs`(列出文档与推荐阅读顺序)与 `read_dev_doc`(按名读取、支持按行分段),SKILL.md §0 增加「任何编码任务开始前先查文档」入口;工具总数 53 → 55
 - **MCP 新增 `copy_file` 工具**:支持从其他项目/目录复制文件或目录到当前项目内
   - `source` 支持绝对路径、`fromProject/相对路径`,或直接「项目名/子路径」
   - `target` 指定项目内目标路径(缺省用源文件名置于项目根),`overwrite` / `recursive` 可控
@@ -62,7 +74,7 @@
   - 清理阶段按选择裁剪 APK 的 `lib/` 目录，减小产物体积
 - **MCP 默认端口由 `8787` 改为 `9123`**
   - 代码 `McpManager.kt` / `SettingsManager.kt` 三处默认值同步；设置页仍可改（1024–65535）
-  - 文档 `docs/MCP.md`、`SKILL.md` 中示例地址一并更新
+  - 文档 `assets/devdoc/MCP.md`、`assets/devdoc/SKILL.md` 中示例地址一并更新
 - 设置 → 编辑器配置：移除「滑动手势」开关及其在编辑器中的上下滑动显隐快捷功能栏逻辑
   - 同步清理 `CodeEditorView` 的触摸监听、`EditorTabs`/`CodeEditScreen` 的透传链路、`SettingsManager` 字段与 `get_settings` 暴露项
 - 修复与增强**布局助手**（`assets/layouthelper/main.lua`）
@@ -107,7 +119,7 @@
 - **MCP:读文件不转义 + 大文件按行读写与校验**
   - `read_file` 新增 `raw=true`(直接返回文件原文,不包 JSON、不做转义)、`startLine`/`endLine`(1 起算闭区间)、`withMd5`;`read_files` 同步
   - `write_file` 新增 `mode`(`overwrite`/`replaceLines`/`append`) 与 `expectedMd5`/`expectedLines` 写入前校验;返回带 `lines`/`md5` 便于比对
-- **文档**:`SKILL.md` 工具数同步 50 并补「一次性运行取信息」流程、大文件读写校验、错误日志入口;`docs/MCP.md` 同步工具清单与 `run_project`/`stop_project`/`read_file`/`write_file` 说明
+- **文档**:`assets/devdoc/SKILL.md` 工具数同步 50 并补「一次性运行取信息」流程、大文件读写校验、错误日志入口;`assets/devdoc/MCP.md` 同步工具清单与 `run_project`/`stop_project`/`read_file`/`write_file` 说明
 - **打包设置文案**：「仅 64 位」改为 `arm64-v8a`、「仅 32 位」改为 `armeabi-v7a`（中英文案同步）
 - **废除 Lua 侧 Jetpack Compose 桥与液态玻璃控件**
   - 移除全局函数 `compose(tree)` / `composeContent(tree)` 与 `LuaCompose.kt`（注册处 `LuaActivity.initLua` 一并删除）；Lua 项目改回 `loadlayout` / 原生 View 体系
@@ -173,7 +185,7 @@
   - `console_logcat`：本调试会话 logcat（与控制台「Logcat」页同源）
   - `console_clear`：清空控制台输出缓冲（与 `clear_logs` 清 `luaforge.log` 互补）
   - 与 MCP 既有 `get_logs` / `get_runtime_errors`（读 `luaforge.log` 文本）不同，这批工具读的是控制台的**结构化缓冲**，与浮窗展示同源
-  - 仅在**调试运行（debugmode 项目）**时产生数据；详见 [docs/MCP.md](docs/MCP.md)
+  - 仅在**调试运行（debugmode 项目）**时产生数据；详见 [assets/devdoc/MCP.md](app/src/main/assets/devdoc/MCP.md)
 - 修复 `global_utils` 注册函数的小数入参调用失败
   - 之前 `LuaState.toJavaObject` 得到的 `Double` 直接传给 `Float` / `Int` 形参会抛 `argument type mismatch`（如 `dp2px(16.5)`）
   - 现在按形参类型做数值收窄，不再依赖 Java 的自动转换
@@ -237,7 +249,7 @@
     - `http.*`(HttpURLConnection)、`okhttp.*`(OkHttp 拦截器);图片加载与 WebView 请求不拦截
   - 按主机记忆允许/拒绝,列表可在设置中查看与清空;也可随时关闭整个开关
   - 用户项目打包成 APK 后**不含**拦截逻辑(`:app` 的决策器不进入 `:core-apk`),因此打包后不拦截
-  - 详见 [docs/NETWORK.md](docs/NETWORK.md)
+  - 详见 [assets/devdoc/NETWORK.md](app/src/main/assets/devdoc/NETWORK.md)
 - `http.*` 请求体预览截断到 16KB,避免大请求体额外占用内存
 
 ## 1.6.2
@@ -253,7 +265,7 @@
 - 编译验证不再残留产物
   - `compile_file` 默认在验证成功后删除 `.luac` / `.alyc`,需要产物时传 `keepOutput=true`
   - 新增 `clean_compiled` 清理历史残留(支持 `dryRun` 预览)
-- 详见 [docs/MCP.md](docs/MCP.md)
+- 详见 [assets/devdoc/MCP.md](app/src/main/assets/devdoc/MCP.md)
 
 ## 1.6.1
 - 修复 `loadlayout` 因属性别名导致整棵布局加载失败的问题
@@ -262,7 +274,7 @@
 - Lua 运行时错误现在会写入 `luaforge.log`(此前仅输出到 logcat,无法事后排查)
 - MCP 新增运行时界面检查能力:`dump_screen` / `check_screen` / `get_runtime_errors` / `clear_logs`
   - 调试运行后可断言屏幕内容是否符合预期,并自动识别错误弹窗
-  - 详见 [docs/MCP.md](docs/MCP.md)
+  - 详见 [assets/devdoc/MCP.md](app/src/main/assets/devdoc/MCP.md)
 
 ## 1.6.0
 - 新增 `libdecrypt.so`，支持 Lua 加密脚本自动解密加载

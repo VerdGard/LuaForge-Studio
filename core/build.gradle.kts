@@ -126,4 +126,13 @@ dependencies {
     api(libs.media3.exoplayer)
     api(libs.media3.ui)
     api(libs.media3.common)
+    // 自适应流与协议扩展:HLS(m3u8)/DASH(mpd)/SmoothStreaming(ism)/RTSP/RTMP。
+    // 这些模块不会自动被 exoplayer 拉取,必须显式声明;缺了对应模块时
+    // DefaultMediaSourceFactory 会在运行时抛 ClassNotFoundException。
+    api(libs.media3.exoplayer.hls)
+    api(libs.media3.exoplayer.dash)
+    api(libs.media3.exoplayer.smoothstreaming)
+    api(libs.media3.exoplayer.rtsp)
+    api(libs.media3.datasource.rtmp)
+    api(libs.rtmp.client)
 }

@@ -268,14 +268,11 @@ fun SettingsScreen(
     var editorConfigExpanded by remember { mutableStateOf(false) }
     var buildSignExpanded by remember { mutableStateOf(false) }
     var showSignPicker by remember { mutableStateOf(false) }
-    var toastSettingsExpanded by remember { mutableStateOf(false) }
     var mcpExpanded by remember { mutableStateOf(false) }
     var mcpPortText by remember { mutableStateOf(currentSettingsState.mcpPort.toString()) }
     var mcpTokenText by remember { mutableStateOf(currentSettingsState.mcpToken) }
     // 安全防护卡片(网络拦截 + 防火墙合并)展开态
     var securityExpanded by remember { mutableStateOf(false) }
-    // 错误日志卡片展开态
-    var errorLogExpanded by remember { mutableStateOf(false) }
     var logEnabled by remember { mutableStateOf(LogConfigRepository(context).isLogEnabled()) }
     var showErrorLogDialog by remember { mutableStateOf(false) }
     var errorLogText by remember { mutableStateOf("") }
@@ -630,6 +627,72 @@ Column(
                                 }
                             }
                         }
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                        )
+
+                        Text(
+                            text = stringResource(R.string.settings_notification_toast),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                        )
+
+                        Text(
+                            text = stringResource(R.string.settings_toast_position),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = currentSettingsState.toastPosition == ToastPosition.TOP,
+                                onClick = {
+                                    updateSettingsWithSave(currentSettingsState.copy(toastPosition = ToastPosition.TOP))
+                                },
+                                label = { Text(stringResource(R.string.settings_toast_top)) }
+                            )
+
+                            FilterChip(
+                                selected = currentSettingsState.toastPosition == ToastPosition.BOTTOM,
+                                onClick = {
+                                    updateSettingsWithSave(currentSettingsState.copy(toastPosition = ToastPosition.BOTTOM))
+                                },
+                                label = { Text(stringResource(R.string.settings_toast_bottom)) }
+                            )
+                        }
+
+                        SettingsListItem(
+                            title = stringResource(R.string.settings_toast_border),
+                            subtitle = stringResource(R.string.settings_toast_border_desc),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Info,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = currentSettingsState.toastBorderEnabled,
+                                    onCheckedChange = {
+                                        updateSettingsWithSave(currentSettingsState.copy(toastBorderEnabled = it))
+                                    }
+                                )
+                            },
+                            onClick = {
+                                updateSettingsWithSave(currentSettingsState.copy(toastBorderEnabled = !currentSettingsState.toastBorderEnabled))
+                            }
+                        )
                     }
                 }
             }
@@ -1461,6 +1524,47 @@ Column(
                     )
 
                     SettingsListItem(
+                        title = stringResource(R.string.settings_build_slim),
+                        subtitle = stringResource(R.string.settings_build_slim_desc),
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Extension,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = currentSettingsState.buildSlimEnabled,
+                                onCheckedChange = {
+                                    updateSettingsWithSave(currentSettingsState.copy(buildSlimEnabled = it))
+                                }
+                            )
+                        },
+                        onClick = {
+                            updateSettingsWithSave(
+                                currentSettingsState.copy(buildSlimEnabled = !currentSettingsState.buildSlimEnabled)
+                            )
+                        }
+                    )
+
+                    Text(
+                        text = stringResource(
+                            if (currentSettingsState.buildSlimEnabled) R.string.settings_build_slim_on
+                            else R.string.settings_build_slim_off
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp)
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                    )
+
+                    SettingsListItem(
                         title = stringResource(R.string.settings_sign_custom_enable),
                         subtitle = stringResource(R.string.settings_sign_custom_enable_desc),
                         leadingIcon = {
@@ -1565,71 +1669,6 @@ Column(
                                 )
                             }
                         }
-                    }
-                }
-            }
-
-            item {
-                SettingsCardGroup(
-                    title = stringResource(R.string.settings_notification_toast),
-                    icon = Icons.Filled.Info,
-                    initiallyExpanded = toastSettingsExpanded,
-                    onExpandedChange = { toastSettingsExpanded = it }
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        Text(
-                            text = stringResource(R.string.settings_toast_position),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            FilterChip(
-                                selected = currentSettingsState.toastPosition == ToastPosition.TOP,
-                                onClick = {
-                                    updateSettingsWithSave(currentSettingsState.copy(toastPosition = ToastPosition.TOP))
-                                },
-                                label = { Text(stringResource(R.string.settings_toast_top)) }
-                            )
-
-                            FilterChip(
-                                selected = currentSettingsState.toastPosition == ToastPosition.BOTTOM,
-                                onClick = {
-                                    updateSettingsWithSave(currentSettingsState.copy(toastPosition = ToastPosition.BOTTOM))
-                                },
-                                label = { Text(stringResource(R.string.settings_toast_bottom)) }
-                            )
-                        }
-
-                        SettingsListItem(
-                            title = stringResource(R.string.settings_toast_border),
-                            subtitle = stringResource(R.string.settings_toast_border_desc),
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Filled.Info,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            },
-                            trailingContent = {
-                                Switch(
-                                    checked = currentSettingsState.toastBorderEnabled,
-                                    onCheckedChange = {
-                                        updateSettingsWithSave(currentSettingsState.copy(toastBorderEnabled = it))
-                                    }
-                                )
-                            },
-                            onClick = {
-                                updateSettingsWithSave(currentSettingsState.copy(toastBorderEnabled = !currentSettingsState.toastBorderEnabled))
-                            }
-                        )
                     }
                 }
             }
@@ -2204,115 +2243,122 @@ Column(
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                         )
                         }
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                        )
+
+                        Text(
+                            text = stringResource(R.string.settings_error_log),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                        )
+
+                        SettingsListItem(
+                            title = stringResource(R.string.settings_error_log_enabled),
+                            subtitle = stringResource(R.string.settings_error_log_enabled_desc),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Description,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = logEnabled,
+                                    onCheckedChange = { checked ->
+                                        logEnabled = checked
+                                        LogConfigRepository(context).saveLogConfig(checked)
+                                    }
+                                )
+                            },
+                            onClick = {
+                                logEnabled = !logEnabled
+                                LogConfigRepository(context).saveLogConfig(logEnabled)
+                            }
+                        )
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                        )
+
+                        SettingsListItem(
+                            title = stringResource(R.string.settings_error_log_view),
+                            subtitle = stringResource(R.string.settings_error_log_view_desc),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Info,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            onClick = {
+                                errorLogText = LogFileAccess.readLog(errorsOnly = true)
+                                showErrorLogDialog = true
+                            }
+                        )
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                        )
+
+                        SettingsListItem(
+                            title = stringResource(R.string.settings_error_log_export),
+                            subtitle = stringResource(R.string.settings_error_log_export_desc),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.ContentCopy,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            onClick = {
+                                val ok = exportLogFile(context)
+                                if (!ok) {
+                                    toast.showToast(
+                                        context.getString(R.string.settings_error_log_export_failed)
+                                    )
+                                }
+                            }
+                        )
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                        )
+
+                        SettingsListItem(
+                            title = stringResource(R.string.settings_error_log_clear),
+                            subtitle = stringResource(R.string.settings_error_log_clear_desc),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Delete,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            onClick = {
+                                LogFileAccess.clear()
+                                toast.showToast(
+                                    context.getString(R.string.settings_error_log_cleared)
+                                )
+                            }
+                        )
                     }
                 }
             }
 
-            item {
-                SettingsCardGroup(
-                    title = stringResource(R.string.settings_error_log),
-                    icon = Icons.Filled.Description,
-                    initiallyExpanded = errorLogExpanded,
-                    onExpandedChange = { errorLogExpanded = it }
-                ) {
-                    SettingsListItem(
-                        title = stringResource(R.string.settings_error_log_enabled),
-                        subtitle = stringResource(R.string.settings_error_log_enabled_desc),
-                        leadingIcon = {
-                            Icon(
-                                Icons.Filled.Description,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        },
-                        trailingContent = {
-                            Switch(
-                                checked = logEnabled,
-                                onCheckedChange = { checked ->
-                                    logEnabled = checked
-                                    LogConfigRepository(context).saveLogConfig(checked)
-                                }
-                            )
-                        },
-                        onClick = {
-                            logEnabled = !logEnabled
-                            LogConfigRepository(context).saveLogConfig(logEnabled)
-                        }
-                    )
-
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        thickness = 0.5.dp,
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
-                    )
-
-                    SettingsListItem(
-                        title = stringResource(R.string.settings_error_log_view),
-                        subtitle = stringResource(R.string.settings_error_log_view_desc),
-                        leadingIcon = {
-                            Icon(
-                                Icons.Filled.Info,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        },
-                        onClick = {
-                            errorLogText = LogFileAccess.readLog(errorsOnly = true)
-                            showErrorLogDialog = true
-                        }
-                    )
-
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        thickness = 0.5.dp,
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
-                    )
-
-                    SettingsListItem(
-                        title = stringResource(R.string.settings_error_log_export),
-                        subtitle = stringResource(R.string.settings_error_log_export_desc),
-                        leadingIcon = {
-                            Icon(
-                                Icons.Filled.ContentCopy,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        },
-                        onClick = {
-                            val ok = exportLogFile(context)
-                            if (!ok) {
-                                toast.showToast(
-                                    context.getString(R.string.settings_error_log_export_failed)
-                                )
-                            }
-                        }
-                    )
-
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        thickness = 0.5.dp,
-                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
-                    )
-
-                    SettingsListItem(
-                        title = stringResource(R.string.settings_error_log_clear),
-                        subtitle = stringResource(R.string.settings_error_log_clear_desc),
-                        leadingIcon = {
-                            Icon(
-                                Icons.Filled.Delete,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        },
-                        onClick = {
-                            LogFileAccess.clear()
-                            toast.showToast(
-                                context.getString(R.string.settings_error_log_cleared)
-                            )
-                        }
-                    )
-                }
-            }
         }
     }
 

@@ -6,7 +6,6 @@ import org.json.JSONObject
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
-import java.io.File
 import java.io.InputStream
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
@@ -86,7 +85,14 @@ class CollabServer(
 
     private fun acceptLoop(socket: ServerSocket) {
         while (isRunning) {
-            val client = try { socket.accept() } catch (_: Exception) { break }
+            // 单次 accept 失败(连接被对端瞬间重置等)不应终止整个服务;
+            // 仅在服务已停止或套接字已关闭时才退出循环。
+            val client = try {
+                socket.accept()
+            } catch (e: Exception) {
+                if (!isRunning || socket.isClosed) break
+                continue
+            }
             try {
                 clients.execute { handle(client) }
             } catch (_: Exception) {
@@ -284,21 +290,49 @@ class CollabServer(
     companion object {
         private const val TAG = "CollabServer"
 
-        /** 枚举本机所有非回环 IPv4 地址。 */
+        /**
+         * 接口名黑名单前缀:这些网卡上的地址对「局域网协作」不可达或不该暴露。
+         *
+         * - `rmnet`/`ccmni`/`pdp`/`seth`/`v4-rmnet`/`clat`:蜂窝数据;
+         * - `tun`/`ppp`/`pptp`:VPN 与点对点隧道;
+         * - `p2p`/`wlan1`:Wi-Fi Direct(共享端本身是热点时另说,由调用方按需保留)。
+         *
+         * 之所以必须过滤:设备同时开启移动数据 + Wi-Fi 时会枚举出多个 IPv4,
+         * 连接端一旦选到蜂窝/VPN 地址会直接连不上——这正是「部分设备连不上」的
+         * 常见诱因。
+         */
+        private val EXCLUDED_IFACE_PREFIXES = listOf(
+            "rmnet", "ccmni", "pdp", "seth", "v4-rmnet", "clat",
+            "tun", "ppp", "pptp", "p2p"
+        )
+
+        /**
+         * 枚举本机可用于局域网访问的 IPv4 地址(按可达性优先排序)。
+         *
+         * 优先返回 Wi-Fi / 以太网地址(最可能被对端访问),其余可用地址排在其后;
+         * 若一个都没有,再退回 `127.0.0.1` 以便本机自测。
+         */
         fun localAddresses(): List<String> {
-            val out = ArrayList<String>()
+            val preferred = ArrayList<String>()
+            val others = ArrayList<String>()
             try {
                 val ifaces = NetworkInterface.getNetworkInterfaces()
                 for (iface in ifaces) {
                     if (!iface.isUp || iface.isLoopback) continue
+                    val name = iface.name?.lowercase().orEmpty()
+                    if (EXCLUDED_IFACE_PREFIXES.any { name.startsWith(it) }) continue
                     for (addr in iface.inetAddresses) {
-                        if (!addr.isLoopbackAddress && addr.hostAddress?.contains(':') == false) {
-                            out.add(addr.hostAddress!!)
-                        }
+                        if (addr.isLoopbackAddress) continue
+                        val host = addr.hostAddress ?: continue
+                        if (host.contains(':')) continue // 仅 IPv4
+                        if (name.startsWith("wlan") || name.startsWith("eth")) preferred.add(host)
+                        else others.add(host)
                     }
                 }
             } catch (_: Exception) {
             }
+            val out = preferred + others
+            if (out.isEmpty()) out.add("127.0.0.1")
             return out
         }
     }

@@ -12,6 +12,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -40,6 +41,9 @@ object CollabManager {
     private var syncJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + Job())
 
+    /** 串行化 start/stop 的状态切换;不再用 @Synchronized(suspend 中持锁会跨挂起点)。 */
+    private val stateLock = Any()
+
     /** 供 Compose 观察的运行状态。 */
     var status by mutableStateOf(CollabStatus())
         private set
@@ -49,9 +53,15 @@ object CollabManager {
     }
 
     /** 以共享端身份启动:在 [projectDir] 上建立协同仓库并提供服务。 */
-    @Synchronized
-    fun startHost(projectDir: File, projectName: String, port: Int, token: String): Boolean {
-        stop()
+    suspend fun startHost(projectDir: File, projectName: String, port: Int, token: String): Boolean =
+        withContext(Dispatchers.IO) {
+            synchronized(stateLock) {
+                stopInternal()
+                startHostLocked(projectDir, projectName, port, token)
+            }
+        }
+
+    private fun startHostLocked(projectDir: File, projectName: String, port: Int, token: String): Boolean {
         return try {
             val r = CollabRepo(projectDir)
             val instance = CollabServer(r, port, token, projectName)
@@ -85,15 +95,31 @@ object CollabManager {
      * 以连接端身份连接:[remoteHost]:[remotePort] 的共享项目同步到 [localDir]。
      * 首次为全量拉取,随后轮询增量变更。
      */
-    @Synchronized
-    fun startClient(
+    suspend fun startClient(
         remoteHost: String,
         remotePort: Int,
         token: String,
         localDir: File,
         onChanged: (() -> Unit)? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        val normalizedHost = normalizeHost(remoteHost)
+        if (normalizedHost.isBlank()) {
+            status = CollabStatus(error = "共享端地址无效:$remoteHost")
+            return@withContext false
+        }
+        synchronized(stateLock) {
+            stopInternal()
+            startClientLocked(normalizedHost, remotePort, token, localDir, onChanged)
+        }
+    }
+
+    private fun startClientLocked(
+        remoteHost: String,
+        remotePort: Int,
+        token: String,
+        localDir: File,
+        onChanged: (() -> Unit)?
     ): Boolean {
-        stop()
         return try {
             if (!localDir.exists()) localDir.mkdirs()
             val c = CollabClient(remoteHost, remotePort, token)
@@ -122,6 +148,9 @@ object CollabManager {
             true
         } catch (e: Exception) {
             LogCatcher.e(TAG, "连接共享端异常", e)
+            // 失败时必须回滚已赋值的 client/repo,否则 isRunning() 会返回 true,
+            // 而 status 显示的是错误态,造成状态不一致。
+            stopInternal()
             status = CollabStatus(error = e.message ?: "未知错误")
             false
         }
@@ -191,8 +220,13 @@ object CollabManager {
         }
     }
 
-    @Synchronized
+    /** 停止协同(共享端 / 连接端通用)。线程安全,可在主线程调用。 */
     fun stop() {
+        synchronized(stateLock) { stopInternal() }
+    }
+
+    /** 在持有 [stateLock] 的前提下执行实际的停止逻辑。 */
+    private fun stopInternal() {
         server?.stop()
         server = null
         syncJob?.cancel()
@@ -226,6 +260,32 @@ object CollabManager {
         }
         if (rel.isBlank()) return null
         return r.recordChange(rel, deleted)
+    }
+
+    /**
+     * 归一化用户填写的共享端地址。
+     *
+     * 容忍以下几种常见输入:
+     * - `192.168.1.10`            → 原样
+     * - `http://192.168.1.10`     → 去掉 scheme
+     * - `192.168.1.10:9188`       → 去掉端口
+     * - `  192.168.1.10/  `       → 去空白与尾斜杠
+     */
+    private fun normalizeHost(raw: String): String {
+        var h = raw.trim()
+        if (h.isEmpty()) return ""
+        val scheme = h.indexOf("://")
+        if (scheme >= 0) h = h.substring(scheme + 3)
+        h = h.substringBefore('/')
+        // IPv6 形如 [::1]:9188 —— 只保留方括号内的地址部分(端口由 remotePort 单独传);
+        // 裸 IPv4 / 主机名直接用 : 截断端口。
+        h = if (h.startsWith("[")) {
+            val end = h.indexOf(']')
+            if (end > 0) h.substring(0, end + 1) else h
+        } else {
+            h.substringBefore(':')
+        }
+        return h.trim()
     }
 
     private const val POLL_INTERVAL_MS = 1500L

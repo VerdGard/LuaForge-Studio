@@ -116,6 +116,9 @@ private object PreferencesKeys {
     // 【新增】打包目标架构:ARM32 / ARM64 / UNIVERSAL
     val ABI_TARGET = stringPreferencesKey("abi_target")
 
+    // 【新增】构建精简:只把项目声明/引用到的类打进 APK,并剔除与模板重复的类
+    val BUILD_SLIM = booleanPreferencesKey("build_slim_enabled")
+
     // 【新增】局域网协同开发
     val COLLAB_ENABLED = booleanPreferencesKey("collab_enabled")
     val COLLAB_ROLE = stringPreferencesKey("collab_role")
@@ -344,6 +347,9 @@ object SettingsManager {
             AbiTarget.UNIVERSAL
         }
 
+        // 【新增】构建精简(默认关闭:首次使用者应拿到与旧版完全一致的包)
+        val buildSlimEnabled = preferences[PreferencesKeys.BUILD_SLIM] ?: false
+
         // 【新增】加载协同设置
         val collabEnabled = preferences[PreferencesKeys.COLLAB_ENABLED] ?: false
         val collabRole = preferences[PreferencesKeys.COLLAB_ROLE] ?: "HOST"
@@ -409,6 +415,7 @@ object SettingsManager {
                 selfGuardCounts = selfGuardCounts,                  // 【新增】
                 symbolAutoPair = symbolAutoPair,                    // 【新增】
                 abiTarget = abiTarget,                             // 【新增】
+                buildSlimEnabled = buildSlimEnabled,               // 【新增】
                 collabEnabled = collabEnabled,                     // 【新增】
                 collabRole = collabRole,                           // 【新增】
                 collabPort = collabPort,                           // 【新增】
@@ -504,6 +511,7 @@ object SettingsManager {
             // 【新增】保存符号自动补全与打包目标架构
             preferences[PreferencesKeys.SYMBOL_AUTO_PAIR] = currentSettings.symbolAutoPair
             preferences[PreferencesKeys.ABI_TARGET] = currentSettings.abiTarget.name
+            preferences[PreferencesKeys.BUILD_SLIM] = currentSettings.buildSlimEnabled
 
             // 【新增】保存协同设置
             preferences[PreferencesKeys.COLLAB_ENABLED] = currentSettings.collabEnabled
@@ -710,6 +718,13 @@ data class SettingsData(
     val symbolAutoPair: Boolean = true,
     /** 打包目标架构(默认通用版) */
     val abiTarget: AbiTarget = AbiTarget.UNIVERSAL,
+    /**
+     * 构建精简:只保留项目声明/引用到的类,并剔除与 core.apk 模板重复的类。
+     *
+     * 默认关闭 —— 关闭时构建行为与旧版逐字节一致;开启后依赖 R8 做可达性裁剪,
+     * 见 [com.luaforge.studio.build.BuildSlimmer]。
+     */
+    val buildSlimEnabled: Boolean = false,
     /** MCP 前台保活:启用前台服务避免退后台被系统回收 */
     val mcpForegroundKeepAlive: Boolean = false,
     /** MCP 通知栏常驻:保活时显示常驻通知,点击可复制 MCP 地址 */

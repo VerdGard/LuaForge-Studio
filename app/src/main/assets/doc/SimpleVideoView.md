@@ -5,7 +5,14 @@
 继承自 `ExoVideoView`,但**默认不显示内置控制条**,适合需要自定义控制 UI 的场景:
 沉浸式全屏播放、点击画面才弹出控制条、只做背景/直播画面等。
 
-底层仍是 Media3 / ExoPlayer,支持 HLS / DASH / RTSP / RTMP 等协议。
+底层仍是 Media3 / ExoPlayer,格式与协议覆盖与 `ExoVideoView` **完全一致**:
+
+- **自适应流 / 协议**:HLS(`.m3u8`,含直播)、DASH(`.mpd`)、SmoothStreaming(`.ism`)、
+  RTSP(`rtsp://`)、RTMP(`rtmp://`)、HTTP-FLV(`.flv`)、UDP/RTP
+- **视频容器**:MP4 / M4V / MOV / MKV / WebM / FLV / TS / M2TS / AVI / 3GP / MPEG / OGV
+- **音频轨道容器**:MP3 / M4A / AAC / FLAC / Opus / OGG / WAV / AMR / AC3 / E-AC3 / AC4 / DTS
+
+后缀判断不出来时用 `format` 显式指定;`live = true` 可让直播起播更快。
 
 ---
 
@@ -37,6 +44,11 @@
 | `muted` | Boolean | 是否静音 |
 | `volume` | Float | 音量 0.0 - 1.0 |
 | `resizeMode` | String | 画面缩放:`fit`(默认)/`fill`/`zoom`/`fixed_width`/`fixed_height` |
+| `format` | String | 显式格式:后缀(`flv`/`m3u8`/`mpd`/`ism`/`ts`/`mkv`/`avi`...)或完整 MIME |
+| `live` | Boolean | 是否按直播处理(降低起播延迟) |
+| `httpHeaders` | Map | 默认请求头(`Referer`/`Cookie` 等防盗链用) |
+| `userAgent` | String | 自定义 UA |
+| `connectTimeoutMs` / `readTimeoutMs` | Int | 网络超时,默认 15000 |
 
 > 说明:`resizeMode` 的 setter 会做归一化,`stretch`→`fill`、`crop`→`zoom`、`width`→`fixed_width`、`height`→`fixed_height` 均可用。
 
@@ -56,6 +68,7 @@
 | `getDuration()` | 媒体总时长(毫秒,未知为 0) |
 | `isPlaying()` | 是否正在播放 |
 | `setVolume(v)` | 设置音量 0.0 - 1.0 |
+| `setHeaders(map)` | 设置请求头(防盗链/鉴权);已有媒体源时会重建播放器 |
 | `setOnToggleCallback(fn)` | 注册「点击画面」回调 |
 | `onPause()` | 页面不可见时暂停(省电) |
 | `release()` | 释放播放器资源 |
@@ -112,6 +125,14 @@ activity.setContentView(loadlayout(layout))
 video.setOnToggleCallback(function()
   video.toggle()
 end)
+
+-- 直播 + 防盗链示例(按需替换上面的 videoPath/videoUrl)
+-- video.setHeaders{ ["Referer"] = "https://example.com/" }
+-- video.live = true
+-- video.setVideoUrl("https://example.com/live/stream.m3u8")
+-- 无后缀 CDN 地址可显式指定格式:
+-- video.format = "flv"
+-- video.setVideoUrl("https://cdn.example.com/live?token=abc")
 
 -- 页面回调中释放资源
 function onDestroy()

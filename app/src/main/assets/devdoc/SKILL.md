@@ -14,6 +14,7 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 
 | 用户目标 | 走哪条路 |
 |---|---|
+| **任何编码任务开始前** | **先 MCP `read_dev_doc`(或 `list_dev_docs` 看目录)——本文档 + `MCP.md` + `NETWORK.md` 就在 APK 内 `assets/devdoc/`** |
 | 写/改功能代码(`main.lua`、`*.lua`) | §1 Lua 语法 → §3 改文件 → §3.3 验证闭环 |
 | 写网络请求 | §1.9 网络访问(**优先 `Http.*`**) |
 | 改界面(`layout.aly` / `layout.lua`) | **§0.5 控件复用铁律 → §1.5.1 控件速查** → §1.4 布局写法 → §3.3 验证闭环 |
@@ -328,7 +329,7 @@ Http.post("https://api.example.com/login", {user = "a", pass = "b"},
 只提供 `Https.get` / `Https.post` / `Https.upload` / `Https.download`。需要 OkHttp 特性时再用,详见 §1.6 与 `assets/doc/OkHttpUtil.md`。
 > ⚠️ 旧写法裸名 `get(...)` / `post(...)` 等**已不再是主路径**:它们仅作为兼容别名的兜底,且只有在该全局名未被占用时才注册。新代码请一律写 `Https.*`。
 
-**通用注意**:两条通道在 **IDE 内运行**时都会被「网络请求拦截」拦下(见 `docs/NETWORK.md`),
+**通用注意**:两条通道在 **IDE 内运行**时都会被「网络请求拦截」拦下(见 `assets/devdoc/NETWORK.md`),
 **打包成 APK 后不拦截**;开发期若请求静默返回 `-1`,先查拦截名单。
 
 ### 1.10 内置原生库与可复用 Java 能力(优先复用,别无脑纯 Lua 重写)
@@ -431,7 +432,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 - 路径可为项目相对路径,或允许范围内的绝对路径。
 - 不传 `path` 时多数工具回退到"当前打开的项目 / 当前活动文件"。
 
-### 3.2 工具清单(53 个,`McpTools.kt` 实测)
+### 3.2 工具清单(55 个,`McpTools.kt` 实测)
 
 **项目与文件**
 
@@ -459,6 +460,8 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 | `list_project_libraries` | 列项目 `lib/<abi>/*.so`、`libs/*.dex\|jar`、`libs/*.so` 与设备首选 ABI | `path` |
 | `list_lib_classes` | 列用户导入 `libs/*.dex\|jar` **内含的类**(可 `filter` 子串过滤、`className` 额外返回成员) | `path`、`lib`、`filter`、`className`、`page`、`maxResults` |
 | `invoke_lib_method` | 反射调用项目 `libs/` 库内类的**静态方法**或**构造器**(仅标量参数) | `className` **必填**、`method`、`args`、`constructor`、`page`、`path`、`timeoutMs` |
+| `list_dev_docs` | 列出随 IDE 打包的开发文档(`assets/devdoc/` + `assets/doc/`),含推荐阅读顺序 | — |
+| `read_dev_doc` | **读开发文档(写代码前优先调用)**:SKILL/MCP/NETWORK/WidgetsCatalog/RuntimeAPI 及各控件文档;支持按行分段 | `name`、`startLine`、`endLine`、`maxChars` |
 
 **编辑器**
 
@@ -588,9 +591,10 @@ MCP 只允许访问这些根(`McpTools.kt:1429-1443`):
 - Lua 库:`core/src/main/resources/lua/{import,loadlayout,loadmenu,loadbitmap,xml,Colors}.lua`、`app/src/main/assets/layouthelper/loadlayout2.lua`
 - Java 桥接:`app/src/main/jni/luajava/luajava.c`(void 返回 self、`ljlib` 函数表)、`core/src/main/java/com/luajava/LuaJavaAPI.java`(setter/getter 解析)
 - 内置控件:`core/src/main/kotlin/com/luaforge/studio/widget/BuiltinWidgets.kt`(注册表)、`widget/textfield/MaterialTextField.kt`、`widget/video/{ExoVideoView,SimpleVideoView,MusicPlayerBar,ExoAudioPlayer}.kt`;模板 `app/src/main/assets/templates/{Default,BottomNavigationView,TabLayout,DrawerLayout,FloatingActionButton}.zip`
+- 核心开发文档:`app/src/main/assets/devdoc/`(`SKILL.md` 本文档、`MCP.md`、`NETWORK.md`)—— 随 APK 打包,可用 MCP `read_dev_doc` 直接读取
 - 控件与运行时文档:`app/src/main/assets/doc/`(`WidgetsCatalog.md`、`RuntimeAPI.md`、`MaterialTextField.md`、`ExoVideoView.md`、`SimpleVideoView.md`、`MusicPlayerBar.md`、`ExoAudioPlayer.md` 及各 `*Util.md`)
 - 模板:`app/src/main/assets/templates/Default.zip`、`app/src/main/kotlin/com/luaforge/studio/ui/project/NewProjectScreen.kt`
-- MCP:`app/src/main/kotlin/com/luaforge/studio/mcp/{McpServer,McpManager,McpTools}.kt`、`docs/MCP.md`
+- MCP:`app/src/main/kotlin/com/luaforge/studio/mcp/{McpServer,McpManager,McpTools}.kt`、`assets/devdoc/MCP.md`
 - 路径与日志:`app/src/main/kotlin/com/luaforge/studio/utils/{FileUtil,LogConfig}.kt`
 
 > 本文由源码逐条核实生成。凡"仓库内无用例""宏不自洽""死代码"等不确定项均已显式标注,请勿凭印象替换为更"标准"的说法。
