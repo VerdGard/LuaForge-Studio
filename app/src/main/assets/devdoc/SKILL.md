@@ -332,6 +332,11 @@ Http.post("https://api.example.com/login", {user = "a", pass = "b"},
 **通用注意**:两条通道在 **IDE 内运行**时都会被「网络请求拦截」拦下(见 `assets/devdoc/NETWORK.md`),
 **打包成 APK 后不拦截**;开发期若请求静默返回 `-1`,先查拦截名单。
 
+**网络代理**:设置 → 安全、网络与日志 → 网络代理,默认空白(直连)。配了代理后,**编辑器自身**的
+`Https.*`(OkHttp)与 Maven 依赖下载会走代理;**局域网协同与打包后的 APK 不走代理**。
+代理只影响 IDE 的出口,不会写进用户项目,`Http.*`(裸 `HttpURLConnection`)当前也不走代理 ——
+详见 `assets/devdoc/NETWORK.md` 第 8 节。
+
 ### 1.10 内置原生库与可复用 Java 能力(优先复用,别无脑纯 Lua 重写)
 
 **原则:能用内置原生库或现成 Java 类做到的,不要用纯 Lua 重写。** 例如 JSON 编解码用 `require "cjson"`(C 实现),别手写字符串解析;哈希/加密用 `crypt` / `md5` / `microaes`;压缩用 `zlib` / `zip`;正则用 `regex`;文件遍历用 `lfs`;网络用 §1.9 的 `Http`。

@@ -653,7 +653,7 @@
     <string name="settings_mcp_notification_permission_toast">请允许通知权限,否则常驻通知无法显示</string>
 
     <string name="settings_network">网络请求拦截</string>
-    <string name="settings_security">安全与日志</string>
+    <string name="settings_security">安全、网络与日志</string>
     <string name="settings_network_enable">拦截网络请求</string>
     <string name="settings_network_enable_desc">请求发出前弹出确认框,用户允许后才放行</string>
     <string name="settings_network_allowed">已允许的主机</string>
@@ -683,6 +683,14 @@
     <string name="settings_network_show_less">收起</string>
 
     <!-- 防火墙 -->
+    <string name="settings_proxy">网络代理</string>
+    <string name="settings_proxy_label">代理地址</string>
+    <string name="settings_proxy_placeholder">留空为直连,例如 192.168.10.245:7890</string>
+    <string name="settings_proxy_status_direct">当前为直连,不经过任何代理</string>
+    <string name="settings_proxy_status_active">已启用 %1$s 代理:%2$s</string>
+    <string name="settings_proxy_status_invalid">格式无法识别,需为 主机:端口,例如 192.168.10.245:7890</string>
+    <string name="settings_proxy_clear">清空代理</string>
+    <string name="settings_proxy_hint">作用于编辑器自身的网络请求(Maven 依赖下载、内置 OkHttp 工具)。支持 host:port、http://host:port、socks5://host:port 三种写法;局域网协同与打包后的 APK 不走代理。</string>
     <string name="settings_firewall">防火墙</string>
     <string name="settings_firewall_cross_write">越级写入拦截</string>
     <string name="settings_firewall_cross_write_desc">阻止项目写入/删除/修改其它项目目录,读取不受影响</string>

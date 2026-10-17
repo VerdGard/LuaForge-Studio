@@ -125,6 +125,7 @@ import com.luaforge.studio.ui.theme.ThemeType
 import com.luaforge.studio.utils.IconManager
 import com.luaforge.studio.utils.LogConfigRepository
 import com.luaforge.studio.utils.LogFileAccess
+import com.luaforge.studio.utils.NetworkProxy
 import com.luaforge.studio.utils.NonBlockingToastState
 import kotlinx.coroutines.launch
 import java.io.File
@@ -274,6 +275,8 @@ fun SettingsScreen(
     // 安全防护卡片(网络拦截 + 防火墙合并)展开态
     var securityExpanded by remember { mutableStateOf(false) }
     var logEnabled by remember { mutableStateOf(LogConfigRepository(context).isLogEnabled()) }
+    // 网络代理输入框:默认空白 = 直连
+    var proxyText by remember { mutableStateOf(currentSettingsState.networkProxy) }
     var showErrorLogDialog by remember { mutableStateOf(false) }
     var errorLogText by remember { mutableStateOf("") }
 
@@ -2139,6 +2142,82 @@ Column(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                        )
+
+                        // ---- 网络代理 ----
+                        Text(
+                            text = stringResource(R.string.settings_proxy),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                        )
+
+                        OutlinedTextField(
+                            value = proxyText,
+                            onValueChange = { input ->
+                                // 只保留合法字符:主机名/端口/协议前缀,过滤空格与中文
+                                val filtered = input.filter { ch ->
+                                    ch.isLetterOrDigit() || ch in ".-_:[]/"
+                                }.take(64)
+                                proxyText = filtered
+                                updateSettingsWithSave(
+                                    currentSettingsState.copy(networkProxy = filtered)
+                                )
+                            },
+                            label = { Text(stringResource(R.string.settings_proxy_label)) },
+                            placeholder = { Text(stringResource(R.string.settings_proxy_placeholder)) },
+                            supportingText = {
+                                val status = when {
+                                    proxyText.isBlank() ->
+                                        stringResource(R.string.settings_proxy_status_direct)
+                                    NetworkProxy.parse(proxyText) != null -> {
+                                        val cfg = NetworkProxy.parse(proxyText)
+                                        val scheme =
+                                            if (cfg?.type == NetworkProxy.Type.SOCKS) "SOCKS" else "HTTP"
+                                        stringResource(
+                                            R.string.settings_proxy_status_active,
+                                            scheme,
+                                            cfg?.display().orEmpty()
+                                        )
+                                    }
+                                    else -> stringResource(R.string.settings_proxy_status_invalid)
+                                }
+                                Text(status)
+                            },
+                            singleLine = true,
+                            isError = proxyText.isNotBlank() && NetworkProxy.parse(proxyText) == null,
+                            trailingIcon = {
+                                if (proxyText.isNotEmpty()) {
+                                    IconButton(onClick = {
+                                        proxyText = ""
+                                        updateSettingsWithSave(
+                                            currentSettingsState.copy(networkProxy = "")
+                                        )
+                                    }) {
+                                        Icon(
+                                            Icons.Filled.Close,
+                                            contentDescription = stringResource(
+                                                R.string.settings_proxy_clear
+                                            )
+                                        )
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Text(
+                            text = stringResource(R.string.settings_proxy_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
 
                         HorizontalDivider(
                             modifier = Modifier.padding(horizontal = 16.dp),

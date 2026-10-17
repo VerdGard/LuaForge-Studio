@@ -171,6 +171,12 @@ fun MainApp() {
         )
     }
 
+    // 网络代理随设置同步:留空即直连。代理置入 NetworkProxy 后,
+    // 各 OkHttp 客户端会在下次取用时按 revision 自动重建(见 OkHttpUtil / MavenDownloader)。
+    LaunchedEffect(settings.networkProxy) {
+        NetworkProxy.configure(settings.networkProxy)
+    }
+
     val toastTransitionSpec: AnimatedContentTransitionScope<ToastData?>.() -> ContentTransform = {
         TransitionUtil.createToastPositionedScaleTransition(toastPosition)
     }

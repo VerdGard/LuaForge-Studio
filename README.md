@@ -10,7 +10,12 @@
   - R8 失败自动回退 D8 直转,构建不会因精简而失败;关闭开关时行为与旧版一致
   - 顺带修复 Maven 依赖被重复转 dex 的既有问题(此前 Java 编译链会把同一批 Maven JAR 再转一遍,导致同类落进两个 `classes*.dex`)
 - **设置项合并**
-  - 「通知提示」并入**主题与外观**;「错误日志」并入安全防护分区,该分区更名为**安全与日志**
+  - 「通知提示」并入**主题与外观**;「错误日志」并入安全防护分区,该分区更名为**安全、网络与日志**
+- **新增「网络代理」**(设置 → 安全、网络与日志,位于网络请求拦截与防火墙之间,**默认空白 = 直连**)
+  - 支持 `host:port`、`http://host:port`、`socks5://host:port` 三种写法;端口须在 1..65535,非法输入标红且不改变当前生效值
+  - 作用于编辑器自身走 OkHttp 的出口:**Maven 依赖下载**与内置 `OkHttpUtil`;配置变更后按 `NetworkProxy.revision` 自动重建 client,无需重启
+  - **不走代理**:局域网协同(直连局域网 IP)、打包后的用户 APK(`:core-apk` 不含设置逻辑)、`Http.*`(裸 `HttpURLConnection`)
+  - 实现在 `core` 的 `NetworkProxy`,仅 `:app` 会调用 `configure`,因此打包产物永远直连
 - **开发文档随 APK 打包 + 新增 MCP 文档工具**
   - `SKILL.md`、`MCP.md`、`NETWORK.md` 由仓库根/`docs/` 移入 `app/src/main/assets/devdoc/`,构建后可直接在设备内读取
   - 新增 MCP `list_dev_docs`(列出文档与推荐阅读顺序)与 `read_dev_doc`(按名读取、支持按行分段),SKILL.md §0 增加「任何编码任务开始前先查文档」入口;工具总数 53 → 55

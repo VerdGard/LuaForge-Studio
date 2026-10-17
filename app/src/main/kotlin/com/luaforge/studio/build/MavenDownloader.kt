@@ -3,6 +3,7 @@ package com.luaforge.studio.build.maven
 import android.content.Context
 import com.luaforge.studio.utils.LogCatcher
 import com.luaforge.studio.utils.NetworkInterceptor
+import com.luaforge.studio.utils.NetworkProxy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -29,17 +30,41 @@ class MavenDownloader(private val context: Context) {
         }
     }
 
-    private val okHttpClient: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            // 网络请求拦截:依赖下载也需用户确认
-            .addInterceptor(NetworkInterceptor())
-            .connectTimeout(8, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
-            .writeTimeout(10, TimeUnit.SECONDS)
-            .callTimeout(15, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(false)
-            .build()
-    }
+    /**
+     * 依赖下载用的 OkHttp 客户端。
+     *
+     * 不能简单地 `by lazy`:代理配置(设置 → 安全与日志)可能在应用运行期间被修改,
+     * 而 OkHttp 的 proxy 在建 client 时就固定了。这里按 [NetworkProxy.revision]
+     * 判断是否需要重建,未变更时复用同一个实例以保持连接池。
+     */
+    @Volatile
+    private var cachedClient: OkHttpClient? = null
+
+    @Volatile
+    private var cachedProxyRevision: Int = -1
+
+    private val okHttpClient: OkHttpClient
+        get() {
+            val revision = NetworkProxy.revision
+            cachedClient?.let { if (cachedProxyRevision == revision) return it }
+            synchronized(this) {
+                cachedClient?.let { if (cachedProxyRevision == revision) return it }
+                val builder = OkHttpClient.Builder()
+                    // 网络请求拦截:依赖下载也需用户确认
+                    .addInterceptor(NetworkInterceptor())
+                    .connectTimeout(8, TimeUnit.SECONDS)
+                    .readTimeout(10, TimeUnit.SECONDS)
+                    .writeTimeout(10, TimeUnit.SECONDS)
+                    .callTimeout(15, TimeUnit.SECONDS)
+                    .retryOnConnectionFailure(false)
+                // 配置了代理才走代理:Maven 依赖常因网络受限而需要代理
+                NetworkProxy.current()?.let { builder.proxy(it.toJavaProxy()) }
+                val created = builder.build()
+                cachedClient = created
+                cachedProxyRevision = revision
+                return created
+            }
+        }
 
     interface DownloadCallback {
         fun onProgress(currentFile: String, currentIndex: Int, totalFiles: Int)

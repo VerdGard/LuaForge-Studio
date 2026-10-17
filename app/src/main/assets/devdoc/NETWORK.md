@@ -88,7 +88,33 @@
 拦截决策会写入 `/storage/emulated/0/LuaForge-Studio/luaforge.log`,包含被拒请求与被放行的主线程请求,
 便于事后排查“为什么某个请求没发出去”。
 
-## 8. 已知限制
+## 8. 网络代理
+
+设置 → **安全、网络与日志** → **网络代理**。默认**留空 = 直连**,不写任何配置的用户完全不受影响。
+
+| 输入 | 结果 |
+| --- | --- |
+| 留空 | 直连(默认) |
+| `192.168.10.245:7890` | HTTP 代理 |
+| `http://host:port` | HTTP 代理 |
+| `socks5://host:port` / `socks://host:port` | SOCKS 代理 |
+| 其他写法 | 判为非法,输入框标红;**不改变当前生效值** |
+
+- 端口必须落在 `1..65535`,主机名只允许字母/数字/`.`/`-`/`_`(IPv6 用方括号写法)。
+- 支持 `user:pass@host:port`,但**不保存凭据**(OkHttp 需要额外的 `Authenticator`),凭据段会被跳过。
+- 输入未写完(例如只敲了 `192.168`)时会判为非法并保持原代理不变,不会把在用的代理清掉。
+
+**生效范围**:仅编辑器进程内、仅走 OkHttp 的通道 —— Maven 依赖下载(`MavenDownloader`)
+与内置 `OkHttpUtil`。二者都在构建 client 时读取一次代理,因此配置变更后按
+`NetworkProxy.revision` 自动重建 client,无需重启。
+
+**不走代理**:
+
+- **局域网协同**(`CollabClient`,裸 `HttpURLConnection` 直连局域网 IP):走代理会直接连不上对端
+- **用户项目打包出的 APK**:`:core-apk` 不含设置界面,从不调用 `NetworkProxy.configure`,永远直连
+- `http.*`(`core/.../Http.java`,裸 `HttpURLConnection`):当前未接入代理
+
+## 9. 已知限制
 
 - WebView 的页面与子资源请求**不拦截**(含网页触发的 `DownloadManager` 下载),由 WebView 自身完成网络 IO
 - 图片加载**不拦截**:`LuaBitmap` / `LuaBitmapDrawable`(用户项目)与 Glide(编辑器界面)均直接放行

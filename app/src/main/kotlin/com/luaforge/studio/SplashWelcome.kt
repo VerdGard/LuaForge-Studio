@@ -43,6 +43,7 @@ import com.luaforge.studio.ui.settings.SettingsManager
 import com.luaforge.studio.ui.theme.AppThemeWithObserver
 import com.luaforge.studio.utils.IconManager
 import com.luaforge.studio.utils.LogCatcher
+import com.luaforge.studio.utils.NetworkProxy
 import com.luajava.LuaFunction
 import com.luajava.LuaStateFactory
 import kotlinx.coroutines.CoroutineScope
@@ -126,6 +127,13 @@ class SplashWelcome : ComponentActivity() {
             )
         } catch (e: Exception) {
             LogCatcher.e("SplashWelcome", "初始化网络拦截失败", e)
+        }
+
+        // 网络代理:按已保存设置初始化(默认留空 = 直连,不产生任何代理行为)
+        try {
+            NetworkProxy.configure(SettingsManager.currentSettings.networkProxy)
+        } catch (e: Exception) {
+            LogCatcher.e("SplashWelcome", "初始化网络代理失败", e)
         }
 
         // 防火墙:安装会话钩子(运行项目时注入 firewall.lua 并预热网关)

@@ -25,19 +25,28 @@ object OkHttpUtil {
     @Volatile
     private var client: OkHttpClient? = null
 
+    /** 构建 [client] 时 [NetworkProxy] 的版本号,用于判断代理变更后是否需要重建。 */
+    @Volatile
+    private var clientProxyRevision: Int = -1
+
     // 初始化OkHttpClient(双重检查锁,避免并发下重复创建)
     private fun getClient(): OkHttpClient {
-        client?.let { return it }
+        // 代理配置变更后必须重建:OkHttp 的 proxy 是建 client 时固定的,不是逐请求读取
+        val revision = NetworkProxy.revision
+        client?.let { if (clientProxyRevision == revision) return it }
         synchronized(this) {
-            client?.let { return it }
-            val created = OkHttpClient.Builder()
+            client?.let { if (clientProxyRevision == revision) return it }
+            val builder = OkHttpClient.Builder()
                 // 网络请求拦截:所有 okhttp.* 调用在发出前需用户确认
                 .addInterceptor(NetworkInterceptor())
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
-                .build()
+            // 用户在「安全、网络与日志」里配置了代理时才走代理,否则直连
+            NetworkProxy.current()?.let { builder.proxy(it.toJavaProxy()) }
+            val created = builder.build()
             client = created
+            clientProxyRevision = revision
             return created
         }
     }

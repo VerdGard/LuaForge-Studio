@@ -104,6 +104,9 @@ private object PreferencesKeys {
     val NETWORK_ALLOWED_HOSTS = stringPreferencesKey("network_allowed_hosts")
     val NETWORK_BLOCKED_HOSTS = stringPreferencesKey("network_blocked_hosts")
 
+    // 【新增】网络代理(默认留空 = 直连)
+    val NETWORK_PROXY = stringPreferencesKey("network_proxy")
+
     // 【新增】防火墙（越级写入 + 自我守护）
     val CROSS_PROJECT_WRITE_GUARD = booleanPreferencesKey("cross_project_write_guard")
     val SELF_GUARD = booleanPreferencesKey("self_guard")
@@ -307,6 +310,8 @@ object SettingsManager {
 
         // 【新增】加载网络请求拦截设置
         val networkInterceptEnabled = preferences[PreferencesKeys.NETWORK_INTERCEPT_ENABLED] ?: false
+        // 网络代理:默认空串表示直连,不做任何代理
+        val networkProxy = preferences[PreferencesKeys.NETWORK_PROXY] ?: ""
         val networkAllowedHosts: Set<String> = try {
             val type = object : TypeToken<Set<String>>() {}.type
             Gson().fromJson(preferences[PreferencesKeys.NETWORK_ALLOWED_HOSTS] ?: "[]", type) ?: emptySet()
@@ -407,6 +412,7 @@ object SettingsManager {
                 mcpForegroundKeepAlive = mcpForegroundKeepAlive,      // 【新增】
                 mcpPersistentNotification = mcpPersistentNotification, // 【新增】
                 networkInterceptEnabled = networkInterceptEnabled,  // 【新增】
+                networkProxy = networkProxy,                        // 【新增】网络代理
                 networkAllowedHosts = networkAllowedHosts,          // 【新增】
                 networkBlockedHosts = networkBlockedHosts,          // 【新增】
                 crossProjectWriteGuard = crossProjectWriteGuard,    // 【新增】
@@ -501,6 +507,7 @@ object SettingsManager {
             preferences[PreferencesKeys.NETWORK_INTERCEPT_ENABLED] = currentSettings.networkInterceptEnabled
             preferences[PreferencesKeys.NETWORK_ALLOWED_HOSTS] = Gson().toJson(currentSettings.networkAllowedHosts)
             preferences[PreferencesKeys.NETWORK_BLOCKED_HOSTS] = Gson().toJson(currentSettings.networkBlockedHosts)
+            preferences[PreferencesKeys.NETWORK_PROXY] = currentSettings.networkProxy
 
             // 【新增】保存防火墙设置
             preferences[PreferencesKeys.CROSS_PROJECT_WRITE_GUARD] = currentSettings.crossProjectWriteGuard
@@ -706,6 +713,13 @@ data class SettingsData(
     val networkInterceptEnabled: Boolean = false,    // 【新增】网络请求拦截开关(默认关闭)
     val networkAllowedHosts: Set<String> = emptySet(), // 【新增】已允许的请求主机
     val networkBlockedHosts: Set<String> = emptySet(), // 【新增】已拒绝的请求主机
+    /**
+     * 网络代理地址(设置 → 安全、网络与日志)。
+     *
+     * 默认空串 = 直连。支持 `host:port`、`http://host:port`、`socks5://host:port`,
+     * 解析与生效逻辑见 [com.luaforge.studio.utils.NetworkProxy]。
+     */
+    val networkProxy: String = "",
     /** 防火墙：越级写入拦截（默认开启） */
     val crossProjectWriteGuard: Boolean = true,
     /** 防火墙：自我守护（默认开启） */
