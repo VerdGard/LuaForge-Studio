@@ -2897,7 +2897,8 @@ object McpTools {
         val root = File(project)
         if (!isAllowed(context, root)) return errorResult("路径不在允许范围内: $project")
 
-        val primaryAbi = if (Build.SUPPORTED_ABIS.isNotEmpty()) Build.SUPPORTED_ABIS[0] else Build.CPU_ABI
+        // SUPPORTED_ABIS 自 API 21 起可用且真机恒非空;不再回退到已弃用的 Build.CPU_ABI。
+        val primaryAbi = Build.SUPPORTED_ABIS.firstOrNull() ?: ""
 
         fun collectSo(dir: File): JSONArray {
             val arr = JSONArray()

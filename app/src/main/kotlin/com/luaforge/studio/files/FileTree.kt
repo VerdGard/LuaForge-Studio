@@ -70,12 +70,10 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -88,6 +86,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import com.luaforge.studio.utils.ClipboardUtil
 
 // 文件树节点的数据结构
 data class FileNode(
@@ -769,7 +768,6 @@ fun FileActionBottomSheet(
     onCreateFolderRequest: () -> Unit,
     onRenameRequest: () -> Unit,
 ) {
-    val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     Column(modifier = Modifier.padding(vertical = 8.dp)) {
         BottomSheetActionItem(
@@ -793,14 +791,14 @@ fun FileActionBottomSheet(
             Icons.Filled.Link,
             stringResource(R.string.filetree_copy_rel_path), {
                 val rel = File(rootPath).toURI().relativize(node.file.absoluteFile.toURI()).path
-                clipboardManager.setText(AnnotatedString(rel))
+                ClipboardUtil.copy(context, rel)
                 Toast.makeText(context, context.getString(R.string.filetree_path_copied), Toast.LENGTH_SHORT).show()
                 onDismiss()
             })
         BottomSheetActionItem(
             Icons.Default.ContentCopy,
             stringResource(R.string.filetree_copy_path), {
-                clipboardManager.setText(AnnotatedString(node.file.absolutePath))
+                ClipboardUtil.copy(context, node.file.absolutePath)
                 Toast.makeText(context, context.getString(R.string.filetree_path_copied), Toast.LENGTH_SHORT).show()
                 onDismiss()
             })

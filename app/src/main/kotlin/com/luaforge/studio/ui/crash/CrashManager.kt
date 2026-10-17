@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Process
 import android.util.Log
+import androidx.core.content.pm.PackageInfoCompat
 import com.luajava.LuaStateFactory
 import java.io.File
 import java.io.PrintWriter
@@ -93,7 +94,7 @@ object CrashManager {
                     intent.putExtra(EXTRA_EXCEPTION_TYPE, throwable.javaClass.name)
                     intent.putExtra(
                         EXTRA_THREAD_INFO,
-                        thread.name + " (ID:" + thread.id + ")"
+                        thread.name + " (ID:" + thread.threadId() + ")"
                     )
                     intent.putExtra(EXTRA_CRASH_CONTEXT, getCrashContext(application!!))
                     // 崩溃现场诊断:全线程 dump + LuaState 存活清单 + 运行中 Lua 页面。
@@ -213,7 +214,7 @@ object CrashManager {
                 } else {
                     ""
                 }
-                val s = "Thread: " + t.name + " (id=" + t.id + ") state=" + state + marker + "\n" +
+                val s = "Thread: " + t.name + " (id=" + t.threadId() + ") state=" + state + marker + "\n" +
                         stack.joinToString("\n") { "\tat " + it } + "\n\n"
                 bytes += s.length
                 if (bytes > MAX_DIAGNOSTICS_SIZE) {
@@ -282,12 +283,7 @@ object CrashManager {
         try {
             val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
             details.append("• Name: ").append(packageInfo.versionName).append("\n")
-            val versionCode = if (Build.VERSION.SDK_INT >= 28) {
-                packageInfo.longVersionCode
-            } else {
-                packageInfo.versionCode.toLong()
-            }
-            details.append("• Code: ").append(versionCode).append("\n")
+            details.append("• Code: ").append(PackageInfoCompat.getLongVersionCode(packageInfo)).append("\n")
         } catch (t: Throwable) {
             details.append("Version info unavailable\n")
         }

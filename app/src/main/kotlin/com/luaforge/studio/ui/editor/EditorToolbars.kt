@@ -23,7 +23,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -248,7 +248,7 @@ fun EditorMoreMenu(
                     isEditSubmenu = false
                 }
             )
-            Divider()
+            HorizontalDivider()
             // 自动换行
             DropdownMenuItem(
                 text = {
@@ -302,7 +302,7 @@ fun EditorMoreMenu(
                         onDismiss()
                     }
                 )
-                Divider()
+                HorizontalDivider()
             }
 
             DropdownMenuItem(

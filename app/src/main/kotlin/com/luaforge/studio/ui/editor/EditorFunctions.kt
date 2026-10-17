@@ -167,7 +167,7 @@ suspend fun buildProject(
 
         // 获取应用名称
         val appName = try {
-            val application = settings["application"] as? Map<String, Any?>
+            val application = JsonUtil.asMap(settings["application"])
             (application?.get("label") as? String) ?: File(projectPath).name
         } catch (e: Exception) {
             File(projectPath).name
@@ -175,7 +175,7 @@ suspend fun buildProject(
 
         // 获取调试模式
         val isDebug = try {
-            val application = settings["application"] as? Map<String, Any?>
+            val application = JsonUtil.asMap(settings["application"])
             (application?.get("debugmode") as? Boolean) ?: false
         } catch (e: Exception) {
             false
@@ -209,7 +209,7 @@ val mavenDependencies = try {
 
         // 获取加密项目开关（默认开启）
         val encryptProject = try {
-            val application = settings["application"] as? Map<String, Any?>
+            val application = JsonUtil.asMap(settings["application"])
             (application?.get("encrypt") as? Boolean) ?: true
         } catch (e: Exception) {
             true
@@ -217,7 +217,7 @@ val mavenDependencies = try {
 
         // 获取合并 libs dex 开关（默认开启）
         val mergeDexEnabled = try {
-            val application = settings["application"] as? Map<String, Any?>
+            val application = JsonUtil.asMap(settings["application"])
             (application?.get("mergeDex") as? Boolean) ?: true
         } catch (e: Exception) {
             true
@@ -225,7 +225,7 @@ val mavenDependencies = try {
 
         // 获取跳过编译(不加密)的文件列表(相对项目根路径,默认空)
         val skipCompileFiles = try {
-            val application = settings["application"] as? Map<String, Any?>
+            val application = JsonUtil.asMap(settings["application"])
             (application?.get("skipCompile") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
         } catch (e: Exception) {
             emptyList()
@@ -240,7 +240,7 @@ val mavenDependencies = try {
         var targetSdkVersion = 29 // 默认值
 
         try {
-            val usesSdk = settings["uses_sdk"] as? Map<String, Any?>
+            val usesSdk = JsonUtil.asMap(settings["uses_sdk"])
             if (usesSdk != null) {
                 val minSdkStr = usesSdk["minSdkVersion"] as? String
                 val targetSdkStr = usesSdk["targetSdkVersion"] as? String
@@ -497,7 +497,7 @@ fun getAppNameFromSettings(projectPath: String): String? {
             val jsonString = settingsFile.readText()
             val settings = JsonUtil.parseObject(jsonString)
 
-            val application = settings["application"] as? Map<String, Any?>
+            val application = JsonUtil.asMap(settings["application"])
             val label = application?.get("label") as? String
 
             label

@@ -51,14 +51,33 @@ object LuaParserUtil {
             }
 
             // 调用JNI函数解析
-            parseLuaSyntax(luaCode)
+            val raw = parseLuaSyntax(luaCode)
 
+            // 原生解析器不认识命名参数写法(`Text("hi", size = 20)`)。
+            // 这类源码在运行时会被 LuaSugar 改写后正常执行,编辑器不应报错,
+            // 所以这里用同一套改写重试一次,保持一致。
+            if (!isSyntaxOk(raw)) {
+                val sugar = com.luaforge.studio.lua.LuaSugar.rewrite(luaCode)
+                if (sugar != null && isSyntaxOk(parseLuaSyntax(sugar))) {
+                    return createSuccessJson("语法检查通过(已按命名参数语法解析)")
+                }
+            }
+            raw
         } catch (e: UnsatisfiedLinkError) {
             createErrorJson("原生库未加载或函数未找到")
         } catch (e: org.json.JSONException) {
             createErrorJson("JSON解析失败")
         } catch (e: Exception) {
             createErrorJson("解析异常")
+        }
+    }
+
+    /** 解析结果 JSON 里 `status` 为 true 即语法通过;解析失败按失败处理。 */
+    private fun isSyntaxOk(json: String): Boolean {
+        return try {
+            JSONObject(json).optBoolean("status", false)
+        } catch (e: Exception) {
+            false
         }
     }
 

@@ -45,6 +45,10 @@ class SplashWelcome : ComponentActivity() {
             WindowCompat.setDecorFitsSystemWindows(this, false)
             WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars =
                 true
+            // statusBarColor 在 API 35 被标记弃用,官方推荐改用 enableEdgeToEdge()。
+            // 但这里刻意保留:启动页需要在全部 API 级别上保持同一种"内容顶到状态栏"
+            // 的视觉效果,改用 edge-to-edge 会在部分 ROM 上改变布局行为。
+            @Suppress("DEPRECATION")
             statusBarColor = Color.TRANSPARENT
             addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
         }

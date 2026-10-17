@@ -64,6 +64,14 @@ import com.luaforge.studio.ui.editor.viewmodel.EditorViewModel
 import kotlinx.coroutines.launch
 import java.io.File
 
+// ScrollableTabRow 与 TabRowDefaults.tabIndicatorOffset 已被标记为 deprecated,
+// 但这里有意保留:indicator lambda 暴露的 List<TabPosition> 被用于
+//   1) 判断标签是否溢出(tabPositions.last().right > tabRowWidth)以决定是否显示下拉按钮
+//   2) 在标签测量完成后置 tabContentMeasured = true
+// 替代品 PrimaryScrollableTabRow 的 indicator 接收者是 TabIndicatorScope,
+// 只提供 tabIndicatorOffset(index) / tabIndicatorLayout(),不再暴露 TabPosition 列表,
+// 迁移后溢出检测会失去数据源并改变行为,故不迁移。
+@Suppress("DEPRECATION")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FileTabView(
@@ -374,7 +382,7 @@ fun FileTabView(
                                     IconButton(
                                         onClick = { /* 展开状态由 ExposedDropdownMenuBox 管理，无需额外操作 */ },
                                         modifier = Modifier
-                                            .menuAnchor()
+                                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                                             .background(
                                                 color = MaterialTheme.colorScheme.surface,
                                                 shape = RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp)

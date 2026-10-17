@@ -21,6 +21,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -349,7 +351,7 @@ fun WelcomeScreen(
                             modifier = Modifier.height(48.dp)
                         ) {
                             Icon(
-                                Icons.Filled.ArrowBack,
+                                Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = stringResource(R.string.welcome_step_previous),
                                 modifier = Modifier.size(20.dp)
                             )
@@ -392,7 +394,7 @@ fun WelcomeScreen(
                             Text(stringResource(R.string.welcome_step_next))
                             Spacer(modifier = Modifier.width(8.dp))
                             Icon(
-                                Icons.Filled.ArrowForward,
+                                Icons.AutoMirrored.Filled.ArrowForward,
                                 contentDescription = stringResource(R.string.welcome_step_next),
                                 modifier = Modifier.size(20.dp)
                             )

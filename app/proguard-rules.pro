@@ -199,3 +199,12 @@
 -keep class com.luaforge.studio.console.core.SessionInfo { *; }
 -keep class com.luaforge.studio.console.core.MethodCallResult { *; }
 -keepclassmembers enum com.luaforge.studio.console.core.MethodCallResult$Status { *; }
+
+# Compose 桥:core 侧 LuaActivity 用 `Class.forName("com.luaforge.studio.compose.LuaCompose")`
+# 按字符串查找,再反射调 `register(LuaState, Context)`。R8 看不到这层引用,
+# 会把这个包判为不可达并删除 —— 后果是 Column/Text/Button 等 65 个全局函数
+# 全部不存在,Lua 侧报 `attempt to call a nil value (global 'Column')`。
+# `-keep class ... { *; }` 已同时保住类名、成员与静态方法签名(反射按签名匹配)。
+-keep class com.luaforge.studio.compose.** { *; }
+-dontwarn com.luaforge.studio.compose.**
+

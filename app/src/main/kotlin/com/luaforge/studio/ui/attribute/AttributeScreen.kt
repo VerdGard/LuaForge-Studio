@@ -235,8 +235,7 @@ fun AttributeScreen(
                         rawIcon
                     }
                     if (iconPath != rawIcon.ifEmpty { "icon.png" }) {
-                        val safeMap =
-                            (jsonMap as? Map<String, Any?>)?.toMutableMap() ?: mutableMapOf()
+                        val safeMap = jsonMap.toMutableMap()
                         safeMap["iconPath"] = iconPath
                         try {
                             settingsFile.writeText(JsonUtil.toFormattedString(safeMap, 4))
@@ -275,13 +274,13 @@ fun AttributeScreen(
                     val settingsFile = File(projectPath, "settings.json")
                     val jsonMap: MutableMap<String, Any?> = if (settingsFile.exists()) {
                         val parsed = JsonUtil.parseObject(settingsFile.readText())
-                        (parsed as? Map<String, Any?>)?.toMutableMap() ?: mutableMapOf()
+                        JsonUtil.asMutableMap(parsed) ?: mutableMapOf()
                     } else {
                         mutableMapOf()
                     }
 
-                    val application = (jsonMap["application"] as? Map<String, Any?>)?.toMutableMap()
-                        ?: mutableMapOf<String, Any?>()
+                    val application = JsonUtil.asMutableMap(jsonMap["application"])
+                        ?: mutableMapOf()
                     application["label"] = label
                     application["debugmode"] = debugMode
                     application["encrypt"] = encryptEnabled
@@ -294,8 +293,8 @@ fun AttributeScreen(
                     jsonMap["versionCode"] = versionCode
                     jsonMap["iconPath"] = iconPath
 
-                    val usesSdk = (jsonMap["uses_sdk"] as? Map<String, Any?>)?.toMutableMap()
-                        ?: mutableMapOf<String, Any?>()
+                    val usesSdk = JsonUtil.asMutableMap(jsonMap["uses_sdk"])
+                        ?: mutableMapOf()
                     usesSdk["minSdkVersion"] = minSdkVersion.toString()
                     usesSdk["targetSdkVersion"] = targetSdkVersion.toString()
                     jsonMap["uses_sdk"] = usesSdk
@@ -528,7 +527,7 @@ fun AttributeScreen(
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = minSdkMenuExpanded) },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .menuAnchor()
+                                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                         )
                         ExposedDropdownMenu(
                             expanded = minSdkMenuExpanded,
@@ -560,7 +559,7 @@ fun AttributeScreen(
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = targetSdkMenuExpanded) },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .menuAnchor()
+                                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                         )
                         ExposedDropdownMenu(
                             expanded = targetSdkMenuExpanded,

@@ -308,7 +308,6 @@ fun MainScreen(
 
     val packageInfo = AppInfoUtil.getPackageInfo()
     val appVersionName = packageInfo?.versionName ?: "1.0.0"
-    packageInfo?.versionCode ?: 1
     val copyrightYear = BuildConfig.COPYRIGHT_YEAR
 
     var currentContentType by remember { mutableStateOf(MainContentType.PROJECTS) }

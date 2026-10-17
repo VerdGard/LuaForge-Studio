@@ -34,15 +34,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.luaforge.studio.R
 import com.luaforge.studio.ui.editor.viewmodel.EditorViewModel
+import com.luaforge.studio.utils.ClipboardUtil
 import com.luaforge.studio.utils.NonBlockingToastState
 
 // 定义枚举表示待处理的类操作
@@ -226,7 +225,6 @@ fun SymbolBar(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
     val symbols = listOf(
         "function()", "(", ")", "[", "]", "{", "}", "\"", "=", ":",
         ".", ",", ";", "_", "+", "-", "*", "/", "\\", "%",
@@ -421,7 +419,7 @@ fun SymbolBar(
                             .fillMaxWidth()
                             .clickable {
                                 val importStatement = "import \"$fullName\""
-                                clipboardManager.setText(AnnotatedString(importStatement))
+                                ClipboardUtil.copy(context, importStatement)
                                 toast.showToast(context.getString(R.string.java_api_import_statement_copied))
                                 showFormatDialog = false
                                 pendingFullName = null
@@ -443,7 +441,7 @@ fun SymbolBar(
                             .fillMaxWidth()
                             .clickable {
                                 val bindStatement = "local $shortName = luajava.bindClass \"$fullName\""
-                                clipboardManager.setText(AnnotatedString(bindStatement))
+                                ClipboardUtil.copy(context, bindStatement)
                                 toast.showToast(context.getString(R.string.java_api_import_statement_copied))
                                 showFormatDialog = false
                                 pendingFullName = null

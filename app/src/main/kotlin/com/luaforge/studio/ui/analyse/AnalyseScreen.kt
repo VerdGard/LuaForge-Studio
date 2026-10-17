@@ -45,15 +45,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.androlua.LuaLexer
 import com.androlua.LuaTokenTypes
 import com.luaforge.studio.R
 import com.luaforge.studio.langs.lua.tools.CompleteHashmapUtils
+import com.luaforge.studio.utils.ClipboardUtil
 import com.luaforge.studio.utils.LogCatcher
 import com.luaforge.studio.utils.NonBlockingToastState
 import kotlinx.coroutines.Dispatchers
@@ -78,7 +77,6 @@ fun AnalyseScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val clipboardManager = LocalClipboardManager.current
 
     // 菜单展开状态
     var menuExpanded by remember { mutableStateOf(false) }
@@ -161,7 +159,7 @@ fun AnalyseScreen(
                 // 无歧义，直接复制
                 val imports = selectedItems.flatMap { it.candidates }
                     .joinToString("\n") { "import \"$it\"" }
-                clipboardManager.setText(AnnotatedString(imports))
+                ClipboardUtil.copy(context, imports)
                 scope.launch { toast.showToast(context.getString(R.string.analyse_import_copied, imports.lines().size)) }
             }
 
@@ -183,7 +181,7 @@ fun AnalyseScreen(
                         } else {
                             selectedImport
                         }
-                        clipboardManager.setText(AnnotatedString(finalImports))
+                        ClipboardUtil.copy(context, finalImports)
                         scope.launch { toast.showToast(context.getString(R.string.analyse_import_copied, finalImports.lines().size)) }
                     }
                     showAmbiguousDialog = false

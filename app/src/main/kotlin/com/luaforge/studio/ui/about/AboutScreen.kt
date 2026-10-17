@@ -60,11 +60,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,6 +74,7 @@ import androidx.core.content.edit
 import androidx.core.net.toUri
 import com.luaforge.studio.BuildConfig
 import com.luaforge.studio.R
+import com.luaforge.studio.utils.ClipboardUtil
 import com.luaforge.studio.utils.AppInfoUtil
 import com.luaforge.studio.utils.JsonUtil
 import com.luaforge.studio.utils.LogCatcher
@@ -153,22 +152,22 @@ fun AboutScreen(onBack: () -> Unit) {
                 val jsonString = context.resources.openRawResource(R.raw.licenses)
                     .bufferedReader().use { it.readText() }
 
-                val jsonMap = JsonUtil.parseObject(jsonString) as? Map<String, Any> ?: emptyMap()
-                val librariesArray = jsonMap["libraries"] as? List<Map<String, Any>> ?: emptyList()
+                val jsonMap = JsonUtil.parseObject(jsonString)
+                val librariesArray = JsonUtil.asMapList(jsonMap["libraries"]) ?: emptyList()
 
                 val unknown = context.getString(R.string.unknown)
                 val unknownLicense = context.getString(R.string.about_unknown_license)
                 val unknownLibrary = context.getString(R.string.about_unknown_library)
 
                 val loadedLicenses = librariesArray.map { libMap ->
-                    val developers = (libMap["developers"] as? List<Map<String, Any>>)?.map { devMap ->
+                    val developers = JsonUtil.asMapList(libMap["developers"])?.map { devMap ->
                         LibraryDeveloper(
                             name = devMap["name"] as? String ?: unknown,
                             organization = devMap["organization"] as? String
                         )
                     } ?: emptyList()
 
-                    val licenses = (libMap["licenses"] as? List<Map<String, Any>>)?.map { licenseMap ->
+                    val licenses = JsonUtil.asMapList(libMap["licenses"])?.map { licenseMap ->
                         LicenseInfo(
                             name = licenseMap["name"] as? String ?: unknownLicense,
                             licenseContent = licenseMap["licenseContent"] as? String,
@@ -517,9 +516,6 @@ fun LicenseListItem(license: LibraryLicense, onClick: () -> Unit) {
 fun LicenseDetailDialog(license: LibraryLicense, onDismiss: () -> Unit) {
     val context = LocalContext.current
 
-    @Suppress("DEPRECATION")
-    val clipboardManager = LocalClipboardManager.current
-
     val licenseText = remember(license) {
         if (license.licenses.isNotEmpty()) {
             license.licenses.joinToString("\n\n") { licenseInfo ->
@@ -632,7 +628,7 @@ fun LicenseDetailDialog(license: LibraryLicense, onDismiss: () -> Unit) {
 
                         IconButton(
                             onClick = {
-                                clipboardManager.setText(AnnotatedString(licenseText))
+                                ClipboardUtil.copy(context, licenseText)
                                 LogCatcher.i("AboutScreen", "复制许可证文本: ${license.name}")
                             },
                             modifier = Modifier.size(32.dp)

@@ -5,7 +5,7 @@ import io.github.rosemoe.sora.util.TrieTree
 
 class LuaTextTokenizer {
 
-    private lateinit var source: CharSequence
+    private var source: CharSequence = ""
     private var state: State? = null
     private var bufferLen: Int = 0
     private var line = 0
@@ -727,7 +727,7 @@ class LuaTextTokenizer {
     }
 
     protected fun scanIdentifier(c: Char): Tokens {
-        var node = keywords.root.map[c] as TrieTree.Node<Tokens>?
+        var node = keywords.root.map[c]
         val startOffset = offset
         val identifierStart = startOffset
 
@@ -751,7 +751,7 @@ class LuaTextTokenizer {
 
             // 增加长度并更新节点
             length++
-            node = node?.map?.get(nextChar) as TrieTree.Node<Tokens>?
+            node = node?.map?.get(nextChar)
         }
 
         // 获取标识符文本

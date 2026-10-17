@@ -148,7 +148,7 @@ object OkHttpUtil {
                 if (response.isSuccessful) {
                     val file = File(savePath)
                     file.parentFile?.mkdirs()
-                    response.body?.byteStream()?.use { input ->
+                    response.body.byteStream().use { input ->
                         file.outputStream().use { output -> input.copyTo(output) }
                     }
                     buildResponse(response, "Download success")
@@ -191,9 +191,9 @@ object OkHttpUtil {
     /** 按指定字符集读取响应体内容;charset 为空时交给 OkHttp 依据响应头解码。 */
     private fun readBody(response: Response, charset: String?): String {
         return if (charset != null) {
-            response.body?.bytes()?.toString(charset(charset)) ?: ""
+            response.body.bytes().toString(charset(charset))
         } else {
-            response.body?.string() ?: ""
+            response.body.string()
         }
     }
 

@@ -617,7 +617,7 @@ public class LuaActivity extends AppCompatActivity
    * @return 命中的源文件;都没有则返回 null。
    */
   private File resolveLibSource(String fn) {
-    String abi = Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : Build.CPU_ABI;
+    String abi = Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : "";
     File abiLib = new File(luaDir + "/lib/" + abi + "/lib" + fn + ".so");
     if (abiLib.exists()) return abiLib;
     File flat = new File(luaDir + "/lib/lib" + fn + ".so");

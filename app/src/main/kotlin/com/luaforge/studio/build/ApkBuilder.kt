@@ -473,8 +473,8 @@ class ApkBuilder {
             val settings = SettingsManager.currentSettings
             if (settings.signCustomEnabled) {
                 val path = settings.signStorePath
-                val storeFile = path?.let { File(it) }
-                if (storeFile != null && storeFile.exists() && storeFile.isFile && storeFile.canRead()) {
+                val storeFile = File(path)
+                if (storeFile.exists() && storeFile.isFile && storeFile.canRead()) {
                     if (settings.signKeyAlias.isBlank()) {
                         LogCatcher.w("ApkBuilder", "自定义签名未配置别名,回退内置签名")
                     } else {
@@ -1061,8 +1061,7 @@ class ApkBuilder {
             try {
                 val parsed = JsonUtil.parseObject(settingsFile.readText())
                 val jsonMap = parsed.toMutableMap()
-                val application = (jsonMap["application"] as? Map<String, Any?>)
-                    ?.toMutableMap() ?: mutableMapOf()
+                val application = JsonUtil.asMutableMap(jsonMap["application"]) ?: mutableMapOf()
                 application["debugmode"] = debugOverride
                 jsonMap["application"] = application
 
@@ -1293,7 +1292,7 @@ class ApkBuilder {
             LogCatcher.i("ApkBuilder", "项目文件分析完成，找到 ${projectModules.size} 个模块")
 
             while (moduleQueue.isNotEmpty()) {
-                val module = moduleQueue.poll()
+                val module = moduleQueue.poll() ?: break
 
                 val luaFilePath = module.replace('.', '/') + ".lua"
                 val luaFile = File(workDir, "lua/$luaFilePath")
@@ -1356,8 +1355,8 @@ class ApkBuilder {
         private fun analyzeFileForModules(file: File): Set<String> {
             val modules = HashSet<String>()
             BufferedReader(FileReader(file)).use { reader ->
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
+                while (true) {
+                    val line = reader.readLine() ?: break
                     for (pattern in PATTERNS) {
                         val p = Pattern.compile(pattern)
                         val m = p.matcher(line)

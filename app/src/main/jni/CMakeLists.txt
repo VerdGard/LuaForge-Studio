@@ -130,6 +130,25 @@ function(add_and_optimize_library dir)
                     -ffunction-sections
                     -fdata-sections
             )
+
+            # jni 下的第三方内嵌源码(lua 官方、luv、unix4jni、luajava、canvas、zip、ffi、
+            # socket、gl、crypt 等)不做改动,其编译警告在此逐项关闭。
+            # 只关闭实际出现过的告警项,不用 -w 整体静默,新类型告警仍能暴露。
+            target_compile_options(${TARGET_NAME} PRIVATE
+                    -Wno-unused-variable
+                    -Wno-unused-function
+                    -Wno-unused-but-set-variable
+                    -Wno-unused-label
+                    -Wno-typedef-redefinition
+                    -Wno-sometimes-uninitialized
+                    -Wno-uninitialized
+                    -Wno-empty-body
+                    -Wno-implicit-exception-spec-mismatch
+                    -Wno-unneeded-internal-declaration
+                    -Wno-pointer-type-mismatch
+                    -Wno-logical-op-parentheses
+                    -Wno-int-in-bool-context
+            )
         else ()
             message(WARNING "Could not find target for directory: ${dir}")
         endif ()

@@ -21,7 +21,6 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,10 +29,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -47,6 +44,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.luaforge.studio.R
 import com.luaforge.studio.langs.lua.tools.CompleteHashmapUtils
+import com.luaforge.studio.utils.ClipboardUtil
 import com.luaforge.studio.utils.LogCatcher
 import com.luaforge.studio.utils.NonBlockingToastState
 import com.luaforge.studio.utils.TransitionUtil
@@ -384,7 +382,6 @@ fun ClassListItem(
     onClick: () -> Unit,
     toast: NonBlockingToastState
 ) {
-    val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -405,7 +402,7 @@ fun ClassListItem(
                 .combinedClickable(
                     onClick = onClick,
                     onLongClick = {
-                        clipboard.setText(AnnotatedString(item.fullName))
+                        ClipboardUtil.copy(context, item.fullName)
                         scope.launch { toast.showToast(context.getString(R.string.java_api_class_name_copied)) }
                     }
                 )
@@ -445,7 +442,6 @@ fun ClassDetailScreen(
     onSearchQueryChange: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
 
     var classInfo by remember { mutableStateOf<ClassInfo?>(null) }
@@ -520,15 +516,17 @@ fun ClassDetailScreen(
                             Text(stringResource(R.string.java_api_no_content), style = MaterialTheme.typography.bodyLarge)
                         }
                     } else {
-                        ScrollableTabRow(
+                        // PrimaryScrollableTabRow 的 indicator 接收者是 TabIndicatorScope,
+                        // 它按 selectedTabIndex 自行计算指示条位置,不再暴露 List<TabPosition>。
+                        PrimaryScrollableTabRow(
                             selectedTabIndex = pagerState.currentPage.coerceIn(0, tabs.size - 1),
                             edgePadding = 0.dp,
                             containerColor = MaterialTheme.colorScheme.surface,
-                            indicator = { tabPositions ->
-                                if (pagerState.currentPage < tabPositions.size) {
+                            indicator = {
+                                if (pagerState.currentPage < tabs.size) {
                                     Box(
                                         Modifier
-                                            .tabIndicatorOffset(tabPositions[pagerState.currentPage])
+                                            .tabIndicatorOffset(pagerState.currentPage)
                                             .height(3.dp)
                                             .background(MaterialTheme.colorScheme.primary)
                                     )
@@ -574,7 +572,7 @@ fun ClassDetailScreen(
                                             member = member,
                                             onClick = { onNavigateToClass(member.copyTextForMenu) },
                                             onLongClick = {
-                                                clipboard.setText(AnnotatedString(member.copyTextForMenu))
+                                                ClipboardUtil.copy(context, member.copyTextForMenu)
                                                 scope.launch { toast.showToast(context.getString(R.string.java_api_class_name_copied)) }
                                             }
                                         )
@@ -584,7 +582,7 @@ fun ClassDetailScreen(
                                             member = member,
                                             tabTitleResId = currentTabTitleResId,
                                             onCopy = { copyText ->
-                                                clipboard.setText(AnnotatedString(copyText))
+                                                ClipboardUtil.copy(context, copyText)
                                                 scope.launch { toast.showToast(context.getString(R.string.java_api_copy_success)) }
                                             },
                                             onShowDetail = { title, items, preview ->
@@ -635,7 +633,7 @@ fun ClassDetailScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        clipboard.setText(AnnotatedString(value))
+                                        ClipboardUtil.copy(context, value)
                                         scope.launch { toast.showToast(context.getString(R.string.java_api_copy_label, label)) }
                                     }
                                     .padding(vertical = 8.dp),
@@ -1066,7 +1064,7 @@ object ClassReflectUtil {
 
     private fun getSuperClasses(context: Context, clazz: Class<*>): List<MemberDisplayInfo> {
         val list = mutableListOf<MemberDisplayInfo>()
-        var current = clazz.superclass
+        var current: Class<*>? = clazz.superclass
         while (current != null) {
             list.add(
                 MemberDisplayInfo(

@@ -340,14 +340,14 @@ object ProjectUtil {
     ) {
         try {
             val jsonString = settingsFile.readText()
-            val jsonMap = JsonUtil.parseObject(jsonString) as MutableMap<String, Any?>
+            val jsonMap = JsonUtil.parseObject(jsonString).toMutableMap()
 
             // 更新包名
             jsonMap["package"] = packageName
 
             // 更新应用信息
             val applicationMap =
-                (jsonMap["application"] as? MutableMap<String, Any>) ?: mutableMapOf()
+                JsonUtil.asMutableMap(jsonMap["application"]) ?: mutableMapOf()
             applicationMap["label"] = projectName
             applicationMap["debugmode"] = debugMode
             jsonMap["application"] = applicationMap
@@ -372,14 +372,14 @@ object ProjectUtil {
     ) {
         try {
             val jsonString = settingsFile.readText()
-            val jsonMap = JsonUtil.parseObject(jsonString) as MutableMap<String, Any?>
+            val jsonMap = JsonUtil.parseObject(jsonString).toMutableMap()
 
             // 更新包名
             jsonMap["package"] = packageName
 
             // 更新应用信息
             val applicationMap =
-                (jsonMap["application"] as? MutableMap<String, Any>) ?: mutableMapOf()
+                JsonUtil.asMutableMap(jsonMap["application"]) ?: mutableMapOf()
             applicationMap["label"] = projectName
             applicationMap["debugmode"] = debugMode
             jsonMap["application"] = applicationMap

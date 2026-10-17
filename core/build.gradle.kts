@@ -101,6 +101,15 @@ kotlin {
     }
 }
 
+// core/src/main/java/android/** 是内嵌的 AOSP 代码(ViewPager 相关的老版 PageView /
+// BasePageAdapter 等),其中若干方法只在 Javadoc 里写了 `@deprecated` 而未加
+// `@Deprecated` 注解,触发 javac 的 [dep-ann] 告警(共 6 处)。
+// 这些文件属于第三方内嵌源码,不改动其内容,在此关闭该单一告警类别
+// (-Xlint:-dep-ann 只关这一类,其它 lint 告警照常输出)。
+tasks.withType<JavaCompile>().configureEach {
+    options.compilerArgs.add("-Xlint:-dep-ann")
+}
+
 dependencies {
     api(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
 

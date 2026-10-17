@@ -82,14 +82,14 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextButton
@@ -1137,7 +1137,7 @@ private fun LuaNodeView(store: SlotStore, node: LuaNode, extra: Modifier = Modif
             val tabs = (toPlain(o["tabs"]) as? List<*>) ?: emptyList<Any?>()
             val selected = intOf(o["selected"], 0)
             if (node.name == "TabRow") {
-                TabRow(selectedTabIndex = selected, modifier = extra.then(modifierOf(o))) {
+                PrimaryTabRow(selectedTabIndex = selected, modifier = extra.then(modifierOf(o))) {
                     tabs.forEachIndexed { i, t ->
                         Tab(
                             selected = i == selected,
@@ -1147,7 +1147,10 @@ private fun LuaNodeView(store: SlotStore, node: LuaNode, extra: Modifier = Modif
                     }
                 }
             } else {
-                ScrollableTabRow(selectedTabIndex = selected, modifier = extra.then(modifierOf(o))) {
+                PrimaryScrollableTabRow(
+                    selectedTabIndex = selected,
+                    modifier = extra.then(modifierOf(o))
+                ) {
                     tabs.forEachIndexed { i, t ->
                         Tab(
                             selected = i == selected,

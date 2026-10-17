@@ -1,9 +1,11 @@
 package com.luaforge.studio
 
+import android.app.Activity
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -200,16 +202,29 @@ class SplashWelcome : ComponentActivity() {
      * Starts the main activity and finishes splash
      */
     private fun startMainActivity() {
-        Intent(this@SplashWelcome, MainActivity::class.java).apply {
+        val intent = Intent(this@SplashWelcome, MainActivity::class.java).apply {
             if (isVersionChanged) {
                 putExtra("isVersionChanged", isVersionChanged)
                 putExtra("newVersionName", mVersionName)
                 putExtra("oldVersionName", mOldVersionName)
             }
-            startActivity(this)
-            overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
-            finish()
         }
+        startActivity(intent)
+
+        // overridePendingTransition 自 API 34 弃用,替代者是 overrideActivityTransition。
+        // minSdk 为 24,所以按版本分支:新 API 用新方法,旧版本保留弃用方法
+        // (否则启动过渡动画在旧机型上会直接丢失)。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            overrideActivityTransition(
+                Activity.OVERRIDE_TRANSITION_OPEN,
+                R.anim.fade_in,
+                R.anim.fade_out
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
+        }
+        finish()
     }
 
     /**
@@ -480,12 +495,12 @@ fun SplashScreen(
                     .clipToBounds()
             ) {
                 LinearProgressIndicator(
-                    progress = 1f,
+                    progress = { 1f },
                     modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
                 )
                 LinearProgressIndicator(
-                    progress = progress,
+                    progress = { progress },
                     modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.primary
                 )

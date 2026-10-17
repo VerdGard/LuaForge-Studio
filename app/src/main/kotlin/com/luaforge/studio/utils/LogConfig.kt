@@ -96,10 +96,11 @@ object LogCatcher {
             try {
                 val logFile = File(logConfig.logFilePath)
 
-                // 确保父目录存在
-                val parentDir = logFile.parentFile
-                if (!parentDir.exists()) {
-                    parentDir.mkdirs()
+                // 确保父目录存在(parentFile 在路径无父级时为 null,例如相对文件名)
+                logFile.parentFile?.let { parentDir ->
+                    if (!parentDir.exists()) {
+                        parentDir.mkdirs()
+                    }
                 }
 
                 // 如果文件存在，清空内容；如果不存在，创建空文件
@@ -189,10 +190,11 @@ object LogCatcher {
             try {
                 val logFile = File(logConfig.logFilePath)
 
-                // 确保父目录存在
-                val parentDir = logFile.parentFile
-                if (!parentDir.exists()) {
-                    parentDir.mkdirs()
+                // 确保父目录存在(parentFile 在路径无父级时为 null,例如相对文件名)
+                logFile.parentFile?.let { parentDir ->
+                    if (!parentDir.exists()) {
+                        parentDir.mkdirs()
+                    }
                 }
 
                 // 确保文件存在

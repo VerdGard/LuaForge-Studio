@@ -463,7 +463,7 @@ class LuaLanguage : Language {
             )
 
             val syncIdentifiers = manager.identifiers
-            if (syncIdentifiers != null && computePrefix.isNotEmpty()) {
+            if (computePrefix.isNotEmpty()) {
                 autoComplete.requireAutoComplete(
                     contentReference,
                     charPosition,

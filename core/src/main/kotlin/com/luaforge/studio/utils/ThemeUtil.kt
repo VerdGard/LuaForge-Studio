@@ -43,12 +43,10 @@ object ThemeUtil {
         // 获取 WindowInsetsController 并设置状态栏/导航栏颜色
         val controller =
             WindowCompat.getInsetsController(activity.window, activity.window.decorView)
-        controller?.let {
-            // 设置状态栏图标颜色（深色主题时用浅色图标，反之亦然）
-            it.isAppearanceLightStatusBars = !isDarkTheme
-            // 设置导航栏图标颜色
-            it.isAppearanceLightNavigationBars = !isDarkTheme
-        }
+        // 设置状态栏图标颜色（深色主题时用浅色图标，反之亦然）
+        controller.isAppearanceLightStatusBars = !isDarkTheme
+        // 设置导航栏图标颜色
+        controller.isAppearanceLightNavigationBars = !isDarkTheme
 
         // 处理 WindowInsets 避免内容被系统栏遮挡
         setupWindowInsets(activity)
@@ -82,9 +80,7 @@ object ThemeUtil {
     ) {
         val controller =
             WindowCompat.getInsetsController(activity.window, activity.window.decorView)
-        controller?.let {
-            it.isAppearanceLightStatusBars = lightStatusBars
-            it.isAppearanceLightNavigationBars = lightNavigationBars
-        }
+        controller.isAppearanceLightStatusBars = lightStatusBars
+        controller.isAppearanceLightNavigationBars = lightNavigationBars
     }
 }

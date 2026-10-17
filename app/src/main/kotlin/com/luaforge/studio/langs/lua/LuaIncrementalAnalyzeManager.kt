@@ -173,10 +173,10 @@ class LuaIncrementalAnalyzeManager :
                             )
                         } else if (bracketsStack.isNotEmpty()) {
                             val record = bracketsStack.pop()
-                            val typeRecord = IntPair.getFirst(record).toInt()
+                            val typeRecord = IntPair.getFirst(record)
                             if (typeRecord == type) {
                                 brackets.add(
-                                    IntPair.getSecond(record).toInt(),
+                                    IntPair.getSecond(record),
                                     text.getCharIndex(i, tokenRecord.offset)
                                 )
                             }

@@ -42,7 +42,7 @@ class MarkdownView @JvmOverloads constructor(
                 this@MarkdownView.evaluateJavascript(this@MarkdownView.mPreviewText!!, null)
             }
 
-            @Suppress("deprecation")  // android.webkit.WebViewClient
+            @Suppress("deprecation", "OVERRIDE_DEPRECATION")  // android.webkit.WebViewClient
             override fun shouldOverrideUrlLoading(webView: WebView?, str: String?): Boolean {
                 if (this@MarkdownView.isOpenUrlInBrowser) {
                     this@MarkdownView.mContext.startActivity(

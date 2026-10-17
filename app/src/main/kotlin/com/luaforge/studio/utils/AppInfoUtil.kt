@@ -3,6 +3,7 @@ package com.luaforge.studio.utils
 import android.content.Context
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import androidx.core.content.pm.PackageInfoCompat
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
@@ -39,7 +40,7 @@ object AppInfoUtil {
     fun getVersionCode(context: Context): Int {
         return try {
             val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            packageInfo.versionCode
+            PackageInfoCompat.getLongVersionCode(packageInfo).toInt()
         } catch (e: PackageManager.NameNotFoundException) {
             1
         }

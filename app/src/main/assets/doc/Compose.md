@@ -319,7 +319,7 @@ end })
 -- 2 直接传函数(等价,更短)
 Column(function()
   Text("hi")
-end })
+end)
 ```
 
 `Text("hi")` 也能直接吃字符串:`collect` 会把非表非函数的第一个参数当作 `text`。

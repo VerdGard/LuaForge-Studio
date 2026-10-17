@@ -240,10 +240,6 @@ class MavenDownloader(private val context: Context) {
                         }
 
                         val body = response.body
-                        if (body == null) {
-                            continuation.resume(false)
-                            return
-                        }
 
                         try {
                             targetFile.parentFile?.mkdirs()

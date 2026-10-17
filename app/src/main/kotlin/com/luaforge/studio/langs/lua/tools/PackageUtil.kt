@@ -2,7 +2,7 @@ package com.luaforge.studio.langs.lua.tools
 
 import android.content.Context
 import com.luaforge.studio.R
-import dalvik.system.DexFile
+import com.luaforge.studio.utils.DexClassReader
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.File
@@ -90,13 +90,10 @@ object PackageUtil {
         try {
             packages = JSONObject(jsonContent)
 
-            // 扫描 Dex 文件获取所有类名
-            val dexFile = DexFile(context.packageCodePath)
-            val entries = dexFile.entries()
-
-            while (entries.hasMoreElements()) {
-                val className = entries.nextElement()
-
+            // 扫描 Dex 文件获取所有类名。
+            // 不用 DexFile(String)+entries():两者在 API 34+ 已弃用,
+            // 且 entries() 会走 dexopt,这里只需要类名,直接解析 dex 字符串池更快。
+            for (className in DexClassReader.readClasses(File(context.packageCodePath))) {
                 // 在这里过滤掉 Compose 相关类
                 if (shouldSkipClass(className)) {
                     continue

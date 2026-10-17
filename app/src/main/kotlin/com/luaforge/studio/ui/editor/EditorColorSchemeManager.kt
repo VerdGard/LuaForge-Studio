@@ -99,7 +99,7 @@ object EditorColorSchemeManager {
         functionNameColor: Int = 0xFF2196F3.toInt(),
         literalColor: Int = 0xFF008080.toInt(),
         commentColor: Int = 0xFFA7A8A8.toInt(),
-        selectedLineColor: Int = 0x1A000000.toInt()
+        selectedLineColor: Int = 0x1A000000
     ) {
         // 获取颜色配置
         val themeColors = if (isDark) DARK_THEME_COLORS else LIGHT_THEME_COLORS

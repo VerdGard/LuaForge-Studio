@@ -281,7 +281,6 @@ fun AppThemeWithObserver(
         DarkMode.FOLLOW_SYSTEM -> darkTheme
         DarkMode.LIGHT -> false
         DarkMode.DARK -> true
-        else -> darkTheme
     }
 
     // 根据设置选择颜色方案

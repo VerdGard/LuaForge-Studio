@@ -7,7 +7,6 @@ import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.View
 import androidx.annotation.Keep
-import java.lang.CharSequence
 import android.text.TextWatcher
 import android.widget.FrameLayout
 import android.content.res.ColorStateList

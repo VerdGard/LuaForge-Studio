@@ -830,16 +830,57 @@ public class LuaState {
         _LunRef(luaState, t, ref);
     }
 
+    /**
+     * 载入 Lua 源文件。
+     *
+     * <p>首次加载若报<b>语法错误</b>,会用 {@link com.luaforge.studio.lua.LuaSugar}
+     * 把 `name = value` 形式的命名参数改写为表构造后重试一次。合法源码不受影响
+     * (只在本来就是语法错误时才走改写),预编译字节码也不改写。
+     */
     public int LloadFile(String fileName) {
-        return _LloadFile(luaState, fileName);
+        int ok = _LloadFile(luaState, fileName);
+        if (ok != LUA_ERRSYNTAX) {
+            return ok;
+        }
+        byte[] sugar = com.luaforge.studio.lua.LuaSugar.rewriteFile(fileName);
+        if (sugar == null) {
+            return ok;
+        }
+        // 丢弃上一次的语法错误信息,避免重试后栈上残留
+        pop(1);
+        return _LloadBuffer(luaState, sugar, sugar.length, fileName);
     }
 
+    /**
+     * 载入 Lua 源码字符串,失败时按语法糖重试一次。见 {@link #LloadFile(String)}。
+     */
     public int LloadString(String s) {
-        return _LloadString(luaState, s);
+        int ok = _LloadString(luaState, s);
+        if (ok != LUA_ERRSYNTAX || s == null) {
+            return ok;
+        }
+        String sugar = com.luaforge.studio.lua.LuaSugar.rewrite(s);
+        if (sugar == null) {
+            return ok;
+        }
+        pop(1);
+        return _LloadString(luaState, sugar);
     }
 
+    /**
+     * 载入 Lua 源码缓冲区,失败时按语法糖重试一次。见 {@link #LloadFile(String)}。
+     */
     public int LloadBuffer(byte[] buff, String name) {
-        return _LloadBuffer(luaState, buff, buff.length, name);
+        int ok = _LloadBuffer(luaState, buff, buff.length, name);
+        if (ok != LUA_ERRSYNTAX) {
+            return ok;
+        }
+        byte[] sugar = com.luaforge.studio.lua.LuaSugar.rewriteBytes(buff);
+        if (sugar == null) {
+            return ok;
+        }
+        pop(1);
+        return _LloadBuffer(luaState, sugar, sugar.length, name);
     }
 
     public String Lgsub(String s, String p, String r) {

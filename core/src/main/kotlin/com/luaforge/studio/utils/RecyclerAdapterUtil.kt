@@ -192,12 +192,12 @@ object RecyclerAdapterUtil {
         return when (data) {
             is List<*> -> {
                 // 已经是 List，直接使用
-                data.filterNotNull() as List<Any>
+                data.filterNotNull()
             }
 
             is Array<*> -> {
                 // 数组，转换为 List
-                data.filterNotNull().toList() as List<Any>
+                data.filterNotNull().toList()
             }
 
             is LuaTable<*, *> -> {

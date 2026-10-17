@@ -26,7 +26,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.*
@@ -34,6 +33,7 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.core.content.pm.PackageInfoCompat
 import androidx.core.view.WindowCompat
 import com.luaforge.studio.R
 import com.luaforge.studio.ui.crash.CrashManager.EXTRA_CRASH_CONTEXT
@@ -47,6 +47,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
+import com.luaforge.studio.utils.ClipboardUtil
 
 class CrashLogActivity : ComponentActivity() {
 
@@ -94,7 +95,6 @@ class CrashLogActivity : ComponentActivity() {
 fun CrashLogScreen(intent: Intent) {
     val context = LocalContext.current
     val activity = context as? Activity
-    val clipboardManager = LocalClipboardManager.current
     var fabMenuExpanded by rememberSaveable { mutableStateOf(false) }
 
     // 从 Intent 获取崩溃信息
@@ -113,12 +113,7 @@ fun CrashLogScreen(intent: Intent) {
             try {
                 val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
                 append("• Name: ").append(packageInfo.versionName).append("\n")
-                val versionCode = if (Build.VERSION.SDK_INT >= 28) {
-                    packageInfo.longVersionCode
-                } else {
-                    packageInfo.versionCode.toLong()
-                }
-                append("• Code: ").append(versionCode)
+                append("• Code: ").append(PackageInfoCompat.getLongVersionCode(packageInfo))
             } catch (t: Throwable) {
                 append("Version info unavailable")
             }
@@ -172,7 +167,7 @@ fun CrashLogScreen(intent: Intent) {
                 FloatingActionButtonMenuItem(
                     onClick = {
                         fabMenuExpanded = false
-                        clipboardManager.setText(AnnotatedString(fullErrorDetails))
+                        ClipboardUtil.copy(context, fullErrorDetails)
                         Toast.makeText(context, R.string.crash_info_copied, Toast.LENGTH_SHORT).show()
                     },
                     icon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },

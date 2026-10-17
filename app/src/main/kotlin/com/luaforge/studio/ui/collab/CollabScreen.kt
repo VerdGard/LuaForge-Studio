@@ -160,7 +160,7 @@ fun CollabScreen(
                     }
                     if (!collabStatus.error.isNullOrBlank()) {
                         Text(
-                            text = stringResource(R.string.collab_error, collabStatus.error!!),
+                            text = stringResource(R.string.collab_error, collabStatus.error),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error
                         )

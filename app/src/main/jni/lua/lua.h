@@ -29,8 +29,17 @@
 #define LUA_AUTHORS    "R. Ierusalimschy, L. H. de Figueiredo, W. Celes"
 
 
-/* mark for precompiled code ('<esc>Lua') */
-#define LUA_SIGNATURE    "LuaForge-Studio\n"
+/*
+** mark for precompiled code ('<esc>LuaForge-Studio')
+**
+** 首字节必须是 ESC(0x1B):lauxlib.c / ldo.c / lundump.c / luv 都用
+** `c == LUA_SIGNATURE[0]` 判定"这是不是字节码"。ESC 不是合法的 Lua 源码
+** 开头字符,所以该判定不可能误命中源文件。
+** 若把首字节改成可打印字符(例如 'L'),所有以该字符开头的 .lua 源文件都会被
+** 当成字节码送去 undump,报 "bad binary format" —— 例如 LaunchedEffect(...)、
+** LazyColumn(...) 这类 Compose DSL 调用。
+*/
+#define LUA_SIGNATURE    "\x1bLuaForge-Studio\n"
 
 /* option for multiple returns in 'lua_pcall' and 'lua_call' */
 #define LUA_MULTRET    (-1)

@@ -42,7 +42,7 @@ public class LuaDexLoader {
         luaDir = context.getLuaDir();
         LuaApplication app = LuaApplication.getInstance();
         odexDir = app.getOdexDir();
-        primaryAbi = Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : Build.CPU_ABI;
+        primaryAbi = Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : "";
 
         // 初始化私有libs目录
         Context ctx = mContext.getContext();
