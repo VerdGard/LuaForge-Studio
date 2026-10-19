@@ -391,43 +391,37 @@ end })
 
 ---
 
-## 9. 两种发行方式(A / C 共存)
+## 9. 发行方式(仅内置桥)
 
-| | A:内置 | C:外部 dex |
-|---|---|---|
-| 怎么来 | 随 `core.apk` 编进模板 | 项目自带 `libs/compose_bridge.dex` |
-| 配置 | 无需任何配置 | 外部 dex 需提供 `register(LuaState, Context): Int` |
-| 体积 | 每个 APK 都带 Compose 运行时(约 1.5MB dex) | 不用 Compose 的项目零增重 |
-| 适用 | 默认发行版,开箱即用 | `-PlfComposeBundled=false` 构建的**零 Compose 体积** core |
+`LuaCompose` 随 `core` 一起编译进 `core.apk`,项目**开箱可用,无需任何配置**:
+不用放 dex、不用写 `import`、不用改 `settings.json`。
 
-**优先级:内置优先,外部兜底。** 原因不是"内置更好",而是**两套 Compose 运行时不能混用**:
-内置桥的 `androidx.compose.*` 来自模板,外部 dex 若再带一份不同版本,ART 会随机命中其中一个,
-症状是 `NoSuchMethodError` / `NoClassDefFoundError` 这类只在真机上偶发、极难定位的崩溃。
+### 为什么没有「项目自带 dex」的外部桥
 
-所以:
+早期版本还有一套「方案 C」:把 Compose 运行时 + 桥单独打成
+`libs/compose_bridge.dex` 放进项目,配合 `-PlfComposeBundled=false` 的零体积 core 发行版,
+让不用 Compose 的项目省下约 1.5MB dex。已移除,原因:
 
-- 内置桥可用(A 发行版)→ 用内置,跳过外部 dex(会在日志里说明跳过原因);
-- 内置桥不可用(`lfComposeBundled=false` 的 C 发行版)→ 用外部 dex;
-- 两者都没有 → 不注册任何函数,**绝不抛异常**打断页面启动。
+1. **两套 Compose 运行时不能混用。** 外部 dex 若带不同版本的 `androidx.compose.*`,
+   ART 可能随机命中其中一个,症状是 `NoSuchMethodError` / `NoClassDefFoundError`
+   这类只在真机偶发、极难定位的崩溃。「内置优先」只是绕开,不是解决。
+2. **成本错位。** 维护代价落在每个用户项目上(每个项目都得同步一份 dex,升级 Compose 时还会对不上),
+   换来的只是未用 Compose 的项目省 1.5MB。
+3. **探测不可靠。** 「项目是否真用 Compose」只能靠扫源码猜,猜错的代价是运行时函数不存在。
 
-外部桥候选类名(按优先级):
+因此现在只有一种形态:桥在模板里,`compose` / `composeView` / `composeContent` /
+`state` / `remember` 等全局函数在 `LuaActivity.initLua` 时注册。
 
-1. `com.luaforge.studio.compose.ExternalBridge`(推荐)
-2. `com.luaforge.studio.compose.LuaCompose`
+### 失败隔离
 
-外部 dex 候选路径:`libs/compose_bridge.dex`、`libs/compose.dex`、
-`compose/compose_bridge.dex`、`libs/compose_bridge.jar`。
+`register` 内部要建 60 多个组件工厂,任何一环抛异常都不应拖垮页面启动。
+所以注册过程整体包在 try-catch 里:失败时只记日志、不注册任何函数,**绝不抛异常**。
+如果你发现 `compose` 是 `nil`,先看 `luaforge.log` 里的注册失败原因。
 
-> **想用外部桥覆盖内置**:必须同时用 `-PlfComposeBundled=false` 构建 core,
-> 否则模板里已有一份 Compose,重复类不会按你期望的顺序解析。
+### 源码位置
 
-### 构建零 Compose 体积的 core
-
-```bash
-./gradlew -PlfComposeBundled=false :core:assembleRelease
-```
-
-该发行版会整体排除 `core/src/compose/kotlin`(内置桥源码)且不引入任何 Compose 依赖。
+桥在独立源集 `core/src/compose/kotlin`,与 `core/src/main/kotlin` 分开只是为了
+让「这批文件依赖 Compose 编译器插件」这件事更明显,**不是**可选开关 —— 它总是编入。
 
 ---
 
@@ -448,5 +442,16 @@ A:位置记忆化按调用顺序分配槽位(与手写 Compose 相同)。不要�
 "动态增减不带 key 的兄弟组件",用 `LazyColumn` 或固定结构。
 
 **Q:Compose 会不会让我的 APK 变大?**
-A:默认(A 方案)会带上 Compose 运行时。想零增重,用 `-PlfComposeBundled=false`
-的 core 发行版 + 项目自带 `libs/compose_bridge.dex`(C 方案)。
+A:会,Compose 运行时约 1.5MB dex,且**无条件**随 core 一起打包 —— 没有「零体积」开关。
+这是有意的取舍:一套运行时永远比「按项目切换两套」可靠。
+
+**Q:`size` 属性到底是 dp 还是 sp?**
+A:看组件。`Spacer` / `Box` / `Image` 上是**尺寸(dp)**,`Text` / `Icon`(回退成文字时)上是**字号(sp)**。
+早期版本无条件按 dp 处理,于是 `Text("x", size = 20)` 会被同时加上 `.size(20.dp)` 和
+`fontSize = 20.sp`,文字挤进 20dp 方块里换行截断,看起来就是「布局显示不全」。
+
+**Q:内容被状态栏压住 / 顶部按钮点不到?**
+A:API 35+ 系统强制 edge-to-edge,而 `composeContent` / `setContentView` 会替换掉
+`LuaActivity` 自己那个挂了 inset 监听的根布局。桥现在自己在 ComposeView 上装 inset 监听
+(仅 API ≥ 35 且父容器是 `android.R.id.content` 时生效)。如果你的布局是手动塞进别的容器,
+需要自己调 `ViewCompat.setOnApplyWindowInsetsListener`。

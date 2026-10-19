@@ -151,7 +151,23 @@ public class LuaRunnable extends Thread implements Runnable, LuaMetaTable, LuaGc
             Looper.loop();
         }
         isRun = false;
-        L.gc(LuaState.LUA_GCCOLLECT, 1);
+        // 关闭本线程自建的 Lua 虚拟机。
+        //
+        // 原来只做 L.gc(...) —— 那只是让 Lua 回收自己的垃圾,不是释放这个 VM。
+        // newLuaState() 会把 wrapper 注册进 LuaStateFactory.states(静态 Map)并被
+        // 强引用,于是 LuaState.finalize 的 close() 兜底永远不触发,
+        // 每执行完一层 thread()/runOnUiThread 就泄漏一整个 lua_State
+        // (registry、栈、以及它引用的所有 Java 对象)。
+        //
+        // 放在 loop() 之后:循环线程退出(isRun=false)才轮到这一行,
+        // 此时不会再有回调进来;关闭后本对象不再被使用(L 置 null)。
+        try {
+            L.gc(LuaState.LUA_GCCOLLECT, 1);
+            L.close();
+        } catch (Throwable ignored) {
+            // 释放失败不该影响线程收尾
+        }
+        L = null;
         System.gc();
     }
 
@@ -171,8 +187,15 @@ public class LuaRunnable extends Thread implements Runnable, LuaMetaTable, LuaGc
     }
 
     public Object get(String key) throws LuaException {
-        L.getGlobal(key);
-        return L.toJavaObject(-1);
+        // run() 结束时会把 L close 掉并置 null(见该处注释)。线程跑完后仍有
+        // Lua 侧代码按句柄读值是完全可能的,这里给一个明确的 LuaException,
+        // 而不是让调用方撞上 NullPointerException / 空 native 指针。
+        LuaState cur = L;
+        if (cur == null || cur.isClosed()) {
+            throw new LuaException("thread is not running");
+        }
+        cur.getGlobal(key);
+        return cur.toJavaObject(-1);
     }
 
     public void quit() {

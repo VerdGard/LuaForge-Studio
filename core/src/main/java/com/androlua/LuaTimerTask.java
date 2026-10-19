@@ -74,14 +74,48 @@ public class LuaTimerTask extends TimerTaskX {
         } catch (LuaException e) {
             mLuaContext.sendError(this.toString(), e);
         }
-        L.gc(LuaState.LUA_GCCOLLECT, 1);
+        // cancel() 会把 L 关掉并置 null,而定时器(另一个线程)仍可能投递一次
+        // 已排队的执行。这里连"判空后立刻被 cancel 置空"的竞态一起兜住:
+        // 先把引用抓进局部变量,再整体包 try/catch —— 直接写
+        // `if (L != null) L.gc(...)` 在两步之间仍可能 NPE。
+        try {
+            LuaState cur = L;
+            if (cur != null && !cur.isClosed()) {
+                cur.gc(LuaState.LUA_GCCOLLECT, 1);
+            }
+        } catch (Throwable ignored) {
+            // 已关闭/正被关闭,忽略
+        }
         System.gc();
 
     }
 
+    /**
+     * 取消定时任务,并释放本任务持有的 Lua 虚拟机。
+     *
+     * <p>为什么必须在这里关:一个 {@link LuaTimerTask} 会跨多次触发**复用**
+     * 同一个 VM(run() 里 `if (L == null) initLua()`),所以不能像
+     * LuaThread/LuaRunnable 那样在 run() 末尾关闭。真正的生命周期终点是
+     * cancel()(LuaTimer.stop() / LuaTimer.gc() 都会走到这里)。
+     *
+     * <p>不关的代价:newLuaState() 把 wrapper 注册进 LuaStateFactory.states
+     * 这个静态 Map 并被强引用,于是 LuaState.finalize 的 close() 兜底永不触发 ——
+     * 每建一个定时器就永久泄漏一个 lua_State(含它引用的全部 Java 对象)。
+     *
+     * <p>关闭后把 L 置 null:万一调用方 cancel 后又 start(LuaTimer 允许),
+     * run() 里的 `if (L == null)` 会重新 initLua(),不会踩空指针。
+     */
     @Override
     public boolean cancel() {
-        // TODO: Implement this method
+        if (L != null && !L.isClosed()) {
+            try {
+                L.gc(LuaState.LUA_GCCOLLECT, 1);
+                L.close();
+            } catch (Throwable ignored) {
+                // 释放失败不该阻止取消
+            }
+            L = null;
+        }
         return super.cancel();
     }
 

@@ -30,7 +30,6 @@ import com.androlua.LuaContext;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
-import java.util.ArrayList;
 import java.util.Arrays;
 
 /**
@@ -45,11 +44,9 @@ import java.util.Arrays;
 public class LuaInvocationHandler implements InvocationHandler {
     private final LuaContext mContext;
     private final LuaObject obj;
-    private static final ArrayList cache = new ArrayList();
 
     public LuaInvocationHandler(LuaObject obj) {
         this.obj = obj;
-        cache.add(obj);
         mContext = obj.getLuaState().getContext();
     }
 

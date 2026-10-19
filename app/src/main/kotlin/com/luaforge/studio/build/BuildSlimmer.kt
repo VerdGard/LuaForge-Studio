@@ -42,11 +42,9 @@ import com.android.tools.r8.R8
  * ## 与 Compose 的关系
  *
  * Compose 运行时位于 `core.apk` 模板里,而**模板永不裁剪**(见上面的安全边界),
- * 因此本模块无法在打包期把 Compose 从产物里"抠掉"—— 那需要在构建 `core` 时决定:
- *
- * - `lfComposeBundled=true`(默认):模板内含 Compose,Lua 开箱可用 `compose`;
- * - `lfComposeBundled=false`:模板零 Compose 体积,项目改用自备的
- *   `libs/compose_bridge.dex`(方案 C)。
+ * 因此本模块无法在打包期把 Compose 从产物里"抠掉"—— 它总是随模板进来。
+ * (早期还有"项目自带 `libs/compose_bridge.dex`"的外部桥方案,已移除,
+ * 现在 Compose 桥无条件编入 core。)
  *
  * 本模块只做两件与 Compose 相关的事:
  * 1. [usesCompose] 探测项目是否真的用到 Compose,供 `ApkBuilder` 提示体积来源;
@@ -442,7 +440,7 @@ object BuildSlimmer {
      * - 源码里出现 Compose 桥的入口/组件名:`compose` / `composeContent` / `composeView` /
      *   `state(` / `LaunchedEffect` / `remember(`,或容器组件 `Column` / `Row` / `Box` /
      *   `Card` / `LazyColumn` 后紧跟 `{` 或 `(`;
-     * - 或项目带了外部桥 `libs/compose_bridge.dex`(方案 C)。
+     * - 源码里出现 `androidx.compose.*` 的导入(项目 jar/lib 场合)。
      *
      * 只用于**提示与 keep 规则**,判错不会让构建失败:宁可多 keep 一片类,
      * 也不要因为漏判让项目在真机上 NoClassDefFoundError。
@@ -450,8 +448,6 @@ object BuildSlimmer {
     fun usesCompose(projectPath: String): Boolean {
         val root = File(projectPath)
         if (!root.isDirectory) return false
-        // 方案 C:带了外部桥,无论源码怎么写都算用到
-        if (COMPOSE_BRIDGE_FILES.any { File(root, it).isFile }) return true
         root.walkTopDown()
             .filter { it.isFile }
             .filter {
@@ -468,14 +464,6 @@ object BuildSlimmer {
             }
         return false
     }
-
-    /** 外部 Compose 桥的候选路径(与 `LuaComposeLoader` 的约定保持一致)。 */
-    private val COMPOSE_BRIDGE_FILES = listOf(
-        "libs/compose_bridge.dex",
-        "libs/compose.dex",
-        "compose/compose_bridge.dex",
-        "libs/compose_bridge.jar"
-    )
 
     /** Compose 调用形态;刻意宽松(只用于提示),不追求零误报。 */
     private val COMPOSE_PATTERNS = listOf(

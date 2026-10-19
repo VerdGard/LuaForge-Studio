@@ -378,31 +378,32 @@ suspend fun backupProject(context: Context, projectPath: String): String = withC
     val backupFile = File(backupDir, backupFileName)
 
     try {
-        val zipOut = ZipOutputStream(FileOutputStream(backupFile))
+        // 用 use{} 保证异常路径也关闭:早期版本手动 zipOut.close(),一旦遍历中
+        // 某个文件读取失败(权限不足/文件已被删),ZipOutputStream 连同它持有的
+        // FileOutputStream(以及没写完的 zip 中央目录)都不会被关闭 —— 既泄漏 fd,
+        // 也留下一个半截的备份文件,下次恢复时才炸。
         val projectFile = File(projectPath)
+        ZipOutputStream(FileOutputStream(backupFile)).use { zipOut ->
+            projectFile.walk().forEach { file ->
+                if (file.isFile) {
+                    // 计算相对路径
+                    val relativePath = file.relativeTo(projectFile).path
+                    val zipEntry = ZipEntry(relativePath)
 
-        // 遍历项目文件夹
-        projectFile.walk().forEach { file ->
-            if (file.isFile) {
-                // 计算相对路径
-                val relativePath = file.relativeTo(projectFile).path
-                val zipEntry = ZipEntry(relativePath)
+                    // 设置压缩参数
+                    zipEntry.time = file.lastModified()
 
-                // 设置压缩参数
-                zipEntry.time = file.lastModified()
+                    // 添加文件到zip
+                    zipOut.putNextEntry(zipEntry)
 
-                // 添加文件到zip
-                zipOut.putNextEntry(zipEntry)
+                    FileInputStream(file).use { input ->
+                        input.copyTo(zipOut, bufferSize = 8192)
+                    }
 
-                val input = FileInputStream(file)
-                input.copyTo(zipOut, bufferSize = 8192)
-                input.close()
-
-                zipOut.closeEntry()
+                    zipOut.closeEntry()
+                }
             }
         }
-
-        zipOut.close()
 
         LogCatcher.i("CodeEditScreen", "备份成功，保存到: ${backupFile.absolutePath}")
         return@withContext backupFile.absolutePath

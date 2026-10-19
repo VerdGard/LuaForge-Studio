@@ -336,11 +336,23 @@ public class LuaService extends Service implements LuaContext, LuaBroadcastRecei
 
     @Override
     public void onDestroy() {
-        // TODO: Implement this method
+        // onDestroy 回调要用 L 收尾,必须放在 close 之前
         runFunc("onDestroy");
         if (mReceiver != null)
             unregisterReceiver(mReceiver);
         super.onDestroy();
+
+        // 关闭 Lua 虚拟机:此前缺失,每起一次 Service 就泄漏一整个 Lua VM。
+        // newLuaState() 把自己注册进 LuaStateFactory.states(静态 Map)并被强引用,
+        // 所以 LuaState.finalize 里的 close() 兜底永远不会跑,native 内存只增不减。
+        if (L != null && !L.isClosed()) {
+            try {
+                L.gc(LuaState.LUA_GCCOLLECT, 1);
+                L.close();
+            } catch (Throwable t) {
+                Log.w("LuaService", "关闭 LuaState 失败: " + t.getMessage());
+            }
+        }
     }
 
 
@@ -592,11 +604,25 @@ public class LuaService extends Service implements LuaContext, LuaBroadcastRecei
     }
 
     //运行lua脚本
+    /**
+     * Lua 虚拟机是否仍可用。
+     *
+     * <p>与 {@code LuaActivity#luaAlive()} 同一套理由:onDestroy 会 close 掉
+     * {@link LuaState}(否则每起一次 Service 就泄漏一整个 Lua VM ——
+     * wrapper 被 LuaStateFactory.states 静态持有,finalize 兜底永远不会触发)。
+     * close 之后 native 指针为 0,任何 {@code _xxx(0,...)} 都是空指针崩溃,
+     * 而 Service 被系统杀掉后广播/回调仍可能迟到,所以每个入口先过这一关。
+     */
+    private boolean luaAlive() {
+        return L != null && !L.isClosed();
+    }
+
     public Object doFile(String filePath) {
         return doFile(filePath, new Object[0]);
     }
 
     public Object doFile(String filePath, Object[] args) {
+        if (!luaAlive()) return null;
         int ok = 0;
         try {
             if (filePath.charAt(0) != '/')
@@ -630,6 +656,7 @@ public class LuaService extends Service implements LuaContext, LuaBroadcastRecei
     }
 
     public Object doAsset(String name, Object... args) {
+        if (!luaAlive()) return null;
         int ok = 0;
         try {
             byte[] bytes = readAsset(name);
@@ -662,7 +689,7 @@ public class LuaService extends Service implements LuaContext, LuaBroadcastRecei
 
     //运行lua函数
     public Object runFunc(String funcName, Object... args) {
-        if (L != null) {
+        if (luaAlive()) {
             try {
                 L.setTop(0);
                 L.getGlobal(funcName);
@@ -696,6 +723,7 @@ public class LuaService extends Service implements LuaContext, LuaBroadcastRecei
 
     //运行lua代码
     public Object doString(String funcSrc, Object... args) {
+        if (!luaAlive()) return null;
         try {
             L.setTop(0);
             int ok = L.LloadString(funcSrc);
@@ -881,6 +909,7 @@ public class LuaService extends Service implements LuaContext, LuaBroadcastRecei
     }
 
     public Object get(String key) throws LuaException {
+        if (!luaAlive()) return null;
         L.getGlobal(key);
         return L.toJavaObject(-1);
     }

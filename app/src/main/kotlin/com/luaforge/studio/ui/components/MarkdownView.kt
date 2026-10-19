@@ -65,15 +65,17 @@ class MarkdownView @JvmOverloads constructor(
     fun loadFromFile(file: File?) {
         var str: String?
         try {
-            val fileInputStream = FileInputStream(file)
-            val bufferedReader = BufferedReader(InputStreamReader(fileInputStream))
+            // 用 use{} 保证异常路径也关闭 reader:早期版本只 close 了 FileInputStream,
+            // 且异常时两者都不关 —— Markdown 预览会被反复打开,泄漏的 fd
+            // 攒到上限就是 "Too many open files",表现为整个编辑器读文件全失败。
             val sb = StringBuilder()
-            while (true) {
-                val readLine = bufferedReader.readLine() ?: break
-                sb.append(readLine)
-                sb.append("\n")
+            BufferedReader(InputStreamReader(FileInputStream(file), Charsets.UTF_8)).use { bufferedReader ->
+                while (true) {
+                    val readLine = bufferedReader.readLine() ?: break
+                    sb.append(readLine)
+                    sb.append("\n")
+                }
             }
-            fileInputStream.close()
             str = sb.toString()
         } catch (e: FileNotFoundException) {
             Log.e(TAG, "FileNotFoundException:$e")

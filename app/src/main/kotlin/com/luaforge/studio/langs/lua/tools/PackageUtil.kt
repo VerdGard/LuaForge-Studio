@@ -7,7 +7,6 @@ import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileInputStream
-import java.io.InputStream
 import java.io.InputStreamReader
 import java.nio.charset.StandardCharsets
 
@@ -29,19 +28,20 @@ object PackageUtil {
         }
 
         try {
-            // 从原始资源加载
-            val inputStream: InputStream = context.resources.openRawResource(R.raw.android)
-            val reader = BufferedReader(
-                InputStreamReader(inputStream, StandardCharsets.UTF_8)
-            )
-
+            // 从原始资源加载。use{} 保证异常路径也关闭:
+            // android 类库清单有数 MB,解析中途抛异常若不关流会泄漏 fd,
+            // 而补全数据加载失败后还会被反复重试。
             val content = StringBuilder()
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                content.append(line).append("\n")
+            context.resources.openRawResource(R.raw.android).use { inputStream ->
+                BufferedReader(
+                    InputStreamReader(inputStream, StandardCharsets.UTF_8)
+                ).use { reader ->
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        content.append(line).append("\n")
+                    }
+                }
             }
-            reader.close()
-            inputStream.close()
 
             initializePackages(context, content.toString())
 
@@ -64,16 +64,15 @@ object PackageUtil {
         try {
             val file = File(path)
             if (file.exists()) {
-                val reader = BufferedReader(
-                    InputStreamReader(FileInputStream(file), StandardCharsets.UTF_8)
-                )
-
                 val content = StringBuilder()
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                    content.append(line).append("\n")
+                BufferedReader(
+                    InputStreamReader(FileInputStream(file), StandardCharsets.UTF_8)
+                ).use { reader ->
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        content.append(line).append("\n")
+                    }
                 }
-                reader.close()
 
                 initializePackages(context, content.toString())
             }

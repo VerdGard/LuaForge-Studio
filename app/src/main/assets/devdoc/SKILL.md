@@ -437,9 +437,12 @@ activity.setContentView(view)
 **选型**:纯静态/少量状态的现代 UI 走 Compose;要复用 `WidgetsCatalog.md` 的成熟控件时,
 既可以 `loadlayout`,也可以 `AndroidView` 嵌进 Compose —— 两者可在同一项目共存。
 
-**体积**:默认发行版(A 方案)把 Compose 运行时打进每个 APK;要零增重需用
-`-PlfComposeBundled=false` 构建的 core + 项目自带 `libs/compose_bridge.dex`(C 方案)。
-**两套 Compose 运行时不能混用**,内置桥可用时会忽略外部 dex。
+**体积**:Compose 运行时(约 1.5MB dex)**无条件**随 core 打进每个项目 APK,没有零体积开关。
+早期的「项目自带 `libs/compose_bridge.dex`」外部桥方案已移除 —— 两套 Compose 运行时混用时
+ART 可能随机命中不同版本的同名类,表现为真机偶发 `NoSuchMethodError`。
+
+**`size` 属性双语义**:`Spacer`/`Box`/`Image` 上是尺寸(dp),`Text`/`Icon`(回退文字)上是字号(sp)。
+写 `Text("x", size = 20)` 得到的是 20sp 字号,不会额外加 `.size(20.dp)`。
 
 ### 1.11 易错点
 

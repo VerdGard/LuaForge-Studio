@@ -192,30 +192,84 @@ public class LuaAsyncTask extends AsyncTaskX implements LuaGcable {
 
     @Override
     protected void onPostExecute(Object result) {
-        // TODO: Implement this method
-
-        if (isCancelled())
+        if (isCancelled()) {
+            // 取消路径原本直接 return,连 gc 都不做 —— 而 doInBackground 里
+            // 已经 newLuaState() 建过 VM 了,于是这个 VM 永久留在
+            // LuaStateFactory.states 里。执行 Lua 脚本的任务常被取消
+            // (页面切走、gc() 主动 cancel),这条路径比正常完成更频繁,
+            // 所以必须先把回调跑完再统一释放。
+            runCallbackSafely(null);
+            closeLua();
             return;
+        }
+        runCallbackSafely(result);
+        closeLua();
+    }
+
+    private void runCallbackSafely(Object result) {
+        if (mCallback == null) return;
+        // mCallback 是**父上下文**(LuaActivity/LuaService)那个 VM 上的函数引用,
+        // 不是本任务自建的 L 上的。而父 Activity 的 onDestroy 现在会 close 掉
+        // 父 VM —— 若任务在页面销毁后才回调,这个引用指向的 native state 已经没了。
+        // LuaObject.call() 会走到 _pushValue(0, ...):那是空指针,**直接崩在 native**,
+        // 而不是抛 LuaException,所以必须在 Java 侧先拦。
+        LuaState owner = mCallback.getLuaState();
+        if (owner == null || owner.isClosed()) {
+            return;
+        }
         try {
-            if (mCallback != null)
-                mCallback.call((Object[]) result);
+            mCallback.call((Object[]) result);
         } catch (LuaException e) {
             mLuaContext.sendError("onPostExecute", e);
+        } catch (Throwable t) {
+            mLuaContext.sendError("onPostExecute", t);
         }
-        if (L != null)
-            L.gc(LuaState.LUA_GCCOLLECT, 1);
+    }
+
+    /**
+     * 释放本任务自建的 Lua 虚拟机。
+     *
+     * <p>{@code doInBackground} 为每个任务 {@code newLuaState()} 了一个独立 VM,
+     * 但旧代码只做了 {@code L.gc(...)} —— 那是"让 Lua 自己回收垃圾",
+     * 不是"释放这个 VM"。VM 的 wrapper 被 {@code LuaStateFactory.states}
+     * 静态持有,finalize 兜底永远不会触发,所以每一层
+     * {@code task(function() ... end)} 都实实在在泄漏一整个 lua_State
+     * (含 registry、栈、以及它引用的所有 Java 对象)。
+     * 原代码末尾那句被注释掉的 {@code //L.close();} 就是当时想到了但没做完。
+     *
+     * <p>只在 doInBackground 真的建过 VM(L != null)时关闭;mDelay 分支
+     * 提前返回、从未建 VM,此时 L 为 null。
+     */
+    private void closeLua() {
+        if (L != null && !L.isClosed()) {
+            try {
+                L.gc(LuaState.LUA_GCCOLLECT, 1);
+                L.close();
+            } catch (Throwable ignored) {
+                // 释放失败不能影响任务收尾
+            }
+        }
+        L = null;
         System.gc();
-        //L.close();
     }
 
     @Override
     protected void onProgressUpdate(Object[] values) {
-        // TODO: Implement this method
-        try {
-            if (mUpdate != null)
-                mUpdate.call(values);
-        } catch (LuaException e) {
-            mLuaContext.sendError("onProgressUpdate", e);
+        // mUpdate 与 mCallback 一样,引用的是**父上下文**那个 VM 上的函数。
+        // 父 Activity 的 onDestroy 现在会 close 掉父 VM,而进度回调可能在其后
+        // 才被投递到主线程 —— 直接 call() 会撞上 native 空指针,所以先判存活。
+        LuaObject update = mUpdate;
+        if (update != null) {
+            LuaState owner = update.getLuaState();
+            if (owner != null && !owner.isClosed()) {
+                try {
+                    update.call(values);
+                } catch (LuaException e) {
+                    mLuaContext.sendError("onProgressUpdate", e);
+                } catch (Throwable t) {
+                    mLuaContext.sendError("onProgressUpdate", t);
+                }
+            }
         }
         super.onProgressUpdate(values);
     }

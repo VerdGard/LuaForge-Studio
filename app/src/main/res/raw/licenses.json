@@ -19,7 +19,7 @@
     },
     {
       "name": "Jetpack Compose",
-      "artifactVersion": "1.6.0",
+      "artifactVersion": "1.8.0-alpha08",
       "developers": [
         {
           "name": "Google",
@@ -36,7 +36,7 @@
     },
     {
       "name": "Kotlin Standard Library",
-      "artifactVersion": "1.9.0",
+      "artifactVersion": "2.3.10",
       "developers": [
         {
           "name": "JetBrains",
@@ -63,14 +63,15 @@
       "licenses": [
         {
           "name": "MIT License",
-          "licenseContent": "https://github.com/tarifchakder/ktoast/blob/master/LICENSE"
+          "licenseContent": null,
+          "url": "https://github.com/tarifchakder/ktoast/blob/master/LICENSE"
         }
       ],
       "website": "https://github.com/tarifchakder/ktoast"
     },
     {
       "name": "OkHttp",
-      "artifactVersion": "4.12.0",
+      "artifactVersion": "5.3.2",
       "developers": [
         {
           "name": "Square",
@@ -87,7 +88,7 @@
     },
     {
       "name": "Glide",
-      "artifactVersion": "4.16.0",
+      "artifactVersion": "5.0.5",
       "developers": [
         {
           "name": "Bump Technologies",
@@ -104,7 +105,7 @@
     },
     {
       "name": "Gson",
-      "artifactVersion": "2.10.1",
+      "artifactVersion": "2.13.2",
       "developers": [
         {
           "name": "Google",
@@ -138,7 +139,7 @@
     },
     {
       "name": "AndroidX Core",
-      "artifactVersion": "1.12.0",
+      "artifactVersion": "1.18.0-rc01",
       "developers": [
         {
           "name": "Google",
@@ -155,7 +156,7 @@
     },
     {
       "name": "Material Design Components",
-      "artifactVersion": "1.10.0",
+      "artifactVersion": "1.14.0-alpha09",
       "developers": [
         {
           "name": "Google",
@@ -169,6 +170,114 @@
         }
       ],
       "website": "https://material.io/develop/android"
+    },
+    {
+      "name": "sora-editor",
+      "artifactVersion": "1.0.0",
+      "developers": [
+        {
+          "name": "Rosemoe",
+          "organization": "GitHub"
+        }
+      ],
+      "licenses": [
+        {
+          "name": "GNU Lesser General Public License 2.1",
+          "licenseContent": null,
+          "url": "https://github.com/Rosemoe/sora-editor/blob/main/LICENSE"
+        }
+      ],
+      "website": "https://github.com/Rosemoe/sora-editor"
+    },
+    {
+      "name": "Android APK Signer (apksigner)",
+      "artifactVersion": "1.2.0",
+      "developers": [
+        {
+          "name": "The Android Open Source Project",
+          "organization": "Google"
+        }
+      ],
+      "licenses": [
+        {
+          "name": "Apache License 2.0",
+          "licenseContent": null,
+          "url": "https://android.googlesource.com/platform/tools/apksig/+/refs/heads/main/LICENSE"
+        }
+      ],
+      "website": "https://android.googlesource.com/platform/tools/apksig"
+    },
+    {
+      "name": "Coil",
+      "artifactVersion": "2.7.0",
+      "developers": [
+        {
+          "name": "Coil Contributors",
+          "organization": "GitHub"
+        }
+      ],
+      "licenses": [
+        {
+          "name": "Apache License 2.0",
+          "licenseContent": null,
+          "url": "https://github.com/coil-kt/coil/blob/main/LICENSE.txt"
+        }
+      ],
+      "website": "https://coil-kt.github.io/coil/"
+    },
+    {
+      "name": "Eclipse Compiler for Java (ECJ)",
+      "artifactVersion": "3.33.0",
+      "developers": [
+        {
+          "name": "Eclipse Foundation",
+          "organization": "Eclipse"
+        }
+      ],
+      "licenses": [
+        {
+          "name": "Eclipse Public License 2.0",
+          "licenseContent": null,
+          "url": "https://www.eclipse.org/legal/epl-2.0/"
+        }
+      ],
+      "website": "https://www.eclipse.org/jdt/"
+    },
+    {
+      "name": "Accompanist",
+      "artifactVersion": "0.37.3",
+      "developers": [
+        {
+          "name": "Google",
+          "organization": "Google"
+        }
+      ],
+      "licenses": [
+        {
+          "name": "Apache License 2.0",
+          "licenseContent": null,
+          "url": "https://github.com/google/accompanist/blob/main/LICENSE"
+        }
+      ],
+      "website": "https://google.github.io/accompanist/"
+    },
+    {
+      "name": "ComposeScrollbars",
+      "artifactVersion": "1.0.4",
+      "developers": [
+        {
+          "name": "GIGAMOLE",
+          "organization": "GitHub"
+        }
+      ],
+      "licenses": [
+        {
+          "name": "Apache License 2.0",
+          "licenseContent": null,
+          "url": "https://github.com/GIGAMOLE/ComposeScrollbars/blob/main/LICENSE"
+        }
+      ],
+      "website": "https://github.com/GIGAMOLE/ComposeScrollbars"
     }
   ]
 }

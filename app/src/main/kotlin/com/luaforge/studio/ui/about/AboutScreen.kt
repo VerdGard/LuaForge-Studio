@@ -195,14 +195,8 @@ fun AboutScreen(onBack: () -> Unit) {
 
     val teamMembers = remember {
         listOf(
-            Developer(
-                nameResId = R.string.dev_w_name,
-                roleResId = R.string.dev_w_role,
-                description = "",
-                color = Color(0xFF8D4A5A),
-                iconResId = R.drawable.ic_w,
-                url = "https://github.com/VerdGard/LuaForge-Studio"
-            ),
+            // 先技术栈,后两位作者。两个 Developer 相邻排列,
+            // 避免原来"作者散在首尾"的排法让人以为他们是不同角色。
             Developer(
                 nameResId = R.string.dev_kotlin_name,
                 roleResId = R.string.dev_kotlin_role,
@@ -241,6 +235,14 @@ fun AboutScreen(onBack: () -> Unit) {
                 description = "",
                 color = Color(0xFF3A7D8C),
                 iconResId = 0,
+                url = "https://github.com/VerdGard/LuaForge-Studio"
+            ),
+            Developer(
+                nameResId = R.string.dev_w_name,
+                roleResId = R.string.dev_w_role,
+                description = "",
+                color = Color(0xFF8D4A5A),
+                iconResId = R.drawable.ic_w,
                 url = "https://github.com/VerdGard/LuaForge-Studio"
             )
         )
@@ -284,79 +286,6 @@ fun AboutScreen(onBack: () -> Unit) {
                     }
                 )
             }
-        }
-
-        item {
-            Spacer(modifier = Modifier.height(8.dp))
-            SectionTitle(stringResource(R.string.community_title))
-
-            Surface(
-                onClick = {
-                    try {
-                        LogCatcher.i("AboutScreen", "打开QQ群")
-                        val intent = Intent(
-                            Intent.ACTION_VIEW,
-                            "https://qun.qq.com/universal-share/share?ac=1&authKey=fHBSdBajwT9XrPXNUDcaHH17V%2F9xWMrW1qoPGaRgnznVc5MnD%2BW9%2BJr9dtl5J&busi_data=eyJncm91cENvZGUiOiI2NTUzMjAxMTIiLCJ0b2tlbiI6ImdpYmcxUG16a2JvZHROVzJzVkVKdTBrekxEankxNlYza0NwaXNUNW9xNHk1bVBCNXdrMG40ZnVzK0Y2Z0VwbnEiLCJ1aW4iOiIxNDQ3MDE3NzAxIn0%3D&data=9sSl5HKUN9A82WDrHO0ixxwNEEKTiRmbpG-5AhdhGft7lEaUrorDneokip8GNMS47lVst25Mi8NE4MAod9SdPA&svctype=4&tempid=h5_group_info".toUri()
-                        )
-                        context.startActivity(intent)
-                    } catch (e: Exception) {
-                        LogCatcher.e("AboutScreen", "打开QQ群失败", e)
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                shape = MaterialTheme.shapes.large
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = Color(0xFF12B7F5),
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.ic_qq_group),
-                                contentDescription = "QQ Group",
-                                modifier = Modifier.size(24.dp),
-                                tint = Color.White
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(16.dp))
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = stringResource(R.string.qq_group_name),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = stringResource(R.string.qq_group_number),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.outlineVariant,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
         }
 
         item {

@@ -868,8 +868,7 @@ class ApkBuilder {
 
                 // 2.6 探测项目是否用到 Compose,只用于如实播报体积来源。
                 //     Compose 运行时在 core.apk 模板里,模板永不裁剪,所以这里无法"移除"它 ——
-                //     想零 Compose 体积只能换用 lfComposeBundled=false 构建的 core 发行版,
-                //     并让项目自备 libs/compose_bridge.dex(方案 C)。
+                //     Compose 桥总是随 core 编入,不存在"零 Compose 体积"的发行版。
                 if (BuildSlimmer.usesCompose(projectPath)) {
                     LogCatcher.i(
                         "ApkBuilder",

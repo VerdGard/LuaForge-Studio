@@ -2,7 +2,7 @@
 
 ## 1.6.9
 
-- **新增:Lua 原生 Compose(两套发行方案 A / C 共存)**
+- **新增:Lua 原生 Compose(内置桥,单一分发方式)**
   - Lua 可直接书写 Compose 界面:`compose(fn)` / `composeView(fn)` / `composeContent(fn)` 返回挂到 Compose 的 SlotTable,`state(v)` 的读写走快照系统,状态变化**按 group 精确重组**
   - **65 个组件**:布局 `Column`/`Row`/`Box`/`FlowRow`/`FlowColumn`/`ScrollColumn`/`ScrollRow`;容器 `Card`/`ElevatedCard`/`OutlinedCard`/`Surface`/`Scaffold`;懒加载 `LazyColumn`/`LazyRow`/`LazyVerticalGrid`/`LazyHorizontalGrid`;文本图形 `Text`/`Icon`/`Image`/`Spacer`/`Divider`/`VerticalDivider`/`CircularProgressIndicator`/`LinearProgressIndicator`/`Badge`/`BadgedBox`;按钮族 12 种(`Button`/`ElevatedButton`/`FilledTonalButton`/`OutlinedButton`/`TextButton`/`IconButton` 3 种/FAB 4 种);选择输入 `Switch`/`Checkbox`/`RadioButton`/`Slider`/`RangeSlider`/`TextField`/`OutlinedTextField`;Chip 4 种;导航 `TopAppBar` 4 种/`BottomAppBar`/`NavigationBar`/`NavigationRail`/`TabRow`/`ScrollableTabRow`/`Tab`;`AlertDialog`/`Dialog`;`AndroidView`;`LaunchedEffect`
     - 另含 `state(v)`、`rangeState(a,b)`、`remember(fn)` 三个状态函数
@@ -10,12 +10,13 @@
   - 属性转换统一:间距 `padding`/`paddingH`/`paddingV`/`gap`/`contentPadding`、尺寸 `width`/`height`/`size`/`fillMax*`/`aspectRatio`、视觉 `background`/`corner`/`borderWidth`+`borderColor`/`shadow`/`alpha`/`offsetX`+`offsetY`、子项弹性 `weight`、颜色 `0xAARRGGBB` 或 `"#RRGGBB"`/`"#AARRGGBB"`、`size`(sp)/`bold`/`maxLines`/`align`/`space`/`overflow`/`scale`
     - Modifier 应用顺序为**尺寸 → 位移 → 圆角/背景/描边/阴影/透明 → 间距 → 点击**,背景与圆角在 `padding` 之前,避免边缘露白
   - **全局名与 `import` 的冲突**:通配 `import "android.widget.*"` 走 `_G.__index`,不会覆盖同名组件;但**显式** `import "android.widget.Button"` 会覆盖。为此额外注册 `Compose` 命名空间表(`Compose.Button` / `Compose.state` ...),与全局名是同一份实现
-  - **方案 A(内置)**:`LuaCompose` 随 `core` 编译,开箱可用;**方案 C(外部)**:项目自带 `libs/compose_bridge.dex`,按需加载
-  - **内置优先、外部兜底**:两套 Compose 运行时混用会在真机随机抛 `NoSuchMethodError`,因此内置桥可用时**主动跳过**外部 dex 并记日志
-  - **零 Compose 体积发行版**:`./gradlew -PlfComposeBundled=false :core:assembleRelease` —— 排除内置桥源码且不引任何 Compose 依赖,该发行版只能用方案 C
-    - 内置桥源码移到独立源集 `core/src/compose/kotlin`,用**条件 `srcDir`** 控制是否编入(不用 `kotlin.exclude`,避免不同 AGP 版本下静默不生效)
+  - **单一分发方式**:`LuaCompose` 随 `core` 一起编译进 `core.apk`,项目开箱可用,无需任何配置
+    - 已移除早期的「方案 C」(项目自带 `libs/compose_bridge.dex`)+ `-PlfComposeBundled=false` 零体积发行版。理由:两套 Compose 运行时不能混用(内置优先只是绕过问题,ART 仍可能随机命中不同版本的同名类,表现为真机上偶发 `NoSuchMethodError`),而维护成本落在每个用户项目上,收益仅是未用 Compose 的项目省约 1.5MB dex
+    - 桥源码位于独立源集 `core/src/compose/kotlin`,与 `src/main/kotlin` 分开只为让「这批文件依赖 Compose 编译器插件」这件事更明显
   - 打包侧:`BuildSlimmer.usesCompose` 探测项目是否真用 Compose,只在用到时追加 Compose 的 keep 规则;`ApkBuilder` 如实播报体积来源
   - 新增文档 `assets/doc/Compose.md`(MCP `read_dev_doc` 可读);`SKILL.md` 增 §1.10.1
+  - **`size` 属性双语义**:`Spacer`/`Box`/`Image` 上是**尺寸(dp)**,`Text`/`Icon`(回退文字)上是**字号(sp)**。早期版本无条件按 dp 处理,导致 `Text("x", size = 20)` 同时被加 `.size(20.dp)`,文字被挤进 20dp 方块里换行截断 —— 表现为「布局显示不全」
+  - **edge-to-edge 适配**:API 35+ 系统强制 edge-to-edge,而 `composeContent` / `setContentView` 会替换掉 `LuaActivity` 自己那个挂了 inset 监听的根布局,导致内容被状态栏压住。桥现在自己在 ComposeView 上装 inset 监听(仅 API≥35 且父容器是 `android.R.id.content` 时生效)
 - **协同改为双向同步,并修复"同步把项目文件改坏"** (P0–P3)
   - **P0 根因修复:统一原子写 + 项目级写锁**
     - 新增 `utils/ProjectFileIO`:`writeTextAtomic`/`writeBytesAtomic`(同目录 tmp → `fd.sync()` → rename)、`lockFor`/`lockForProjectFile`(按 `settings.json`/`.luaforge`/`.git` 向上探测项目根)、`md5Of`
@@ -116,7 +117,7 @@
   - 浮窗接管 `print`/`onError` 后调用 `LuaActivity.setDebuggerActive(true)`，`MainHandler` 在该标记期间跳过旧 Toast 回显（仅落盘 `luaforge.log`）
   - 浮窗销毁时复位标记，非调试运行保持原有 Toast 行为
 - 浮窗与 PopupMenu 弹窗改用圆角（20dp）：浮窗底色随模式在 `Colors.colorPrimary` / 报错红之间切换，PopupMenu 经 `mPopup` 反射铺圆角背景
-- **Jetpack Compose 支持（方案 A）**：Lua 用 table 描述 UI 树，由 Kotlin 桥渲染为 Material3 组件
+- **Jetpack Compose 支持**：Lua 用 table 描述 UI 树，由 Kotlin 桥渲染为 Material3 组件(桥随 core 编译,无外部 dex 方案)
   - 新增全局函数 `compose(tree)`（返回可挂载的 `ComposeView`）/ `composeContent(tree)`（直接设为当前页面内容视图），由 `LuaActivity.initLua` 注册
   - 支持标签：`Column` / `Row` / `Box` / `Card` / `Text` / `Button` / `Spacer` / `Divider`；通用属性 `padding` / `fillMaxWidth` / `width` / `height` / `background` / `corner`；颜色写作 `0xAARRGGBB`
   - 不直接调用 `@Composable`：`@Composable` 函数签名被编译器改写（注入 `Composer`）且必须在 composition 上下文执行，Lua 无法直接调用，故采用「描述树 → 渲染」形态

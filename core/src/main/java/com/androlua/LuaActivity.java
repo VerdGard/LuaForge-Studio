@@ -267,8 +267,7 @@ public class LuaActivity extends AppCompatActivity
       mLuaDexLoader = new LuaDexLoader(this);
       mLuaDexLoader.loadLibs();
 
-      // Lua 侧 Jetpack Compose 桥:A(随 core 内置)/ C(项目 libs/compose_bridge.dex)共存。
-      // 必须放在 loadLibs() 之后 —— 外部桥靠 libs/*.dex 的类加载器才可见。
+      // Lua 侧 Jetpack Compose 桥(随 core 内置)。
       registerComposeBridge();
 
       // IDE 会话钩子:防火墙注入、调试浮窗注入等。
@@ -756,8 +755,28 @@ public class LuaActivity extends AppCompatActivity
     }
 
     super.onDestroy();
+
+    // 关闭 Lua 虚拟机 —— 这一步此前缺失,是**每开一个页面就泄漏一整个 VM** 的根因。
+    //
+    // 为什么非关不可:newLuaState() 会把自己放进 LuaStateFactory.states 这个
+    // **静态 Map**,而这个 Map 一直强引用 wrapper。wrapper 只要有静态引用,
+    // finalize() 的兜底路径就永远不会触发,于是 LuaState.finalize 里那句
+    // close() 形同虚设 —— native 的 lua_State、它上面的 registry、
+    // 以及被 Lua 侧引用的所有 Java 对象(经 javaObjectMap)全都归不了零。
+    // 反复打开/关闭项目的表现是 native 内存单调上涨,最终 OOM 而不是 Java 堆崩。
+    //
+    // 关闭时机:必须在 runFunc("onDestroy") 与 hook.onSessionEnd 之后 ——
+    // 它们要用 L 跑脚本收尾;也在 super.onDestroy() 之后,避免基类回调再用 L。
+    // 关闭后所有对外入口靠 luaAlive() 拦下,不会踩空指针。
+    if (L != null && !L.isClosed()) {
+      try {
+        L.gc(LuaState.LUA_GCCOLLECT, 1);
+        L.close();
+      } catch (Throwable t) {
+        Log.w("LuaActivity", "关闭 LuaState 失败: " + t.getMessage());
+      }
+    }
     System.gc();
-    L.gc(LuaState.LUA_GCCOLLECT, 1);
   }
 
   @Override
@@ -1365,35 +1384,20 @@ public class LuaActivity extends AppCompatActivity
   /**
    * 注册 Lua 侧 Compose 全局函数(compose / composeContent / state / Column / Text ...)。
    *
-   * <p>加载顺序:**项目内的外部桥优先**(方案 C,`libs/compose_bridge.dex`),
-   * 其次回退随 core 编译的内置桥(方案 A)。两者都没有时只记一条日志,
-   * 不抛异常、不提示 —— 没用 Compose 的项目不应该看到任何噪音。
+   * <p>桥随 core 一起编译(内置桥),不存在其他分发方式。注册失败只记一条日志,
+   * 不抛异常、不提示 —— 没用 Compose 的项目不应该看到任何噪音,用了的项目
+   * 也只是拿不到 {@code compose} 函数,页面本身照常启动。
    *
-   * <p>这里刻意用反射入口({@code LuaComposeLoader.register})而不是直接调用
-   * {@code LuaCompose.register}:外部发行版可能整体不编入内置桥,
-   * 直接引用会在类链接期就抛 NoClassDefFoundError。
+   * <p>入口走 {@code LuaComposeLoader.register} 而非直接调 {@code LuaCompose.register},
+   * 目的是失败隔离:注册过程要建 60 多个 {@code JavaFunction} 并逐个注册全局名,
+   * 任何一处抛错都被收敛成日志,而不是让 {@code doFile} 整体失败。
    */
   private void registerComposeBridge() {
     try {
-      final LuaDexLoader dexLoader = mLuaDexLoader;
-      com.luaforge.studio.compose.LuaComposeLoader.DexProvider provider =
-          new com.luaforge.studio.compose.LuaComposeLoader.DexProvider() {
-            @Override
-            public ClassLoader load(String path) {
-              try {
-                return dexLoader.loadDex(path);
-              } catch (Throwable t) {
-                Log.e("LuaActivity", "加载 compose 桥 dex 失败: " + path, t);
-                return null;
-              }
-            }
-          };
       com.luaforge.studio.compose.LuaComposeLoader.Result r =
-          com.luaforge.studio.compose.LuaComposeLoader.INSTANCE.register(L, this, luaDir, provider);
+          com.luaforge.studio.compose.LuaComposeLoader.INSTANCE.register(L, this);
       if (r.getSource() == com.luaforge.studio.compose.LuaComposeLoader.Source.NONE) {
         Log.i("LuaActivity", "Compose 桥未启用: " + r.getDetail());
-      } else {
-        Log.i("LuaActivity", "Compose 桥已启用(" + r.getSource() + ", " + r.getRegistered() + " 个函数)");
       }
     } catch (Throwable t) {
       // 桥不可用绝不能影响页面启动
@@ -1447,11 +1451,28 @@ public class LuaActivity extends AppCompatActivity
     }
   }
 
+  /**
+   * Lua 虚拟机是否仍可用。
+   *
+   * <p>onDestroy 会关闭 {@link LuaState}(否则每个页面泄漏一整个 Lua VM,
+   * 见 onDestroy 里 close 那段注释)。而页面销毁后仍可能有迟到回调触碰 L:
+   * 后台线程回的 {@code push()}/{@code set()}(经 MainHandler 投递)、
+   * 定时器、以及 MCP 侧按 luaDir 找到句柄后的调用。
+   *
+   * <p>{@link LuaState#close()} 会把 native 指针置 0,之后再调任何
+   * {@code _xxx(0, ...)} 都是空指针 —— 直接崩,而不是抛 LuaException。
+   * 所以每个对外入口先过这一关,把"已关闭"降级成"静默返回"。
+   */
+  private boolean luaAlive() {
+    return L != null && !L.isClosed();
+  }
+
   public Object doFile(String filePath) {
     return doFile(filePath, new Object[0]);
   }
 
   public Object doFile(String filePath, Object[] args) {
+    if (!luaAlive()) return null;
     int ok = 0;
     try {
       if (filePath.charAt(0) != '/') filePath = luaDir + "/" + filePath;
@@ -1506,6 +1527,7 @@ public class LuaActivity extends AppCompatActivity
   }
 
   public Object doAsset(String name, Object[] args) {
+    if (!luaAlive()) return null;
     int ok = 0;
     try {
       byte[] bytes = readAsset(name);
@@ -1537,7 +1559,7 @@ public class LuaActivity extends AppCompatActivity
   }
 
   public Object runFunc(String funcName, Object... args) {
-    if (L != null) {
+    if (luaAlive()) {
       synchronized (L) {
         try {
           L.setTop(0);
@@ -1573,6 +1595,7 @@ public class LuaActivity extends AppCompatActivity
   }
 
   public Object doString(String funcSrc, Object... args) {
+    if (!luaAlive()) return null;
     try {
       L.setTop(0);
       int ok = L.LloadString(funcSrc);
@@ -1799,6 +1822,7 @@ public class LuaActivity extends AppCompatActivity
   }
 
   private void setField(String key, Object value) {
+    if (!luaAlive()) return;
     synchronized (L) {
       try {
         L.pushObjectValue(value);
@@ -1823,6 +1847,7 @@ public class LuaActivity extends AppCompatActivity
   }
 
   public Object get(String key) throws LuaException {
+    if (!luaAlive()) return null;
     synchronized (L) {
       L.getGlobal(key);
       return L.toJavaObject(-1);

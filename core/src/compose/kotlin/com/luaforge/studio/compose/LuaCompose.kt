@@ -127,7 +127,7 @@ import com.luajava.LuaObject
 import com.luajava.LuaState
 
 /**
- * Lua 侧 Jetpack Compose 运行时(方案 A:随 core 一起编译)。
+ * Lua 侧 Jetpack Compose 运行时(随 core 一起编译,无其他分发方式)。
  *
  * ## 为什么不"反射调用 @Composable"
  *
@@ -199,6 +199,21 @@ class SlotStore {
     /** 具名子槽位:用于同一节点内多个内容槽(如 Scaffold 的 topBar / content)。 */
     fun namedChild(name: String): SlotStore = named.getOrPut(name) { SlotStore() }
 
+    /*
+     * 已知限制(不修,但记录在案):
+     *
+     * `children` 以节点下标为键,只增不减。普通容器的节点数由脚本静态决定,
+     * 不会有问题;但 `ListItemContent` 用的是**懒加载条目的绝对下标**
+     * (`store.childAt(index)`),因此长时间滚动大列表后,这个 Map 会随
+     * 累计滚过的条目数增长(每个空 SlotStore 约 200 字节,百万条量级才到百 MB)。
+     *
+     * 为什么不在 reset 时裁剪:同一个 store 在一轮组合内可能被 reset 多次
+     * (`Scaffold` 先 `namedChild("topBar")` 渲染顶栏,再 `SlotContent` 又 reset
+     * 渲染内容),任何"轮首清空、轮末保留本轮用到的"方案都会在第二次 reset 时
+     * 丢掉前一次收集的键,把 topBar 的槽位误删 —— 表现为顶栏状态随机丢失。
+     * 正确做法是让懒加载条目用"可见窗口内的序号"做键,但那会改变 `remember`
+     * 在滚动时的语义,属于行为变更而非修 bug,需单独评估。
+     */
     fun nextSlot(factory: () -> Any?): Any? {
         val i = cursor++
         if (values.containsKey(i)) return values[i]
@@ -215,8 +230,8 @@ private val tlCtx = ThreadLocal<ComposeCtx?>()
 
 private const val TAG = "LuaCompose"
 
-/** 桥版本号。控件集扩展后递增,便于外部桥(C 方案)比对。 */
-fun version(): String = "2.0"
+/** 桥版本号。控件集扩展后递增,便于用户脚本探测能力差异。 */
+fun version(): String = "2.1"
 
 // ---------------------------------------------------------------------------
 // Lua 侧状态句柄
@@ -697,7 +712,13 @@ private inline fun buildNodes(store: SlotStore, crossinline exec: () -> Unit): L
         android.util.Log.e(TAG, "Lua compose 闭包执行失败: ${t.message}", t)
         out.add(LuaNode("Text", mapOf("text" to ("compose 出错: " + (t.message ?: t.javaClass.simpleName))), null))
     } finally {
-        tlCtx.set(prev)
+        // 必须 remove 而不是 set(prev):prev 通常就是 null,但 ThreadLocal 的
+        // Entry 会把 key 强引用在 Thread 的 threadLocals 表里,value 也一并留着。
+        // Lua 脚本常在后台线程回调(定时器、协程)里触发组合,这些线程可能是
+        // 线程池的常驻线程 —— 只 set(null) 会让每条线程的 Entry 一直指向
+        // 这个 ThreadLocal,而 ComposeCtx 里的 LuaNode(含 LuaObject、属性 Map)
+        // 在异常路径下可能来不及被替换掉。remove() 明确释放 Entry。
+        if (prev == null) tlCtx.remove() else tlCtx.set(prev)
     }
     return out
 }
@@ -1637,7 +1658,17 @@ private fun callLuaWith(fn: Any?, arg: Any?) {
     }
 }
 
+/**
+ * 主线程 Handler,只建一次。
+ *
+ * 早期版本每次调用都 `Handler(Looper.getMainLooper())`:Handler 与它的 Looper
+ * 绑定,而主线程 Looper 是进程级的,新建的 Handler 对象本身并不泄漏什么 ——
+ * 但 `composeContent(fn)` 每次执行都会分配一个新对象,而这类入口常在
+ * 循环/回调里被反复调用。复用一个实例是零成本的,顺手去掉这份分配。
+ */
+private val mainHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
+
 private fun runOnMain(block: () -> Unit) {
     if (Looper.myLooper() == Looper.getMainLooper()) block()
-    else Handler(Looper.getMainLooper()).post { block() }
+    else mainHandler.post { block() }
 }

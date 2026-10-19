@@ -95,7 +95,12 @@ public final class LuaStateFactory {
      * @param idx
      */
     public synchronized static void removeLuaState(long idx) {
-        states.put(idx, null);
+        // 必须 remove 而不是 put(idx, null):后者在静态 Map 里留下的空条目
+        // 永不回收,每关闭一个 LuaState 就多一条 (Long, null)。反复开关页面时
+        // 这张表会单调变大 —— 虽然单条很小,但它是进程级静态对象,
+        // 属于"活多久长多久"的账,顺手清干净。
+        // 语义等价:getExistingState 对"不存在"和"值为 null"的处理完全相同(都会新建)。
+        states.remove(idx);
     }
 
     /**
