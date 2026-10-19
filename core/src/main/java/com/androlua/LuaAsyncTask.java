@@ -222,7 +222,10 @@ public class LuaAsyncTask extends AsyncTaskX implements LuaGcable {
         } catch (LuaException e) {
             mLuaContext.sendError("onPostExecute", e);
         } catch (Throwable t) {
-            mLuaContext.sendError("onPostExecute", t);
+            // LuaContext.sendError 只声明了 Exception 形参(Error 需走
+            // LuaActivity.sendError(String, Throwable) 那个重载)。这里必须继续捕
+            // Throwable:回调里抛 Error(StackOverflowError 等)若逃逸会直接崩进程。
+            mLuaContext.sendError("onPostExecute", asException(t));
         }
     }
 
@@ -253,6 +256,17 @@ public class LuaAsyncTask extends AsyncTaskX implements LuaGcable {
         System.gc();
     }
 
+    /**
+     * 把 {@link Throwable} 适配成 {@link Exception}。
+     *
+     * <p>{@code LuaContext#sendError} 的形参类型是 {@code Exception},但收尾路径
+     * 必须捕 {@code Throwable} —— 回调里可能抛 {@code Error}。已经是
+     * {@code Exception} 的原样返回,避免多包一层改变日志里的异常类型。
+     */
+    private static Exception asException(Throwable t) {
+        return (t instanceof Exception) ? (Exception) t : new RuntimeException(t);
+    }
+
     @Override
     protected void onProgressUpdate(Object[] values) {
         // mUpdate 与 mCallback 一样,引用的是**父上下文**那个 VM 上的函数。
@@ -267,7 +281,7 @@ public class LuaAsyncTask extends AsyncTaskX implements LuaGcable {
                 } catch (LuaException e) {
                     mLuaContext.sendError("onProgressUpdate", e);
                 } catch (Throwable t) {
-                    mLuaContext.sendError("onProgressUpdate", t);
+                    mLuaContext.sendError("onProgressUpdate", asException(t));
                 }
             }
         }
