@@ -2,9 +2,6 @@ package com.luaforge.studio.utils
 
 import android.content.Context
 import android.content.SharedPreferences
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -92,7 +89,17 @@ object LogCatcher {
      */
     @JvmStatic
     fun clearLogFile() {
-        CoroutineScope(Dispatchers.IO).launch {
+        // 与追加走同一条串行线程:否则"清空"和"正在追加的一行"会互相穿插,
+        // 表现为清空后日志里仍残留半条旧记录
+        try {
+            logHandler.post { clearLogFileNow() }
+        } catch (_: Throwable) {
+            clearLogFileNow()
+        }
+    }
+
+    private fun clearLogFileNow() {
+        synchronized(fileLock) {
             try {
                 val logFile = File(logConfig.logFilePath)
 
@@ -184,32 +191,75 @@ object LogCatcher {
         return ready
     }
 
+    /**
+     * 后台串行落盘线程。
+     *
+     * 旧实现是「每条日志起一个独立协程(IO 调度),里面
+     * `File.appendText`」:每条都要重新 open/write/close 一次文件,还各自持有
+     * 独立协程。构建一个项目会打上百条日志(见 ApkBuilder 的 133 处调用),
+     * 于是同时挂起上百个协程抢同一个文件,IO 排队与协程调度开销会明显拖慢
+     * 主线程(`shouldLog`/格式化都在调用线程上)。
+     *
+     * 现在改为**单线程串行写**:调用方只做一次 `Handler.post`,文件句柄的
+     * 开关、截断判定全部集中在一条后台线程,顺序稳定且不再抖动。
+     */
+    private val logWorker: android.os.HandlerThread by lazy {
+        android.os.HandlerThread("LuaForgeLogCatcher").apply { start() }
+    }
+    private val logHandler: android.os.Handler by lazy {
+        android.os.Handler(logWorker.looper)
+    }
+
+    /** 串行化文件访问,防止 clearLogFile 与追加并发。 */
+    private val fileLock = Any()
+
+    /** 时间格式非线程安全:在锁内格式化。 */
+    private val timeLock = Any()
+    private val timeFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
+
+    /** 超过该大小则截断,避免长时间使用后日志无限增长。 */
+    private const val MAX_LOG_BYTES = 4L * 1024 * 1024
+    private const val TRUNCATE_KEEP = 1024 * 1024
+
     private fun writeToFile(level: String, tag: String, message: String) {
-        // 使用 IO 调度器在后台线程执行
-        CoroutineScope(Dispatchers.IO).launch {
+        val line = synchronized(timeLock) {
+            "[${timeFormat.format(Date())}] [$level] [$tag] $message\n"
+        }
+        try {
+            logHandler.post { appendLine(line) }
+        } catch (_: Throwable) {
+            // HandlerThread 起不来等极端场景:退化为同步写,保证不丢日志
+            appendLine(line)
+        }
+    }
+
+    /** 仅在后台落盘线程执行(退化路径除外)。 */
+    private fun appendLine(line: String) {
+        synchronized(fileLock) {
             try {
                 val logFile = File(logConfig.logFilePath)
-
                 // 确保父目录存在(parentFile 在路径无父级时为 null,例如相对文件名)
                 logFile.parentFile?.let { parentDir ->
-                    if (!parentDir.exists()) {
-                        parentDir.mkdirs()
-                    }
+                    if (!parentDir.exists()) parentDir.mkdirs()
                 }
-
-                // 确保文件存在
-                if (!logFile.exists()) {
-                    logFile.createNewFile()
+                truncateIfNeeded(logFile)
+                java.io.FileOutputStream(logFile, true).use {
+                    it.write(line.toByteArray(Charsets.UTF_8))
                 }
-
-                val timestamp =
-                    SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date())
-                val logEntry = "[$timestamp] [$level] [$tag] $message\n"
-
-                logFile.appendText(logEntry)
             } catch (e: Exception) {
                 android.util.Log.e("LogCatcher", "写入日志文件失败: ${e.message}")
             }
+        }
+    }
+
+    /** 超过上限时保留尾部内容,防止日志文件无限增长。 */
+    private fun truncateIfNeeded(logFile: File) {
+        if (!logFile.exists() || logFile.length() <= MAX_LOG_BYTES) return
+        try {
+            val keep = logFile.readText(Charsets.UTF_8).takeLast(TRUNCATE_KEEP)
+            logFile.writeText("... (较早日志已截断)\n$keep", Charsets.UTF_8)
+        } catch (_: Throwable) {
+            // 截断失败继续追加,不影响使用
         }
     }
 }

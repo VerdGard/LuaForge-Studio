@@ -171,10 +171,20 @@ fun MainApp() {
         )
     }
 
-    // 网络代理随设置同步:留空即直连。代理置入 NetworkProxy 后,
+    // 网络代理随设置同步:开关关闭或地址留空即直连。代理置入 NetworkProxy 后,
     // 各 OkHttp 客户端会在下次取用时按 revision 自动重建(见 OkHttpUtil / MavenDownloader)。
-    LaunchedEffect(settings.networkProxy) {
-        NetworkProxy.configure(settings.networkProxy)
+    LaunchedEffect(
+        settings.networkProxy,
+        settings.networkProxyEnabled,
+        settings.networkProxyDirect,
+        settings.networkProxyOnly
+    ) {
+        NetworkProxy.apply(
+            settings.networkProxy,
+            settings.networkProxyEnabled,
+            settings.networkProxyDirect,
+            settings.networkProxyOnly
+        )
     }
 
     val toastTransitionSpec: AnimatedContentTransitionScope<ToastData?>.() -> ContentTransform = {
@@ -1671,7 +1681,11 @@ class MainActivity : ComponentActivity() {
 
             val currentSettings = SettingsManager.currentSettings
             LaunchedEffect(currentSettings.projectStoragePath) {
-                SettingsManager.ensureProjectDirectoryExists()
+                // 建目录是文件系统操作(mkdirs + 兜底 exec),放主线程会在切换
+                // 存储路径时卡住首帧。LaunchedEffect 本身跑在主线程,这里显式切 IO。
+                withContext(Dispatchers.IO) {
+                    SettingsManager.ensureProjectDirectoryExists()
+                }
             }
 
             var shouldShowWelcome by remember { mutableStateOf(shouldShowWelcomeScreen(this@MainActivity)) }

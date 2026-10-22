@@ -642,6 +642,7 @@
     <string name="mcp_notification_title">LuaForge MCP 服务运行中</string>
     <string name="mcp_notification_text">地址:%1$s(点击按钮可复制)</string>
     <string name="mcp_notification_text_unknown">MCP 服务后台保活中</string>
+    <string name="mcp_notification_copy_one">复制 %1$s</string>
     <string name="mcp_notification_copy">复制地址</string>
 
     <string name="settings_mcp_notification_permission">通知权限</string>
@@ -668,6 +669,8 @@
     <string name="settings_network_source">来源</string>
     <string name="settings_mcp_endpoints">访问地址</string>
     <string name="settings_mcp_copy_address">复制地址</string>
+    <string name="settings_mcp_endpoint_local">本机</string>
+    <string name="settings_mcp_endpoint_lan">局域网</string>
     <string name="settings_mcp_address_copied">地址已复制</string>
     <string name="settings_network_allowed_empty">暂无允许记录</string>
     <string name="settings_network_blocked_empty">暂无拒绝记录</string>
@@ -687,7 +690,14 @@
     <string name="settings_proxy_status_active">已启用 %1$s 代理:%2$s</string>
     <string name="settings_proxy_status_invalid">格式无法识别,需为 主机:端口,例如 192.168.10.245:7890</string>
     <string name="settings_proxy_clear">清空代理</string>
-    <string name="settings_proxy_hint">作用于编辑器自身的网络请求(Maven 依赖下载、内置 OkHttp 工具)。支持 host:port、http://host:port、socks5://host:port 三种写法;局域网协同与打包后的 APK 不走代理。</string>
+    <string name="settings_proxy_switch">启用代理</string>
+    <string name="settings_proxy_switch_desc">关闭时即使填了地址也直接连接</string>
+    <string name="settings_proxy_direct_title">不走代理的网站</string>
+    <string name="settings_proxy_direct_desc">每行一个,命中即直连。支持 example.com(含子域)、*.example.com(仅子域)。本机回环地址始终直连</string>
+    <string name="settings_proxy_only_title">只对这些网站走代理</string>
+    <string name="settings_proxy_only_desc">每行一个,留空表示除上面直连名单外全部走代理;填写后仅名单内走代理</string>
+    <string name="settings_proxy_rules_applied">已应用 %1$d 条直连规则、%2$d 条走代理规则</string>
+    <string name="settings_proxy_hint">通过进程级 ProxySelector 生效,覆盖编辑器内所有走 JVM 网络栈的请求(Maven 下载、OkHttp、HttpURLConnection 及第三方库自建的客户端)。支持 host:port、http://host:port、socks5://host:port。127.0.0.1 等回环地址始终直连;WebView 与 Lua socket 使用原生网络栈,不受此设置影响;打包后的 APK 始终直连。</string>
     <string name="settings_firewall">防火墙</string>
     <string name="settings_firewall_cross_write">越级写入拦截</string>
     <string name="settings_firewall_cross_write_desc">阻止项目写入/删除/修改其它项目目录,读取不受影响</string>

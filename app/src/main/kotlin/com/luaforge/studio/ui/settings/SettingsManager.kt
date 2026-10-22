@@ -26,8 +26,11 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.luaforge.studio.ui.theme.ThemeType
 import com.luaforge.studio.utils.IconManager
+import com.luaforge.studio.utils.LogCatcher
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.File
@@ -106,6 +109,12 @@ private object PreferencesKeys {
 
     // 【新增】网络代理(默认留空 = 直连)
     val NETWORK_PROXY = stringPreferencesKey("network_proxy")
+    /** 代理总开关:关闭时即使填了地址也直连 */
+    val NETWORK_PROXY_ENABLED = booleanPreferencesKey("network_proxy_enabled")
+    /** 强制直连的主机规则(JSON 数组) */
+    val NETWORK_PROXY_DIRECT = stringPreferencesKey("network_proxy_direct")
+    /** 只对这些主机走代理(JSON 数组;空 = 其余全走代理) */
+    val NETWORK_PROXY_ONLY = stringPreferencesKey("network_proxy_only")
 
     // 【新增】防火墙（越级写入 + 自我守护）
     val CROSS_PROJECT_WRITE_GUARD = booleanPreferencesKey("cross_project_write_guard")
@@ -168,6 +177,25 @@ enum class AbiTarget {
 
 object SettingsManager {
 
+    private const val TAG = "SettingsManager"
+
+    /**
+     * 设置持久化专用协程作用域(进程级)。
+     *
+     * 旧实现每次保存都 `CoroutineScope(Dispatchers.IO).launch { ... }`:每个
+     * 调用点新建一个**无父作用域、无法取消**的 scope。用户在设置页连着拨几个
+     * 开关就会并发起多个 Datastore 写,它们彼此无序 —— 最后落盘的不一定是
+     * 最后一次改动(经典的"设置改完重启又变回去")。
+     *
+     * 现在统一成一个作用域,配合 DataStore 自身的串行 edit 保证写入有序;
+     * `CoroutineExceptionHandler` 兜住异常,避免单个写失败让整个 scope 失效。
+     */
+    private val saveScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, t ->
+            LogCatcher.e(TAG, "设置持久化失败", t as? Exception)
+        }
+    )
+
     // 当前设置状态
     var currentSettings by mutableStateOf(SettingsData())
 
@@ -220,7 +248,8 @@ object SettingsManager {
         val fontFamilyType = FontFamilyType.valueOf(
             preferences[PreferencesKeys.FONT_FAMILY_TYPE] ?: "DEFAULT"
         )
-        val dynamicColor = preferences[PreferencesKeys.DYNAMIC_COLOR] ?: false
+        // 默认开启:Android 12+ 优先用系统动态取色,低版本自动回退到主题色(见 Theme.kt)。
+        val dynamicColor = preferences[PreferencesKeys.DYNAMIC_COLOR] ?: true
         val editorFontType = EditorFontType.valueOf(
             preferences[PreferencesKeys.EDITOR_FONT_TYPE] ?: "JETBRAINS_MONO"
         )
@@ -310,8 +339,27 @@ object SettingsManager {
 
         // 【新增】加载网络请求拦截设置
         val networkInterceptEnabled = preferences[PreferencesKeys.NETWORK_INTERCEPT_ENABLED] ?: false
-        // 网络代理:默认空串表示直连,不做任何代理
+        // 网络代理:默认空串 + 开关关闭 = 直连,不做任何代理
         val networkProxy = preferences[PreferencesKeys.NETWORK_PROXY] ?: ""
+        val networkProxyEnabled = preferences[PreferencesKeys.NETWORK_PROXY_ENABLED] ?: false
+        val networkProxyDirect: List<String> = try {
+            val type = object : TypeToken<List<String>>() {}.type
+            Gson().fromJson<List<String>>(
+                preferences[PreferencesKeys.NETWORK_PROXY_DIRECT] ?: "[]",
+                type
+            ) ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+        val networkProxyOnly: List<String> = try {
+            val type = object : TypeToken<List<String>>() {}.type
+            Gson().fromJson<List<String>>(
+                preferences[PreferencesKeys.NETWORK_PROXY_ONLY] ?: "[]",
+                type
+            ) ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
         val networkAllowedHosts: Set<String> = try {
             val type = object : TypeToken<Set<String>>() {}.type
             Gson().fromJson(preferences[PreferencesKeys.NETWORK_ALLOWED_HOSTS] ?: "[]", type) ?: emptySet()
@@ -413,6 +461,9 @@ object SettingsManager {
                 mcpPersistentNotification = mcpPersistentNotification, // 【新增】
                 networkInterceptEnabled = networkInterceptEnabled,  // 【新增】
                 networkProxy = networkProxy,                        // 【新增】网络代理
+                networkProxyEnabled = networkProxyEnabled,          // 【新增】代理开关
+                networkProxyDirect = networkProxyDirect,            // 【新增】强制直连规则
+                networkProxyOnly = networkProxyOnly,                // 【新增】只走代理规则
                 networkAllowedHosts = networkAllowedHosts,          // 【新增】
                 networkBlockedHosts = networkBlockedHosts,          // 【新增】
                 crossProjectWriteGuard = crossProjectWriteGuard,    // 【新增】
@@ -508,6 +559,11 @@ object SettingsManager {
             preferences[PreferencesKeys.NETWORK_ALLOWED_HOSTS] = Gson().toJson(currentSettings.networkAllowedHosts)
             preferences[PreferencesKeys.NETWORK_BLOCKED_HOSTS] = Gson().toJson(currentSettings.networkBlockedHosts)
             preferences[PreferencesKeys.NETWORK_PROXY] = currentSettings.networkProxy
+            preferences[PreferencesKeys.NETWORK_PROXY_ENABLED] = currentSettings.networkProxyEnabled
+            preferences[PreferencesKeys.NETWORK_PROXY_DIRECT] =
+                Gson().toJson(currentSettings.networkProxyDirect)
+            preferences[PreferencesKeys.NETWORK_PROXY_ONLY] =
+                Gson().toJson(currentSettings.networkProxyOnly)
 
             // 【新增】保存防火墙设置
             preferences[PreferencesKeys.CROSS_PROJECT_WRITE_GUARD] = currentSettings.crossProjectWriteGuard
@@ -542,9 +598,7 @@ object SettingsManager {
 
     // 保存设置（在后台协程中执行）
     fun saveSettings(context: Context) {
-        CoroutineScope(Dispatchers.IO).launch {
-            saveSettingsAsync(context)
-        }
+        saveScope.launch { saveSettingsAsync(context) }
     }
 
     /** 记录一次防火墙拦截（按项目名分计），立即更新内存态并异步持久化。 */
@@ -606,19 +660,22 @@ object SettingsManager {
         val projectDir = File(currentSettings.projectStoragePath)
         return try {
             if (!projectDir.exists()) {
-                val created = projectDir.mkdirs()
-                if (!created) {
-                    try {
-                        Runtime.getRuntime().exec(arrayOf("mkdir", "-p", projectDir.absolutePath))
-                        Thread.sleep(200)
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                }
+                // mkdirs 失败常见于上级目录不存在或权限不足,先补建上级再重试
+                projectDir.mkdirs()
+            }
+            if (!projectDir.exists()) {
+                // 兜底:用系统 mkdir 再试一次。
+                // **不再 Thread.sleep(200)** —— 旧实现在这里等待 200ms,而该方法
+                // 由 MainActivity 的 LaunchedEffect 在主线程调用,每次切换存储路径
+                // 都会让首帧卡顿 200ms。改为 waitFor 且带超时,并把整段调用挪到
+                // IO 线程(见 MainActivity)。
+                val process = Runtime.getRuntime()
+                    .exec(arrayOf("mkdir", "-p", projectDir.absolutePath))
+                process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
             }
             projectDir.exists() && projectDir.canWrite()
         } catch (e: Exception) {
-            e.printStackTrace()
+            LogCatcher.e(TAG, "确保项目目录存在失败", e)
             false
         }
     }
@@ -639,7 +696,7 @@ object SettingsManager {
         updateSettings(newSettings)
 
         // 异步保存到 DataStore
-        CoroutineScope(Dispatchers.IO).launch {
+        saveScope.launch {
             context.dataStore.edit { preferences ->
                 preferences[PreferencesKeys.LANGUAGE_TAG] = languageTag
             }
@@ -677,7 +734,8 @@ data class SettingsData(
     val fontSizeScale: Float = 1.0f,
     val shapeSizeIndex: Int = 2,
     val fontFamilyType: FontFamilyType = FontFamilyType.DEFAULT,
-    val dynamicColor: Boolean = false,
+    /** 动态取色(Android 12+),默认开启 */
+    val dynamicColor: Boolean = true,
     val editorFontType: EditorFontType = EditorFontType.JETBRAINS_MONO,
     val customFontPath: String = "",
     val enableTabHistory: Boolean = true,
@@ -720,6 +778,12 @@ data class SettingsData(
      * 解析与生效逻辑见 [com.luaforge.studio.utils.NetworkProxy]。
      */
     val networkProxy: String = "",
+    /** 代理总开关;关闭时即使 [networkProxy] 有值也一律直连 */
+    val networkProxyEnabled: Boolean = false,
+    /** 强制直连的主机规则(如 `example.com` / `*.example.com` / `*`) */
+    val networkProxyDirect: List<String> = emptyList(),
+    /** 只对这些主机走代理;空表示"除直连规则外全部走代理" */
+    val networkProxyOnly: List<String> = emptyList(),
     /** 防火墙：越级写入拦截（默认开启） */
     val crossProjectWriteGuard: Boolean = true,
     /** 防火墙：自我守护（默认开启） */

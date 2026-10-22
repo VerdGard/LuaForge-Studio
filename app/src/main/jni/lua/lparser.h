@@ -169,6 +169,7 @@ typedef struct FuncState {
     lu_byte freereg;  /* first free register */
     lu_byte iwthabs;  /* instructions issued since last absolute line info */
     lu_byte needclose;  /* function needs to close upvalues when returning */
+    lu_byte intry;      /* 当前处于 try 体所生成的闭包内(用于对 return/break 明确报错) */
 } FuncState;
 
 

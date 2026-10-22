@@ -131,9 +131,15 @@ class SplashWelcome : ComponentActivity() {
             LogCatcher.e("SplashWelcome", "初始化网络拦截失败", e)
         }
 
-        // 网络代理:按已保存设置初始化(默认留空 = 直连,不产生任何代理行为)
+        // 网络代理:按已保存设置初始化(默认开关关闭 + 留空 = 直连,不产生任何代理行为)
         try {
-            NetworkProxy.configure(SettingsManager.currentSettings.networkProxy)
+            val st = SettingsManager.currentSettings
+            NetworkProxy.apply(
+                st.networkProxy,
+                st.networkProxyEnabled,
+                st.networkProxyDirect,
+                st.networkProxyOnly
+            )
         } catch (e: Exception) {
             LogCatcher.e("SplashWelcome", "初始化网络代理失败", e)
         }

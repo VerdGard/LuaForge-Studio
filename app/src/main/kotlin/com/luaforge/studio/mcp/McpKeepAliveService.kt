@@ -33,10 +33,31 @@ class McpKeepAliveService : Service() {
         ensureChannel()
     }
 
+    /**
+     * 最后一次展示过的地址清单。
+     *
+     * `START_STICKY` 让系统在进程被回收后重建服务,此时 `onStartCommand` 拿到的
+     * intent 是 **null**。旧实现在这种情况下会把地址算成空清单,通知退化成
+     * "MCP 服务后台保活中",用户看不到任何可用地址 —— 看起来就像服务挂了。
+     * 这里把清单缓存下来,重建时继续沿用。
+     */
+    private var lastAddresses: List<String> = emptyList()
+    private var lastShowNotification: Boolean = true
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val address = intent?.getStringExtra(EXTRA_ADDRESS).orEmpty()
-        val showNotification = intent?.getBooleanExtra(EXTRA_SHOW_NOTIFICATION, true) ?: true
-        val notification = if (showNotification) buildNotification(address) else buildSilentNotification()
+        val fromIntent = intent?.getStringArrayListExtra(EXTRA_ADDRESSES)
+            ?: arrayListOf<kotlin.String>().also {
+                // 兼容旧调用方:单个地址仍可通过 EXTRA_ADDRESS 传入
+                intent?.getStringExtra(EXTRA_ADDRESS)?.takeIf { a -> a.isNotBlank() }?.let(it::add)
+            }
+        if (fromIntent.isNotEmpty()) lastAddresses = fromIntent
+        val showNotification =
+            intent?.getBooleanExtra(EXTRA_SHOW_NOTIFICATION, true) ?: lastShowNotification
+        lastShowNotification = showNotification
+
+        val addresses = if (fromIntent.isNotEmpty()) fromIntent else lastAddresses
+        val notification =
+            if (showNotification) buildNotification(addresses) else buildSilentNotification()
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
@@ -61,45 +82,60 @@ class McpKeepAliveService : Service() {
         super.onDestroy()
     }
 
-    private fun buildNotification(address: String): Notification {
+    /**
+     * 构建常驻通知:**每个地址各占一行**,每行配一个独立的复制按钮。
+     *
+     * 旧实现只有一个地址和一个"复制地址"按钮,多网卡(回环 + Wi-Fi)时另外的
+     * 地址只能去设置页翻。现在通知本身就是完整清单。
+     *
+     * 文案不再写"点击按钮可复制"这类说明 —— 按钮上的文字已经说明了动作,
+     * 标题行只留地址本身。
+     */
+    private fun buildNotification(addresses: List<String>): Notification {
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         // 点击通知正文:回到应用主界面;拿不到启动 Intent 时退化为打开保活服务本身
         val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
             ?: Intent(this, McpKeepAliveService::class.java)
         val contentIntent = PendingIntent.getActivity(this, 0, launchIntent, flags)
 
+        val list = addresses.filter { it.isNotBlank() }
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
             .setContentTitle(getString(com.luaforge.studio.R.string.mcp_notification_title))
-            .setContentText(
-                if (address.isNotBlank()) {
-                    getString(com.luaforge.studio.R.string.mcp_notification_text, address)
-                } else {
-                    getString(com.luaforge.studio.R.string.mcp_notification_text_unknown)
-                }
-            )
             .setOngoing(true)
             .setShowWhen(false)
             .setContentIntent(contentIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
 
-        // 点击动作:复制 MCP 地址
-        if (address.isNotBlank()) {
-            val copyIntent = PendingIntent.getBroadcast(
-                this,
-                1,
-                Intent(ACTION_COPY_MCP_ADDRESS).setPackage(packageName)
-                    .putExtra(EXTRA_ADDRESS, address),
-                flags
-            )
-            builder.addAction(
-                android.R.drawable.ic_menu_share,
-                getString(com.luaforge.studio.R.string.mcp_notification_copy),
-                copyIntent
-            )
+        if (list.isEmpty()) {
+            builder.setContentText(getString(com.luaforge.studio.R.string.mcp_notification_text_unknown))
+        } else {
+            // 折叠态显示第一条(回环地址),展开态显示全部 —— 一行一个
+            builder.setContentText(list.first())
+            val style = NotificationCompat.BigTextStyle().bigText(list.joinToString("\n"))
+            builder.setStyle(style)
+            // 每个地址一个复制按钮。通知动作栏放不下太多,取前 MAX_ACTIONS 条;
+            // 回环地址在首位,因此总是可见。
+            list.take(MAX_COPY_ACTIONS).forEachIndexed { index, address ->
+                builder.addAction(
+                    android.R.drawable.ic_menu_share,
+                    getString(com.luaforge.studio.R.string.mcp_notification_copy_one, address),
+                    copyPendingIntent(index, address, flags)
+                )
+            }
         }
         return builder.build()
     }
+
+    /** 为某个地址生成"复制这一条"的广播 PendingIntent。 */
+    private fun copyPendingIntent(index: Int, address: String, flags: Int): PendingIntent =
+        PendingIntent.getBroadcast(
+            this,
+            COPY_REQUEST_BASE + index,
+            Intent(ACTION_COPY_MCP_ADDRESS).setPackage(packageName)
+                .putExtra(EXTRA_ADDRESS, address),
+            flags
+        )
 
     private fun buildSilentNotification(): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
@@ -130,13 +166,20 @@ class McpKeepAliveService : Service() {
         const val CHANNEL_ID = "mcp_keepalive"
         const val NOTIFICATION_ID = 9123
         const val EXTRA_ADDRESS = "mcp_address"
+        const val EXTRA_ADDRESSES = "mcp_addresses"
         const val EXTRA_SHOW_NOTIFICATION = "mcp_show_notification"
         const val ACTION_COPY_MCP_ADDRESS = "com.luaforge.studio.action.COPY_MCP_ADDRESS"
 
+        /** 通知动作栏最多放几个"复制"按钮(系统限制约 3 个)。 */
+        private const val MAX_COPY_ACTIONS = 3
+
+        /** 复制动作的 PendingIntent requestCode 起点,逐地址递增。 */
+        private const val COPY_REQUEST_BASE = 100
+
         /** 启动/更新前台保活服务。 */
-        fun start(context: Context, address: String, showNotification: Boolean) {
+        fun start(context: Context, addresses: List<String>, showNotification: Boolean) {
             val intent = Intent(context, McpKeepAliveService::class.java).apply {
-                putExtra(EXTRA_ADDRESS, address)
+                putStringArrayListExtra(EXTRA_ADDRESSES, ArrayList(addresses))
                 putExtra(EXTRA_SHOW_NOTIFICATION, showNotification)
             }
             try {

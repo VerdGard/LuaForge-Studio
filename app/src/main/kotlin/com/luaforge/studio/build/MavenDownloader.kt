@@ -57,8 +57,8 @@ class MavenDownloader(private val context: Context) {
                     .writeTimeout(10, TimeUnit.SECONDS)
                     .callTimeout(15, TimeUnit.SECONDS)
                     .retryOnConnectionFailure(false)
-                // 配置了代理才走代理:Maven 依赖常因网络受限而需要代理
-                NetworkProxy.current()?.let { builder.proxy(it.toJavaProxy()) }
+                    // 用 ProxySelector:Maven 仓库常被单独加进直连/走代理名单
+                    .proxySelector(NetworkProxy.selector())
                 val created = builder.build()
                 cachedClient = created
                 cachedProxyRevision = revision

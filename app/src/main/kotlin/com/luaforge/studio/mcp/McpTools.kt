@@ -37,6 +37,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
+import android.util.Base64
 import java.io.File
 import java.util.zip.ZipFile
 import java.lang.reflect.Constructor
@@ -331,6 +332,20 @@ object McpTools {
                 obj(
                     "includeInvisible" to boolProp("是否包含不可见控件,默认 false"),
                     "maxDepth" to intProp("最大递归深度,默认 40")
+                )
+            )
+        )
+
+        tools.put(
+            tool(
+                "capture_screen",
+                "对当前前台界面截屏并保存为 PNG,返回文件路径/尺寸/文件大小;可选内联 base64。" +
+                    "用于 run_project 之后确认界面究竟渲染出了什么 —— " +
+                    "dump_screen 只给控件树,拿不到自绘内容、图片与颜色。",
+                obj(
+                    "maxWidth" to intProp("最长边像素上限,默认 1280;超过则等比缩放"),
+                    "inline" to boolProp("是否在结果里内联 base64 PNG,默认 false(仅返回路径)"),
+                    "path" to strProp("自定义输出文件路径;缺省写到 LuaForge-Studio/screenshot/")
                 )
             )
         )
@@ -726,6 +741,7 @@ object McpTools {
                 "get_logs" -> getLogs(args)
                 "get_settings" -> getSettings()
                 "dump_screen" -> dumpScreen(args)
+                "capture_screen" -> captureScreen(context, args)
                 "check_screen" -> checkScreen(args)
                 "get_runtime_errors" -> getRuntimeErrors(args)
                 "clear_logs" -> clearLogs()
@@ -2005,6 +2021,55 @@ object McpTools {
                 errorResult("没有前台 Activity,请先调用 run_project 启动界面")
             } else {
                 textResult(RuntimeInspector.dumpScreen(activity, includeInvisible, maxDepth).toString(2))
+            }
+        }
+    }
+
+    /**
+     * 对当前前台界面截屏并落盘为 PNG。
+     *
+     * 与 [dumpScreen] 互补:控件树只能证明"控件在",截屏才能证明"真的画出来了"
+     * (自绘 View、图片、颜色、重叠遮挡都只有像素能反映)。
+     */
+    private suspend fun captureScreen(context: Context, args: JSONObject): JSONObject {
+        val maxWidth = args.optInt("maxWidth", 1280).coerceIn(64, 4096)
+        val inline = args.optBoolean("inline", false)
+        val customPath = args.optString("path", "").trim()
+
+        val capture = withContext(Dispatchers.Main) {
+            val activity = ActivityTracker.current()
+            if (activity == null) null
+            else RuntimeInspector.captureScreen(activity, maxWidth)
+        } ?: return errorResult("截屏失败:没有前台 Activity(请先 run_project)或界面尺寸为 0")
+
+        return withContext(Dispatchers.IO) {
+            try {
+                val target = if (customPath.isNotEmpty()) {
+                    File(customPath)
+                } else {
+                    val dir = File("/storage/emulated/0/LuaForge-Studio/screenshot")
+                    if (!dir.exists() && !dir.mkdirs()) {
+                        return@withContext errorResult("无法创建截图目录: ${dir.absolutePath}")
+                    }
+                    File(dir, "screen_" + System.currentTimeMillis() + ".png")
+                }
+                target.parentFile?.let { if (!it.exists()) it.mkdirs() }
+                target.writeBytes(capture.png)
+
+                val result = JSONObject()
+                    .put("path", target.absolutePath)
+                    .put("width", capture.width)
+                    .put("height", capture.height)
+                    .put("bytes", capture.png.size)
+                    .put("scaledDown", capture.scaledDown)
+                if (inline) {
+                    result.put("mimeType", "image/png")
+                    result.put("base64", Base64.encodeToString(capture.png, Base64.NO_WRAP))
+                }
+                textResult(result.toString(2))
+            } catch (e: Exception) {
+                LogCatcher.e(TAG, "保存截图失败", e)
+                errorResult("保存截图失败: ${e.message}")
             }
         }
     }

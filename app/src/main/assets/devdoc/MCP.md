@@ -11,7 +11,13 @@
 | 监听端口 | 1024–65535,默认 `9123`;修改后服务自动重启 |
 | 需要访问令牌 | 开启后请求须携带 `Authorization: Bearer <令牌>`;开启时若令牌为空会自动生成 |
 
-启用后设置页会显示全部可用地址,每个地址各占一行、等宽字体展示,行尾按钮可**一键复制**,例如 `http://192.168.1.5:9123`。
+启用后设置页会显示全部可用地址,每个地址各占一行、等宽字体展示,行尾按钮可**一键复制**。
+
+地址清单**回环地址 `http://127.0.0.1:<端口>` 永远排第一**,其后是局域网地址。设置页给每条地址加了
+**「本机」/「局域网」**标签:前者给**同一台设备**上的 MCP 客户端用(不依赖 Wi-Fi 是否有 IP,
+最可靠),后者给同一网络下的其他设备用 —— 拿局域网地址去配本机客户端是最常见的连不上的原因。
+
+MCP 常驻通知同样是**每个地址一行**,每行配独立的复制按钮(动作栏最多 3 个,回环地址固定首位)。
 
 ## 2. 协议
 
@@ -49,7 +55,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 { "headers": { "Authorization": "Bearer <你的令牌>" } }
 ```
 
-## 4. 工具清单(55 个)
+## 4. 工具清单(58 个)
 
 参数均为可选,除非标 **必填**。带 `array` 的参数可传 JSON 数组,也可传换行/逗号分隔的字符串。
 
@@ -125,6 +131,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 | 工具 | 说明 | 参数 |
 | --- | --- | --- |
 | `dump_screen` | 导出前台界面控件树 | `includeInvisible`、`maxDepth`(默认 40) |
+| `capture_screen` | **对前台界面截屏并落盘 PNG**。控件树只能证明"控件在",截屏才能证明"真的画出来了"(自绘 View、图片、颜色、遮挡只有像素能反映)。走 `View.draw(Canvas)` 软件渲染,不需要悬浮窗/MediaProjection 权限,也不受"后台不能截屏"限制;拿不到系统叠加层(状态栏、输入法)是明确取舍 | `maxWidth`(最长边上限,默认 1280)、`inline`(true 时直接返回 base64)、`path`(自定义输出路径) |
 | `check_screen` | 按预期校验界面,返回是否通过及差异 | `expectTexts`、`expectAnyOf`、`absentTexts`、`minViews`、`includeInvisible` |
 | `wait_for_text` | 轮询等待界面出现(或消失)指定文本,用于运行后确认界面就绪 | `text` **必填**、`absent`、`timeoutMs`(默认 10000)、`intervalMs`(默认 300) |
 | `get_runtime_errors` | 读取日志中的运行时错误 | `lines`(默认 50) |
@@ -188,6 +195,7 @@ clear_logs                      # 1. 清空日志,取得干净的现场
 run_project                     # 2. 启动调试运行
 wait_for_text text="Hello"      # 3. 等待界面就绪(避免固定 sleep)
 dump_screen                     # 4. 查看界面树(可选)
+capture_screen                  #    截图确认真的画出来了(可选)
 check_screen expectTexts=["Hello"] minViews=3
                                 # 5. 断言;未通过时 isError=true
 get_runtime_errors              # 6. 若失败,读取 Lua 报错 / 布局加载失败
@@ -224,7 +232,8 @@ compile_file keepOutput=false   # 编译验证,成功后自动清理产物
 
 - 读写删除仅允许应用项目根目录(默认 `LuaForge-Studio/projects`,可在设置中改)及其下的 `build`、`backup`
 - 路径统一做 `canonicalPath` 归一化后前缀匹配,已过滤空值与文件系统根
-- 默认只监听本机可访问的 LAN 地址;服务随应用进程存活,退出应用即停止
+- 监听 `0.0.0.0`(所有网卡),因此回环地址与局域网地址都可访问;服务随应用进程存活,退出应用即停止
+- 回环地址始终可用;局域网地址仅在设备有非回环 IPv4 时出现
 - 勾选“需要访问令牌”后可限制访问来源
 - 日志文件:`/storage/emulated/0/LuaForge-Studio/luaforge.log`
 
@@ -234,6 +243,8 @@ compile_file keepOutput=false   # 编译验证,成功后自动清理产物
 - 编辑器相关操作必须在主线程执行,`open_file` 依赖 API 34+ 的编辑器实现
 - `check_screen` 只读取当前前台 Activity;界面未启动时会返回“没有前台 Activity”
 - 单次 `dump_screen` 最多 3000 个节点,超出部分被截断并置 `truncated=true`
+- `capture_screen` 默认输出到 `/storage/emulated/0/LuaForge-Studio/screenshot/`,`inline=true` 时
+  额外返回 base64(大屏设备建议保持 `maxWidth` 缩小,否则单次响应可达数 MB)
 - 日志读取上限 512KB / `read_file` 上限 2MB
 - `call_global_util` 只支持可 JSON 表达的标量参数;需要控件 / Java 对象的函数请直接在项目代码里调用
 - `call_global_util` 执行于运行实例主线程,项目脚本长时间占用主线程时可能超时

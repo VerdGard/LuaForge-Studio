@@ -42,8 +42,9 @@ object OkHttpUtil {
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
-            // 用户在「安全、网络与日志」里配置了代理时才走代理,否则直连
-            NetworkProxy.current()?.let { builder.proxy(it.toJavaProxy()) }
+                // 用 ProxySelector 而不是固定 Proxy:"哪些站走代理"的分流规则
+                // 才能在同一 client 内逐请求生效
+                .proxySelector(NetworkProxy.selector())
             val created = builder.build()
             client = created
             clientProxyRevision = revision

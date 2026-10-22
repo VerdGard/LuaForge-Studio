@@ -1,11 +1,14 @@
 package com.luaforge.studio.mcp
 
 import android.app.Activity
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 
 /**
  * 运行时界面检查器。
@@ -216,4 +219,79 @@ object RuntimeInspector {
             .put("textCount", texts.size)
             .put("texts", JSONArray(texts))
     }
+
+    // ------------------------------------------------------------------
+    // 截屏
+    // ------------------------------------------------------------------
+
+    /**
+     * 把 Activity 的界面渲染成 PNG 字节。
+     *
+     * 用 `View.draw(Canvas)` 走软件渲染,不需要悬浮窗/MediaProjection 权限,
+     * 也不受"后台不能截屏"限制 —— 代价是拿不到系统级叠加层(状态栏、
+     * 输入法、其他应用的悬浮窗),对验证自己的布局足够。
+     *
+     * @param maxWidth 最长边上限(像素)。超过则等比缩放,避免大屏设备产生
+     *                 数 MB 的 base64 撑爆 MCP 响应。
+     * @param quality  PNG 是无损格式,该参数实际由 [Bitmap.compress] 忽略,
+     *                 保留只为了接口稳定。
+     * @return `(pngBytes, width, height, scaled)`,失败返回 null
+     */
+    fun captureScreen(
+        activity: Activity,
+        maxWidth: Int = 1280,
+        quality: Int = 90
+    ): Capture? {
+        val decor = activity.window?.decorView ?: return null
+        val w = decor.width
+        val h = decor.height
+        if (w <= 0 || h <= 0) return null
+
+        val bitmap = try {
+            Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        } catch (t: Throwable) {
+            return null
+        }
+
+        val scaled: Bitmap
+        try {
+            val canvas = Canvas(bitmap)
+            decor.draw(canvas)
+            val longest = maxOf(w, h)
+            scaled = if (longest > maxWidth && maxWidth > 0) {
+                val ratio = maxWidth.toFloat() / longest
+                val nw = maxOf(1, (w * ratio).toInt())
+                val nh = maxOf(1, (h * ratio).toInt())
+                Bitmap.createScaledBitmap(bitmap, nw, nh, true).also {
+                    if (it !== bitmap) bitmap.recycle()
+                }
+            } else {
+                bitmap
+            }
+        } catch (t: Throwable) {
+            if (!bitmap.isRecycled) bitmap.recycle()
+            return null
+        }
+
+        val out = ByteArrayOutputStream()
+        val ok = try {
+            scaled.compress(Bitmap.CompressFormat.PNG, quality.coerceIn(0, 100), out)
+        } catch (t: Throwable) {
+            false
+        }
+        val sw = scaled.width
+        val sh = scaled.height
+        if (!scaled.isRecycled) scaled.recycle()
+        if (!ok) return null
+
+        return Capture(out.toByteArray(), sw, sh, maxOf(w, h) > maxWidth)
+    }
+
+    /** 一次截屏的结果。 */
+    data class Capture(
+        val png: ByteArray,
+        val width: Int,
+        val height: Int,
+        val scaledDown: Boolean
+    )
 }

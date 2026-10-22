@@ -90,29 +90,70 @@
 
 ## 8. 网络代理
 
-设置 → **安全、网络与日志** → **网络代理**。默认**留空 = 直连**,不写任何配置的用户完全不受影响。
+设置 → **安全、网络与日志** → **网络代理**。
+
+### 8.1 三层配置
+
+| 配置项 | 作用 |
+| --- | --- |
+| **启用代理**开关 | 总开关。关闭时即使填了地址也一律直连(便于临时切换而不丢配置) |
+| **代理地址** | 代理服务器,留空 = 未配置 |
+| **不走代理的网站** | 每行一条,命中即直连(优先级最高) |
+| **只对这些网站走代理** | 每行一条;留空表示"除直连名单外全部走代理",填写后**仅**名单内走代理 |
+
+代理地址接受的写法:
 
 | 输入 | 结果 |
 | --- | --- |
-| 留空 | 直连(默认) |
+| 留空 | 未配置(默认) |
 | `192.168.10.245:7890` | HTTP 代理 |
-| `http://host:port` | HTTP 代理 |
-| `socks5://host:port` / `socks://host:port` | SOCKS 代理 |
+| `http://host:port` / `https://host:port` | HTTP 代理 |
+| `socks://host:port` / `socks5://host:port` / `socks4://host:port` | SOCKS 代理 |
 | 其他写法 | 判为非法,输入框标红;**不改变当前生效值** |
 
 - 端口必须落在 `1..65535`,主机名只允许字母/数字/`.`/`-`/`_`(IPv6 用方括号写法)。
 - 支持 `user:pass@host:port`,但**不保存凭据**(OkHttp 需要额外的 `Authenticator`),凭据段会被跳过。
-- 输入未写完(例如只敲了 `192.168`)时会判为非法并保持原代理不变,不会把在用的代理清掉。
+- 输入未写完(例如只敲了 `192.168.`)时会判为非法并保持原代理不变,不会把在用的代理清掉。
 
-**生效范围**:仅编辑器进程内、仅走 OkHttp 的通道 —— Maven 依赖下载(`MavenDownloader`)
-与内置 `OkHttpUtil`。二者都在构建 client 时读取一次代理,因此配置变更后按
-`NetworkProxy.revision` 自动重建 client,无需重启。
+主机规则写法(`NetworkProxy.matches`):
 
-**不走代理**:
+| 规则 | 匹配 |
+| --- | --- |
+| `example.com` | `example.com` 自身**与所有子域** |
+| `*.example.com` | **仅子域**,不含 `example.com` 本身 |
+| `*` | 全部 |
+| `.example.com` | 同 `example.com`(点前缀被忽略) |
 
-- **局域网协同**(`CollabClient`,裸 `HttpURLConnection` 直连局域网 IP):走代理会直接连不上对端
-- **用户项目打包出的 APK**:`:core-apk` 不含设置界面,从不调用 `NetworkProxy.configure`,永远直连
-- `http.*`(`core/.../Http.java`,裸 `HttpURLConnection`):当前未接入代理
+### 8.2 生效范围:进程级 ProxySelector
+
+不是逐个客户端设 `proxy(...)`,而是安装**进程级** `ProxySelector.setDefault(...)`:
+
+- OkHttp 未显式设置 `proxy(...)` 时,默认使用 `ProxySelector.getDefault()`
+- `HttpURLConnection` 同样走它
+- 于是所有走 JVM 网络栈的请求(含 Glide / Coil 等**第三方库自建**的 client)受同一套规则约束
+- `OkHttpUtil` 与 `MavenDownloader` 仍显式传 `NetworkProxy.selector()`,保证即使别处改写过 JVM 默认选择器,本项目规则依然生效
+
+配置变更后按 `NetworkProxy.revision` 自动重建 client,无需重启。
+
+### 8.3 判定顺序
+
+`NetworkProxy.proxyForHost(host)` 依次判断,命中即返回:
+
+1. 未启用 / 未配置 → 直连
+2. **回环地址(`localhost` / `127.*` / `::1`)→ 永远直连**
+3. 命中「不走代理的网站」→ 直连
+4. 「只对这些网站走代理」非空且未命中 → 直连
+5. 其余 → 走代理
+
+第 2 条是硬规则,无法用名单覆盖:否则 MCP、协同这类**本机互连**会绕一圈自己的
+代理,表现为连不上或超时。
+
+### 8.4 不走代理
+
+- **用户项目打包出的 APK**:`:core-apk` 不含设置界面,从不调用 `NetworkProxy.apply`,永远直连
+- **WebView**(页面与子资源)与 **Lua `socket` 模块**:各自使用原生网络栈,不经过 JVM 的
+  `ProxySelector`,本配置对它们无效
+- **回环地址**:见上,永远直连
 
 ## 9. 已知限制
 

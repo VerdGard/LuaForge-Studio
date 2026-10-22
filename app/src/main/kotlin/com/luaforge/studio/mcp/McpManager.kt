@@ -107,17 +107,24 @@ object McpManager {
      */
     private fun syncKeepAlive(context: Context, settings: SettingsData) {
         if (settings.mcpForegroundKeepAlive && isRunning()) {
-            val address = status.addresses.firstOrNull().orEmpty()
-            McpKeepAliveService.start(context, address, settings.mcpPersistentNotification)
+            McpKeepAliveService.start(context, status.addresses, settings.mcpPersistentNotification)
         } else {
             McpKeepAliveService.stop(context)
         }
     }
 
-    /** 刷新前台保活通知中展示的地址(端口/网卡变化后调用)。 */
-    fun refreshKeepAliveNotification(context: Context, showNotification: Boolean, address: String?) {
+    /**
+     * 刷新前台保活通知中展示的地址(端口/网卡变化后调用)。
+     *
+     * @param addresses 非空时用它覆盖;为 null 则用当前服务的地址清单。
+     */
+    fun refreshKeepAliveNotification(
+        context: Context,
+        showNotification: Boolean,
+        addresses: List<String>? = null
+    ) {
         if (!isRunning()) return
-        McpKeepAliveService.start(context, address ?: status.addresses.firstOrNull().orEmpty(), showNotification)
+        McpKeepAliveService.start(context, addresses ?: status.addresses, showNotification)
     }
 
     @Synchronized

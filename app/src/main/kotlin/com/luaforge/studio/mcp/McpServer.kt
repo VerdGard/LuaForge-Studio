@@ -45,9 +45,23 @@ class McpServer(
 
     private var acceptThread: Thread? = null
 
-    /** 客户端线程池:核心 0 + 有界队列,空闲线程 30s 回收;队列满即拒绝。 */
-    private val clients = ThreadPoolExecutor(
-        0,
+    /**
+     * 客户端线程池。
+     *
+     * **`corePoolSize` 不能是 0**:`ThreadPoolExecutor` 在核心线程数为 0 时,任务
+     * 会先进队列,只有队列塞满(32 条)才肯新建线程。结果是一个慢调用(例如
+     * `build_apk` 要跑几分钟)就把后续所有请求堵在队列里,客户端等不到响应便
+     * 判超时并重连 —— 这正是"MCP 偶发掉连"的直接原因。
+     *
+     * 现在核心线程数与最大线程数相等(固定大小),请求立即有线程处理;仍然
+     * 保留有界队列,过载时明确 503 而不是无限堆积。核心线程同样允许空闲
+     * 回收,长期不用时不占资源。
+     */
+    @Volatile
+    private var clients: ThreadPoolExecutor = newClientPool()
+
+    private fun newClientPool(): ThreadPoolExecutor = ThreadPoolExecutor(
+        MAX_CLIENT_THREADS,
         MAX_CLIENT_THREADS,
         30L,
         TimeUnit.SECONDS,
@@ -55,7 +69,7 @@ class McpServer(
         ThreadFactory { r ->
             Thread(r, "mcp-client").apply { isDaemon = true }
         }
-    )
+    ).apply { allowCoreThreadTimeOut(true) }
 
     private val requestLog = ArrayDeque<String>()
     private val logLock = Any()
@@ -68,6 +82,10 @@ class McpServer(
 
     fun start(): Boolean {
         if (isRunning) return true
+        // stop() 会 shutdownNow() 掉线程池。同一个实例被再次 start() 时,
+        // 已终止的池会拒绝一切任务(表现为"服务在跑但每个请求都 503/超时"),
+        // 所以这里换一个新池。
+        if (clients.isShutdown) clients = newClientPool()
         return try {
             val socket = ServerSocket()
             socket.reuseAddress = true
@@ -140,6 +158,13 @@ class McpServer(
             val client = try {
                 socket.accept()
             } catch (e: Exception) {
+                // stop() 会先置 isRunning=false 再 close socket,因此这里的异常
+                // 分两类:主动停止(正常)与意外的 socket 失效(需要标记服务已死,
+                // 否则界面仍显示"运行中",而实际再也 accept 不到任何连接)。
+                if (isRunning) {
+                    LogCatcher.e(TAG, "accept 失败,MCP 服务已停止: ${e.message}", e)
+                    isRunning = false
+                }
                 break
             }
             try {
@@ -173,7 +198,10 @@ class McpServer(
     private fun handleClient(client: Socket) {
         try {
             client.soTimeout = 15000
-            val input = client.getInputStream()
+            // 必须缓冲:readLine 是逐字节 input.read(),未缓冲时每次最多一次系统调用,
+            // 一个带几个 header 的请求就要几十次 read 系统调用。MCP 客户端频繁轮询
+            // tools/list 时这些开销直接体现为响应变慢。
+            val input = java.io.BufferedInputStream(client.getInputStream(), 8192)
             val output = client.getOutputStream()
 
             val requestLine = readLine(input) ?: return
@@ -402,16 +430,28 @@ class McpServer(
         private const val MAX_CLIENT_THREADS = 8
         private const val MAX_QUEUED_CLIENTS = 32
 
-        /** 枚举本机可用于访问服务的 IPv4 地址。 */
+        /** 回环地址。本机自测、以及同一设备上的 MCP 客户端都走这个地址。 */
+        const val LOOPBACK = "127.0.0.1"
+
+        /**
+         * 枚举本机可用于访问服务的 IPv4 地址。
+         *
+         * **回环地址永远排第一**:它不依赖 Wi-Fi/流量是否有 IP,是最可靠的
+         * 一条;局域网页仅在同一网络内的其他设备访问时才有意义。旧实现在
+         * 有局域网 IP 时会把 127.0.0.1 挤掉,导致只显示局域网地址。
+         */
         fun localAddresses(): List<String> {
             val result = ArrayList<String>()
+            result.add(LOOPBACK)
             try {
                 val interfaces = NetworkInterface.getNetworkInterfaces() ?: return result
                 for (ni in interfaces) {
                     if (!ni.isUp || ni.isLoopback) continue
                     for (address in ni.inetAddresses) {
                         val host = address.hostAddress ?: continue
-                        if (address is java.net.Inet4Address && !address.isLoopbackAddress) {
+                        if (address is java.net.Inet4Address && !address.isLoopbackAddress &&
+                            !result.contains(host)
+                        ) {
                             result.add(host)
                         }
                     }
@@ -419,7 +459,6 @@ class McpServer(
             } catch (e: Exception) {
                 LogCatcher.e(TAG, "枚举网络地址失败", e)
             }
-            if (result.isEmpty()) result.add("127.0.0.1")
             return result
         }
     }

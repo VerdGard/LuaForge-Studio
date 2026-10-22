@@ -37,6 +37,49 @@
   - **P3 编辑器侧冲突与只读保护**
     - `refreshEditorFromDisk` 增 `fromExternal` / `source`:外部写入(MCP、协同)遇到**用户未保存的编辑**不再静默覆盖,登记冲突由用户裁决(MCP 的 `write_file`/批量替换已按外部写入传参)
     - 修复 `>1MB` 文件把 `"文件过大"` **当成文件内容载入**、用户一保存就用这句提示覆盖真实文件的严重 bug;改为**只读占位**(`readOnlyReason` + `isWritable`)并在全部保存路径拒绝写盘
+- **网络代理改为进程级接管 + 分站分流**
+  - 不再只给两个自建 `OkHttpClient` 设代理,改为安装**进程级 `ProxySelector.setDefault(...)`**:OkHttp 未显式设置 `proxy(...)` 时默认用它,`HttpURLConnection` 同样走它,因此第三方库自建的客户端也被同一套规则约束
+  - 新增**代理总开关**:关闭时即使填了地址也一律直连
+  - 新增两组分流规则(每行一条):「不走代理的网站」与「只对这些网站走代理」。支持 `example.com`(含子域)、`*.example.com`(仅子域)、`*`(全部);后者留空表示"除直连名单外全部走代理"
+  - **回环地址(`localhost` / `127.*` / `::1`)始终直连**:否则 MCP、协同这类本机互连会绕一圈自己的代理,表现为连不上或超时
+  - 设置页文案如实写明边界:**WebView 与 Lua `socket` 使用原生网络栈,不受此设置影响**;打包后的 APK 始终直连
+- **修复 `try` / `catch` 语法"一上手就报错"**(P0)
+  - `catch` 的错误变量括号改为**可选**:`catch e`、`catch(e)`、`catch()`、裸 `catch` 四种写法都接受
+  - 裸 `catch` 后紧跟语句时正确区分"错误变量"与"语句开头":`catch print("x")` / `catch t.k = 1` / `catch x = 1` 不会被误当成变量名
+  - **修复 `catch` 块局部变量读到错位寄存器**的严重 bug:`trystat` 漏了 `fs->freereg = base + 2`(释放 `pcall` 占用的两个临时寄存器),导致后续 `exp2nextreg` 从过高位置分配 —— `catch(e) local z = 5; a = z` 会把 `a` 赋成错误消息字符串。该行曾被误当成注释性变动删掉,已补回并用宿主解释器实测
+  - `try` 体内非法用法改为**编译期明确报错**,不再是静默丢值或晦涩的内部错误:
+    - 带值 `return`(值落在闭包里交不回外层)→ 提示改为先赋值给局部变量再出 `try` 返回
+    - `break` / `continue` 跳出 `try` → 提示把循环放进 `try` 内
+    - `...` → 提示 `try` 体是独立闭包,看不到外层 vararg
+  - `try` 内的**裸 `return`** 仍然放行(等价于提前结束 `try` 体,语义正常)
+- **稳定性:卡顿与 MCP 掉连**
+  - **MCP 客户端线程池 `corePoolSize` 从 0 改为固定大小**:`ThreadPoolExecutor` 在核心线程数为 0 时任务先进队列、队列满(32)才建线程,于是一个慢调用(`build_apk` 要跑几分钟)就把后续请求全堵在队列里,客户端等不到响应便判超时重连 —— 这是"MCP 偶发掉连"的直接原因
+  - `stop()` 后线程池已被 `shutdownNow()`,同一实例再次 `start()` 会拒绝一切任务(表现为"服务在跑但每个请求都 503/超时"),现在自动换新池
+  - `acceptLoop` 意外失败时把 `isRunning` 置 false 并记日志,不再出现"界面显示运行中、实际再也 accept 不到连接"
+  - MCP socket 读取改 `BufferedInputStream`:`readLine` 是逐字节 `read()`,未缓冲时一个带几个 header 的请求就要几十次系统调用
+  - **日志落盘改为单线程串行**:`LogCatcher.writeToFile` 原来是"每条日志起一个 `CoroutineScope(Dispatchers.IO).launch` + `File.appendText`",每条都要重开一次文件;构建一个项目会打上百条日志(`ApkBuilder` 就有 133 处调用),同时挂起上百个协程抢同一个文件。现在调用方只做一次 `Handler.post`,开关文件、截断判定集中在一条后台线程,并补上 4MB 上限截断(此前日志会无限增长)
+  - **主线程建目录**:`ensureProjectDirectoryExists` 内的 `Runtime.exec` + `Thread.sleep(200)` 由 `LaunchedEffect` 在主线程调用,切换存储路径会卡住首帧。改为 `waitFor` 带超时,并把调用整体挪到 IO 线程
+  - `SettingsManager` 的设置持久化改用**进程级 `SupervisorJob` 作用域**:原来每个调用点新建无父、不可取消的 scope,连拨几个开关会并发起多个无序 Datastore 写,落盘的不一定是最后一次改动
+  - MCP 常驻通知在 `START_STICKY` 重启(`intent == null`)时沿用上次的地址清单,不再退化成"后台保活中"、让用户以为服务挂了
+- **MCP 新增 `capture_screen` 工具**(工具总数 55 → 58)
+  - 对前台界面截屏并落盘 PNG,可选 `inline` 直接返回 base64;`maxWidth` 默认 1280,超长边等比缩放,避免大屏设备产生数 MB 的响应
+  - 走 `View.draw(Canvas)` 软件渲染,不需要悬浮窗/MediaProjection 权限,也不受"后台不能截屏"限制;拿不到系统叠加层(状态栏、输入法)是明确的取舍
+  - 与 `dump_screen` 互补:控件树只能证明"控件在",截屏才能证明"真的画出来了"
+- **MCP 常驻通知与地址展示**
+  - 通知改为**每个地址一行**,每行配独立的复制按钮(动作栏最多 3 个,回环地址固定排首位);标题行只留地址,不再写"点击按钮可复制"这类说明
+  - **本机回环 `127.0.0.1` 永远排在地址清单首位**:它不依赖 Wi-Fi/流量是否有 IP,是同一设备上的 MCP 客户端唯一可用的一条;旧实现在有局域网 IP 时会把它挤掉
+  - 设置页的 MCP 地址行增加**「本机」/「局域网」标签**,避免用户拿局域网地址去配本机客户端
+- **动态取色默认开启**:Android 12+ 优先用系统动态取色,低版本自动回退到主题色
+- **关于页精简**
+  - 删除 Community / 加群卡片(含 QQ 群 Surface 卡片)与对应图标、字符串
+  - `teamMembers` 重排:两位 Developer(恣桐、W.)相邻
+  - `licenses.json` 由 10 条补到 16 条:修正 7 个版本号对齐 `libs.versions.toml`,KToast 的许可证 URL 从不支持的 `licenseContent` 移到 `url`,新增 sora-editor(1.0.0 / LGPL-2.1)、apksigner(1.2.0 / Apache-2.0)、Coil(2.7.0)、ECJ(3.33.0 / EPL-2.0)、Accompanist(0.37.3)、ComposeScrollbars(1.0.4)
+- **内存泄漏修复(LuaState 与周边)**
+  - 根因链:`LuaStateFactory.states` 是静态 Map 强引用 wrapper → `LuaState.finalize()` 的 `close()` 兜底永不触发 → native `lua_State` 永不释放
+  - `LuaActivity` / `LuaService` 新增 `luaAlive()` 守卫(`doFile`/`doAsset`/`doString`/`runFunc`/`setField`/`get`),`onDestroy` 末尾 `gc()` + `close()`
+  - `LuaAsyncTask` 增加 `closeLua()` / `runCallbackSafely()`,取消路径也释放;`LuaThread` / `LuaRunnable` 在 `run()` 末尾 close 并置 `L = null`,`get()` 对已关闭实例抛明确异常;`LuaTimerTask` 在 `cancel()` 里 close(周期任务不能等 run 结束)
+  - `LuaInvocationHandler` 删掉只写不读的静态 `ArrayList cache`;`LuaStateFactory.removeLuaState` 改用 `states.remove(idx)`,不再留 `null` 空条目
+  - 其余资源泄漏:`EditorFunctions.backupProject`、`MarkdownView.loadFromFile`、`PackageUtil` 改 `use {}`
 
 
 ## 1.6.8

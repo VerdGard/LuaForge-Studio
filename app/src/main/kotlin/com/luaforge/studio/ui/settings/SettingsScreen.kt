@@ -63,6 +63,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Palette
@@ -280,6 +281,13 @@ fun SettingsScreen(
     var logEnabled by remember { mutableStateOf(LogConfigRepository(context).isLogEnabled()) }
     // 网络代理输入框:默认空白 = 直连
     var proxyText by remember { mutableStateOf(currentSettingsState.networkProxy) }
+    // 分站规则:界面用「每行一条」的文本,落盘时转成 List<String>
+    var proxyDirectText by remember {
+        mutableStateOf(currentSettingsState.networkProxyDirect.joinToString("\n"))
+    }
+    var proxyOnlyText by remember {
+        mutableStateOf(currentSettingsState.networkProxyOnly.joinToString("\n"))
+    }
     var showErrorLogDialog by remember { mutableStateOf(false) }
     var errorLogText by remember { mutableStateOf("") }
 
@@ -324,6 +332,25 @@ fun SettingsScreen(
         delay(500)
         updateSettingsWithSave(
             SettingsManager.currentSettings.copy(networkProxy = proxyText)
+        )
+    }
+
+    // 分站规则同样防抖落盘,并把空行过滤掉(空行规则无意义,留着只会干扰匹配)
+    LaunchedEffect(proxyDirectText) {
+        val rules = proxyDirectText.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        if (rules == currentSettingsState.networkProxyDirect) return@LaunchedEffect
+        delay(500)
+        updateSettingsWithSave(
+            SettingsManager.currentSettings.copy(networkProxyDirect = rules)
+        )
+    }
+
+    LaunchedEffect(proxyOnlyText) {
+        val rules = proxyOnlyText.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        if (rules == currentSettingsState.networkProxyOnly) return@LaunchedEffect
+        delay(500)
+        updateSettingsWithSave(
+            SettingsManager.currentSettings.copy(networkProxyOnly = rules)
         )
     }
 
@@ -2171,6 +2198,44 @@ Column(
                                 .padding(horizontal = 16.dp, vertical = 4.dp)
                         )
 
+                        SettingsListItem(
+                            title = stringResource(R.string.settings_proxy_switch),
+                            subtitle = stringResource(R.string.settings_proxy_switch_desc),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Language,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            trailingContent = {
+                                Switch(
+                                    checked = currentSettingsState.networkProxyEnabled,
+                                    onCheckedChange = { checked ->
+                                        updateSettingsWithSave(
+                                            currentSettingsState.copy(
+                                                networkProxyEnabled = checked
+                                            )
+                                        )
+                                    }
+                                )
+                            },
+                            onClick = {
+                                updateSettingsWithSave(
+                                    currentSettingsState.copy(
+                                        networkProxyEnabled =
+                                            !currentSettingsState.networkProxyEnabled
+                                    )
+                                )
+                            }
+                        )
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                        )
+
                         OutlinedTextField(
                             value = proxyText,
                             onValueChange = { input ->
@@ -2229,6 +2294,46 @@ Column(
                             text = stringResource(R.string.settings_proxy_hint),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        // ---- 分站规则:哪些站直连 / 哪些站走代理 ----
+                        OutlinedTextField(
+                            value = proxyDirectText,
+                            onValueChange = { proxyDirectText = it.take(2000) },
+                            label = { Text(stringResource(R.string.settings_proxy_direct_title)) },
+                            supportingText = {
+                                Text(stringResource(R.string.settings_proxy_direct_desc))
+                            },
+                            minLines = 2,
+                            maxLines = 6,
+                            enabled = currentSettingsState.networkProxyEnabled,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        OutlinedTextField(
+                            value = proxyOnlyText,
+                            onValueChange = { proxyOnlyText = it.take(2000) },
+                            label = { Text(stringResource(R.string.settings_proxy_only_title)) },
+                            supportingText = {
+                                Text(stringResource(R.string.settings_proxy_only_desc))
+                            },
+                            minLines = 2,
+                            maxLines = 6,
+                            enabled = currentSettingsState.networkProxyEnabled,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Text(
+                            text = stringResource(
+                                R.string.settings_proxy_rules_applied,
+                                currentSettingsState.networkProxyDirect.size,
+                                currentSettingsState.networkProxyOnly.size
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp)
                         )
 
                         HorizontalDivider(
@@ -3130,6 +3235,10 @@ private fun copyToClipboard(context: Context, label: String, text: String) {
 
 /**
  * MCP 服务地址行:等宽字体展示地址,尾部提供一键复制按钮。
+ *
+ * 回环地址(127.0.0.1 / ::1)与局域网地址用不同标签区分 —— 前者只能在本机
+ * 访问(MCP 客户端跑同一台设备时用它),后者给同一网络下的其他设备用。
+ * 不分清楚的话用户常拿局域网地址去配本机客户端,结果连不上。
  */
 @Composable
 fun EndpointRow(
@@ -3149,6 +3258,7 @@ fun EndpointRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
+            val isLoopback = address.contains("127.0.0.1") || address.contains("[::1]")
             Text(
                 text = address,
                 style = MaterialTheme.typography.bodySmall,
@@ -3159,6 +3269,16 @@ fun EndpointRow(
                 modifier = Modifier
                     .weight(1f)
                     .padding(vertical = 10.dp)
+            )
+            Text(
+                text = stringResource(
+                    if (isLoopback) R.string.settings_mcp_endpoint_local
+                    else R.string.settings_mcp_endpoint_lan
+                ),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (isLoopback) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 6.dp)
             )
             IconButton(onClick = onCopy) {
                 Icon(

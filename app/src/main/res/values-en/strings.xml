@@ -641,6 +641,7 @@
     <string name="mcp_notification_title">LuaForge MCP service running</string>
     <string name="mcp_notification_text">Address: %1$s (tap the button to copy)</string>
     <string name="mcp_notification_text_unknown">MCP service kept alive in background</string>
+    <string name="mcp_notification_copy_one">Copy %1$s</string>
     <string name="mcp_notification_copy">Copy address</string>
 
     <string name="settings_mcp_notification_permission">Notification permission</string>
@@ -667,6 +668,8 @@
     <string name="settings_network_source">Source</string>
     <string name="settings_mcp_endpoints">Endpoints</string>
     <string name="settings_mcp_copy_address">Copy address</string>
+    <string name="settings_mcp_endpoint_local">Local</string>
+    <string name="settings_mcp_endpoint_lan">LAN</string>
     <string name="settings_mcp_address_copied">Address copied</string>
     <string name="settings_network_allowed_empty">No allowed records</string>
     <string name="settings_network_blocked_empty">No blocked records</string>
@@ -686,7 +689,14 @@
     <string name="settings_proxy_status_active">%1$s proxy enabled: %2$s</string>
     <string name="settings_proxy_status_invalid">Unrecognized format; use host:port, e.g. 192.168.10.245:7890</string>
     <string name="settings_proxy_clear">Clear proxy</string>
-    <string name="settings_proxy_hint">Applies to the editor\'s own network requests (Maven dependency downloads, built-in OkHttp utilities). Accepts host:port, http://host:port and socks5://host:port. LAN collaboration and packaged APKs bypass the proxy.</string>
+    <string name="settings_proxy_switch">Enable proxy</string>
+    <string name="settings_proxy_switch_desc">When off, connections stay direct even if an address is set</string>
+    <string name="settings_proxy_direct_title">Sites that bypass the proxy</string>
+    <string name="settings_proxy_direct_desc">One per line; a match means direct. Supports example.com (and subdomains) and *.example.com (subdomains only). Loopback addresses always go direct</string>
+    <string name="settings_proxy_only_title">Only proxy these sites</string>
+    <string name="settings_proxy_only_desc">One per line. Empty means every site not in the bypass list uses the proxy; if filled, only listed sites do</string>
+    <string name="settings_proxy_rules_applied">%1$d bypass rule(s), %2$d proxy-only rule(s) applied</string>
+    <string name="settings_proxy_hint">Applied via a process-wide ProxySelector, covering every request in the editor that uses the JVM network stack (Maven downloads, OkHttp, HttpURLConnection and clients built by third-party libraries). Accepts host:port, http://host:port and socks5://host:port. Loopback addresses such as 127.0.0.1 always go direct; WebView and the Lua socket module use native stacks and are unaffected; packaged APKs always connect directly.</string>
     <string name="settings_firewall">Firewall</string>
     <string name="settings_firewall_cross_write">Cross-project write guard</string>
     <string name="settings_firewall_cross_write_desc">Blocks writing, deleting or modifying other project directories; reading is unaffected</string>

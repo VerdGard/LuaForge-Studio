@@ -763,6 +763,7 @@ static void open_func(LexState *ls, FuncState *fs, BlockCnt *bl) {
     fs->ndebugvars = 0;
     fs->nactvar = 0;
     fs->needclose = 0;
+    fs->intry = 0;
     fs->firstlocal = ls->dyd->actvar.n;
     fs->firstlabel = ls->dyd->label.n;
     fs->bl = NULL;
@@ -1361,6 +1362,14 @@ static void simpleexp(LexState *ls, expdesc *v) {
         }
         case TK_DOTS: {  /* vararg */
             FuncState *fs = ls->fs;
+            /* try 体被编译成独立闭包,'...' 会指向闭包自己的 vararg(空),
+               静默得到 nil。转发实参在本 VM 的 calling convention 下会
+               产生错位实参(实测首值被函数对象污染),风险高于收益,
+               因此改为编译期明确报错。 */
+            if (fs->intry)
+                luaX_syntaxerror(ls,
+                    "'...' cannot be used inside a 'try' block "
+                    "(try 体是独立闭包,看不到外层 vararg)");
             check_condition(ls, fs->f->is_vararg,
                             "cannot use '...' outside a vararg function");
             init_exp(v, VVARARG, luaK_codeABC(fs, OP_VARARG, 0, 0, 1));
@@ -1916,6 +1925,11 @@ static void gotostat(LexState *ls) {
 static void breakstat(LexState *ls) {
     int line = ls->linenumber;
     int temp = ls->t.token;
+    if (ls->fs->intry) {
+        luaX_syntaxerror(ls,
+            "'break'/'continue' cannot jump out of a 'try' block; "
+            "move the loop inside 'try' instead (try 体是独立闭包)");
+    }
     luaX_next(ls);  /* skip break */
     if (temp == TK_BREAK) {
         newgotoentry(ls, luaS_newliteral(ls->L, "break"), line, luaK_jump(ls->fs));
@@ -2368,7 +2382,7 @@ static void switchstat(LexState *ls, int line) {
     int escapelist = NO_JUMP;
     while (ls->t.token == TK_CASE) {
         buf = v;
-        test_case_block(ls, &escapelist, &buf);  /* CASE var DO block */
+        test_case_block(ls, &escapelist, &buf);  /* CASE/WHEN var DO block */
     }
     if (testnext(ls, TK_DEFAULT))
         block(ls);      /* `default' part */
@@ -2664,7 +2678,19 @@ static void retstat(LexState *ls) {
     expdesc e;
     int nret;  /* number of values being returned */
     int first = luaY_nvarstack(fs);  /* first slot to be returned */
-    if (block_follow(ls, 1) || ls->t.token == ';')
+    int bare = (block_follow(ls, 1) || ls->t.token == ';');
+
+    /* try 体被编译成独立闭包:裸 `return` 相当于"提前结束 try 体",语义正常,
+       放行;但如果带返回值,值会落在闭包里、交不回外层(pcall 只取固定个数),
+       旧行为是**静默丢值**(拿到 nil 却查不出原因),所以这种情况在编译期报错。 */
+    if (fs->intry && !bare) {
+        luaX_syntaxerror(ls,
+            "'return' with a value cannot be used inside a 'try' block "
+            "(try 体是独立闭包,值会被丢弃)。"
+            "改为:在 try 里赋值给局部变量,出 try 后再 return,"
+            "例如 `local r; try r = f() catch e end return r`");
+    }
+    if (bare)
         nret = 0;  /* return no values */
     else {
         nret = explist(ls, &e);  /* optional return values */
@@ -2712,7 +2738,7 @@ static void trystat(LexState *ls, int line) {
     int base;
     expdesc pcall_func, closure_exp, ok_var, err_var;
     int ok_reg, err_reg;
-    TString *err_name = NULL;
+    TString *catch_var = NULL;   /* catch 的错误变量名(可为 NULL) */
 
     luaX_next(ls);  /* skip TRY */
 
@@ -2744,6 +2770,10 @@ static void trystat(LexState *ls, int line) {
         new_fs.f = addprototype(ls);
         new_fs.f->linedefined = line;
         open_func(ls, &new_fs, &new_bl);
+        /* 标记:该函数体是 try 体。用于对 return / break / continue / '...'
+           给出编译期明确报错 —— 它们是"独立闭包"这个实现方式的硬限制,
+           旧行为分别是静默丢值或晦涩的内部报错。 */
+        new_fs.intry = 1;
 
         /* 解析 try 块直到遇到 catch/finally/end */
         while (ls->t.token != TK_CATCH &&
@@ -2766,7 +2796,10 @@ static void trystat(LexState *ls, int line) {
     luaK_exp2nextreg(fs, &closure_exp);
 
     /* 调用 pcall(closure)，返回 ok, err */
-    luaK_codeABC(fs, OP_CALL, base, 2, 3);  /* 1个参数，2个返回值 */
+    luaK_codeABC(fs, OP_CALL, base, 2, 3);  /* 1 个参数,2 个返回值 */
+    /* 释放 pcall 占用的两个临时寄存器(函数对象 + 闭包实参)。
+       漏掉这行会让后续 exp2nextreg 从过高位置分配,catch 块里的局部变量
+       读到错位槽位 —— 表现为"错误变量拿到了莫名的值"。 */
     fs->freereg = base + 2;
 
     /* 将结果存储到局部变量 */
@@ -2788,20 +2821,29 @@ static void trystat(LexState *ls, int line) {
 
         luaX_next(ls);  /* skip CATCH */
 
-        /* 必须紧跟 '(' */
-        if (ls->t.token != '(')
-            luaX_syntaxerror(ls, "'(' expected after 'catch'");
-        luaX_next(ls);  /* skip '(' */
+        /* 错误变量名的括号是可选的。
+           旧实现**强制** `catch(e)`,写 `catch e` 直接报
+           "'(' expected after 'catch'" —— 而 `catch e` 是各类 Lua 方言里
+           最常见的写法,属于"实际使用时一上手就报错"。现在两种都接受。 */
+        int hasParen = testnext(ls, '(');
 
-        /* 括号内必须有一个标识符作为错误变量 */
-        if (ls->t.token != TK_NAME)
-            error_expected(ls, TK_NAME);
-        TString *err_name = str_checkname(ls);  /* 消耗标识符 */
-
-        /* 必须紧跟 ')' */
-        if (ls->t.token != ')')
-            error_expected(ls, ')');
-        luaX_next(ls);  /* skip ')' */
+        if (hasParen) {
+            /* catch(name) / catch():变量名明确 */
+            if (ls->t.token == TK_NAME) {
+                catch_var = str_checkname(ls);
+            }
+            check_match(ls, ')', '(', line);
+        } else if (ls->t.token == TK_NAME) {
+            /* 裸 catch:要区分 `catch e <stmts>` 与 `catch x = 1`(语句) 。
+               若该 NAME 后面紧跟 '=' '.' '[' '(' ':' '{' 或字符串,说明它自己
+               就是一条语句的开头(如 `catch print("bare")`),不能当成错误变量。 */
+            int nxt = luaX_lookahead(ls);
+            if (nxt != '=' && nxt != '.' && nxt != '[' && nxt != '(' &&
+                nxt != ':' && nxt != '{' && nxt != TK_STRING) {
+                catch_var = str_checkname(ls);
+            }
+        }
+        /* 裸 catch 且后续是语句:catch_var 保持 NULL */
 
         /* 生成条件跳转：如果 __ok__ 为真则跳过 catch 块 */
         init_exp(&cond, VLOCAL, reglevel(fs, ok_reg));
@@ -2812,13 +2854,15 @@ static void trystat(LexState *ls, int line) {
         /* 进入 catch 块 */
         enterblock(fs, &catch_bl, 0);
 
-        /* 创建局部变量（错误变量）并初始化为 __err__ 的值 */
-        new_localvar(ls, err_name);
-        adjustlocalvars(ls, 1);
-        {
-            expdesc err_val;
-            init_exp(&err_val, VLOCAL, reglevel(fs, err_reg));
-            luaK_exp2nextreg(fs, &err_val);
+        /* 创建错误变量并初始化为 __err__ 的值;裸 catch / catch() 不声明 */
+        if (catch_var != NULL) {
+            new_localvar(ls, catch_var);
+            adjustlocalvars(ls, 1);
+            {
+                expdesc err_val;
+                init_exp(&err_val, VLOCAL, reglevel(fs, err_reg));
+                luaK_exp2nextreg(fs, &err_val);
+            }
         }
 
         /* 解析 catch 块内的语句 */

@@ -73,7 +73,7 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 
 | 语法 | 形式 | 实现处 |
 |---|---|---|
-| `try/catch/finally` | `try ... catch(e) ... finally ... end` | `lparser.c:3013`,`trystat` |
+| `try/catch/finally` | `try ... catch(e) ... finally ... end`;**catch 的括号与变量名均可省略**(`catch e` / `catch()` / 裸 `catch`),`finally` 可省 | `lparser.c:3013`,`trystat` |
 | `defer` | `defer <block> end` | `lparser.c:3017`,`deferstat`(2861) |
 | `switch/case/default` | `switch v do case 1 do ... end default ... end end`;分隔符可为 `do`/`then`/`:`/`{` | `lparser.c:2927`,`switchstat`(2354) |
 | `when/case/else` | `when cond then ... case cond then ... else ... end`(类 if-elseif) | `lparser.c:2250`,`whenstat` |
@@ -83,6 +83,16 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过 LuaF
 | 空合并 `??` | `a ?? b` | `lparser.c:1452`(`OPR_NULLCOAL`) |
 | 管道 `\|>` | `x \|> f` | `lparser.c:1454`(`OPR_PIPE`) |
 | 复合赋值 | `+= -= *= /= %= ^= ..= &= \|= <<= >>= //=`(**无** `&&=`/`\|\|=`) | `lparser.c:1661+` |
+
+**`try` 的硬限制**(`try` 体被编译成独立闭包,以下在**编译期**直接报错,不会静默出错):
+
+- 带值 `return` —— 值落在闭包里交不回外层。改为先赋值给局部变量,出 `try` 后再 `return`
+- `break` / `continue` 跳出 `try` —— 把循环整体放进 `try` 内即可
+- `...` —— 闭包看不到外层 vararg
+
+裸 `return`(无值)可以写,等价于提前结束 `try` 体。`catch e` 与 `catch(e)` 等价;
+裸 `catch` 后紧跟语句时解析器会自行判断那个词是不是错误变量(`catch print("x")` 中
+`print` 不会被当变量名)。
 
 **使用建议**:除 `try/catch`(仓库内 `app/src/main/assets/layouthelper/main.lua:41-47` 有真实用例)外,其余扩展在仓库 `.lua/.aly` 中**均无用例**,属于"解析器支持但生态未使用"。给用户写业务代码时**优先用标准 Lua 写法**(`if/elseif`、`pcall`、`local`),除非用户明确要求用扩展语法。`let` 出现在词法表里但解析器无实现,`global` 受 `LUA_COMPAT_GLOBAL` 开关控制且该宏未在本仓库启用——两者都**不要用**。
 
@@ -332,9 +342,13 @@ Http.post("https://api.example.com/login", {user = "a", pass = "b"},
 **通用注意**:两条通道在 **IDE 内运行**时都会被「网络请求拦截」拦下(见 `assets/devdoc/NETWORK.md`),
 **打包成 APK 后不拦截**;开发期若请求静默返回 `-1`,先查拦截名单。
 
-**网络代理**:设置 → 安全、网络与日志 → 网络代理,默认空白(直连)。配了代理后,**编辑器自身**的
-`Https.*`(OkHttp)与 Maven 依赖下载会走代理;**局域网协同与打包后的 APK 不走代理**。
-代理只影响 IDE 的出口,不会写进用户项目,`Http.*`(裸 `HttpURLConnection`)当前也不走代理 ——
+**网络代理**:设置 → 安全、网络与日志 → 网络代理,默认关闭(直连)。开启后装的是**进程级
+`ProxySelector`**,因此编辑器内所有走 JVM 网络栈的请求都被同一套规则约束:内置 `OkHttpUtil`、
+Maven 依赖下载、裸 `HttpURLConnection`,以及 Glide / Coil 这类第三方库自建的 client。
+支持「不走代理的网站」与「只对这些网站走代理」两组名单;**回环地址(127.0.0.1 / ::1)始终直连**,
+否则 MCP、协同这类本机互连会绕一圈自己的代理而连不上。
+不生效的范围:**WebView** 与 **Lua `socket` 模块**(原生网络栈)、以及**打包后的 APK**(不含设置逻辑,
+从不调用 `NetworkProxy.apply`)。代理只影响 IDE 的出口,不会写进用户项目 ——
 详见 `assets/devdoc/NETWORK.md` 第 8 节。
 
 ### 1.10 内置原生库与可复用 Java 能力(优先复用,别无脑纯 Lua 重写)
@@ -492,7 +506,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 - 路径可为项目相对路径,或允许范围内的绝对路径。
 - 不传 `path` 时多数工具回退到"当前打开的项目 / 当前活动文件"。
 
-### 3.2 工具清单(55 个,`McpTools.kt` 实测)
+### 3.2 工具清单(58 个,`McpTools.kt` 实测)
 
 **项目与文件**
 
