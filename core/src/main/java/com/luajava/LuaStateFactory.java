@@ -90,17 +90,31 @@ public final class LuaStateFactory {
     }
 
     /**
-     * removes the luaState from the states list
+     * 从 states 表里摘除一个 native 指针的登记(须带归属校验)。
      *
-     * @param idx
+     * <p>为什么要带归属校验:{@link #getExistingState(long)} 在指针未知时会**新建**
+     * 一个 wrapper 并把同一个指针登记进去,于是同一 {@code idx} 可能先后对应
+     * 多个 wrapper。若关闭 A 时无条件 {@code remove(idx)},会把仍然存活的 B
+     * 也从表里摘掉 —— 之后 Lua 回调经 {@code getExistingState} 再拿到指针时又会
+     * 新建 C,而 C 与 B 共用同一 native state,A 的 {@code _close} 却已经把这块
+     * 内存释放了。B/C 后续任何操作都是 use-after-free,表现随机且致命。
+     *
+     * <p>另外必须用 {@code remove} 而不是 {@code put(idx, null)}:后者在静态
+     * Map 里留下的空条目永不回收,每关闭一个 LuaState 就多一条 (Long, null),
+     * 反复开关页面时这张表会单调变大。语义等价 —— {@code getExistingState}
+     * 对"不存在"和"值为 null"的处理完全相同(都会新建)。
+     *
+     * @param idx   待摘除的 native 指针
+     * @param owner 发起关闭的 wrapper
      */
-    public synchronized static void removeLuaState(long idx) {
-        // 必须 remove 而不是 put(idx, null):后者在静态 Map 里留下的空条目
-        // 永不回收,每关闭一个 LuaState 就多一条 (Long, null)。反复开关页面时
-        // 这张表会单调变大 —— 虽然单条很小,但它是进程级静态对象,
-        // 属于"活多久长多久"的账,顺手清干净。
-        // 语义等价:getExistingState 对"不存在"和"值为 null"的处理完全相同(都会新建)。
-        states.remove(idx);
+    public synchronized static void removeLuaState(long idx, LuaState owner) {
+        if (idx == 0) {
+            return;
+        }
+        LuaState registered = states.get(idx);
+        if (registered == null || registered == owner) {
+            states.remove(idx);
+        }
     }
 
     /**

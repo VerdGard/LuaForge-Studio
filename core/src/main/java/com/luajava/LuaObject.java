@@ -178,10 +178,6 @@ public class LuaObject implements Serializable {
      */
     protected void registerValue(int index) {
         synchronized (L) {
-            // 顺手回收终结器排队的旧引用:终结器线程只入队不解引用(见 finalize),
-            // 若只等到页面销毁才排空,长跑项目的 registry 会攒下大量死引用。
-            // 这里已在 L 的监视器锁内,且只是对 registry 做 unref,不碰栈。
-            L.drainPendingUnref();
             L.pushValue(index);
             int key;
             ref = L.Lref(LuaState.LUA_REGISTRYINDEX);
@@ -189,23 +185,14 @@ public class LuaObject implements Serializable {
         }
     }
 
-    /**
-     * 释放本对象在 Lua registry 里的引用。
-     *
-     * <p><b>这里绝不能 synchronized (L)。</b> 终结器线程只有一条,一旦它在
-     * 本方法里等 LuaState 监视器锁(另一个线程正在跑 Lua 代码,注入调试浮窗后
-     * 的高频 print / 定时器都会长时间占用它),整条终结链就被堵住;超过
-     * {@code FinalizerWatchdogDaemon} 的超时阈值后,ART 直接以"终结超时"
-     * 杀掉进程 —— 这正是"项目运行一段时间后自动重启"的直接成因。
-     *
-     * <p>现在只把 ref 入队(无锁、无 native 调用),真正解引用由持有该 state
-     * 的线程在安全时机完成(见 {@link LuaState#queueUnref(int)} /
-     * {@code LuaState.gc})。
-     */
     @Override
     protected void finalize() {
+        //Log.i("luaObject", "finalize: "+ref+";"+toString());
         try {
-            L.queueUnref(ref);
+            synchronized (L) {
+                if (L.getPointer() != 0)
+                    L.LunRef(LuaState.LUA_REGISTRYINDEX, ref);
+            }
         } catch (Throwable e) {
             System.err.println("Unable to release object " + ref);
         }

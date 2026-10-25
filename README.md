@@ -80,12 +80,17 @@
   - `LuaAsyncTask` 增加 `closeLua()` / `runCallbackSafely()`,取消路径也释放;`LuaThread` / `LuaRunnable` 在 `run()` 末尾 close 并置 `L = null`,`get()` 对已关闭实例抛明确异常;`LuaTimerTask` 在 `cancel()` 里 close(周期任务不能等 run 结束)
   - `LuaInvocationHandler` 删掉只写不读的静态 `ArrayList cache`;`LuaStateFactory.removeLuaState` 改用 `states.remove(idx)`,不再留 `null` 空条目
   - 其余资源泄漏:`EditorFunctions.backupProject`、`MarkdownView.loadFromFile`、`PackageUtil` 改 `use {}`
-- **修复:项目运行一段时间后自动重启(IDE 与打包产物同样受影响)**
-  - 根因在 `core`,不是打包侧问题:`LuaTimerTask.run()` 原本**每触发一次定时器**就做一次 `LUA_GCCOLLECT`(Lua 全量回收)+ 一次 `System.gc()`(Java 整堆回收);而 `LuaObject.finalize()` 是 `synchronized (L) { ... L.LunRef(...) }`,终结器线程要和正在跑 Lua 的线程抢同一把 `LuaState` 监视器锁
-  - 于是 `activity.timer(fn, 1000)` 这类轮询极常见的写法,每秒喂满一次全堆 GC;GC 一密集,唯一的终结器线程就被长时间堵住,超过 `FinalizerWatchdogDaemon` 阈值后 ART 直接以"终结超时"杀掉进程 —— 外部看到的就是"跑一会儿自己重启"
-  - `LuaTimerTask.run()` 改为 `LUA_GCSTEP`(增量),并删掉每 tick 的 `System.gc()`;真正需要全量回收的时机(`cancel()`、`LuaActivity.onDestroy`)保持原样
-  - `LuaState` 新增终结器解引用队列(`queueUnref` / `drainPendingUnref`):`LuaObject.finalize()` 改为**只入队**(无锁、不碰 native),真正 `_LunRef` 由持有该 state 的线程在安全时机排空(`gc()` 入口 + `LuaObject.registerValue()` 每新建一个 registry 引用就顺手回收),长跑项目的 registry 不会堆积死引用
-  - `drainPendingUnref()` 自身 `synchronized`,与 `close()` 互斥,不会读到已释放的指针
+- **修复:项目运行一段时间后自动重启(IDE 与打包产物同样受影响,`native` 崩溃)**
+  - 根因在 `core`:**`LuaState.close()` 不幂等**,二次关闭把 `0` 当作 native 指针传给 `_close`
+    - `close()` 末尾会把 `luaState` 置 0;再次进入时 `_close(luaState)` 收到的就是 `0`
+    - JNI 侧 `Java_com_luajava_LuaState__1close` 直接 `getStateFromCPtr(env, 0)` → `pushJNIEnv(env, NULL)` → 对该指针 `lua_pushstring` → **SIGSEGV**
+    - **native 崩溃不受 Java `try/catch` 约束**,进程当场消失,被系统重新拉起 —— 外部看到的就是"跑一会儿自己重启"
+  - 这是 1.6.9 修 LuaState 泄漏时引入的回归:原作者版本的显式 `L.close()` 只有 `Console.java` 一处,其余全靠 `finalize()` 兜底;为修泄漏把显式 `close()` 扩到了 6 处(`LuaActivity` / `LuaService` / `LuaThread` / `LuaRunnable` / `LuaTimerTask` / `LuaAsyncTask`),二次关闭的路径就此成立 —— 生命周期终点显式 `close()` 一次后,wrapper 变为不可达,`LuaState.finalize()` 的兜底还会再 `close()` 一次
+  - **修复**
+    - `LuaState.close()` 加**幂等守卫**(已关闭直接返回),并改为「先置 0、再释放」:释放过程中若回调再次进入也不会重复释放
+    - `LuaStateFactory.removeLuaState(long, LuaState)` 增加**归属校验**:`getExistingState` 在指针未知时会新建 wrapper 并登记同一指针,同一 `idx` 可能对应多个 wrapper,关闭 A 时若无条件 `remove(idx)` 会把仍存活的 B 从表里摘掉;随后 Lua 回调再拿到该指针会新建 C,而 A 的 `_close` 已释放了这块内存 —— B/C 后续操作全是 use-after-free
+    - JNI 侧 `_1close` 增加 `cptr == 0` 早返回,作为第二道防线(native 越界无法靠 Java 兜底)
+  - **已回退上一版基于错误根因的改动**:曾把问题归到「`LuaTimerTask` 每 tick 全量 GC + `LuaObject.finalize()` 抢 `LuaState` 锁导致 `FinalizerWatchdogDaemon` 超时」,并据此改了 GC 策略、给终结器加了无锁解引用队列。对照原作者代码后确认该写法在原版中**完全相同**,并非差异点,故 `LuaTimerTask` 与 `LuaObject` 已还原为原实现,避免留下无依据的改动
 - **修复:MCP 重复启动 APP、调试浮窗不注入**
   - **运行实例表按对象身份登记**:`LuaActivity` 的 `static HashMap<pageName, LuaActivity>` 改为 `CopyOnWriteArrayList<LuaActivity>`,允许同名页面共存。旧实现里两个项目都跑 `main.lua` 会互相覆盖,且 `onDestroy` 无条件 `remove(pageName)` 会删掉**别人**的登记 —— 表现为"MCP 按 luaDir 找不到运行实例、`stop_project` 停不掉"
   - **`run_project` 不再叠加实例**:项目已在运行时先结束旧实例再启动新的(始终只保留一个运行页面),并让新会话重新走 `onSessionStart`(调试浮窗按本次会话重新注入);`reuse=true` 才复用运行中的实例。等待运行实例出现改为用**启动前快照做差集**,只认本次新注册的那个 —— 旧实现按 luaDir 取"任意一个",常命中旧实例,于是 capture / 断言全部打到旧会话上,看起来就是"重复启动 + 浮窗没注入"

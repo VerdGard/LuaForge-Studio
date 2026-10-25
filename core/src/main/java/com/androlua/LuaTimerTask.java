@@ -74,19 +74,6 @@ public class LuaTimerTask extends TimerTaskX {
         } catch (LuaException e) {
             mLuaContext.sendError(this.toString(), e);
         }
-        // 每 tick 只做一次**增量**回收(stepping),并且绝不 System.gc()。
-        //
-        // 这里原本是 `LUA_GCCOLLECT`(Lua 全量) + `System.gc()`(Java 整堆),
-        // 也就是每触发一次定时器就做一次全量 Lua 回收 + 一次全堆 Java GC。
-        // 项目里 `activity.timer(fn, 1000)` 这类轮询极常见,于是:
-        //   1) 定时器线程每秒一次全堆 GC,终结器(FinalizerDaemon)被持续喂满;
-        //   2) LuaObject.finalize() 里 synchronized(L) 要和正在跑 Lua 的线程
-        //      抢同一把锁,GC 一密集终结器线程就会被长时间堵住;
-        //   3) 超过 FinalizerWatchdogDaemon 的超时阈值后,ART 直接判"终结超时"
-        //      并把整个进程打掉 —— 外部看到的就是"运行一段时间后自己重启"。
-        //
-        // 增量回收只处理一小步,开销与 tick 频率解耦;真正需要全量回收的场景
-        // (页面销毁、VM 关闭)在 LuaActivity.onDestroy / cancel() 里已经做了。
         // cancel() 会把 L 关掉并置 null,而定时器(另一个线程)仍可能投递一次
         // 已排队的执行。这里连"判空后立刻被 cancel 置空"的竞态一起兜住:
         // 先把引用抓进局部变量,再整体包 try/catch —— 直接写
@@ -94,11 +81,12 @@ public class LuaTimerTask extends TimerTaskX {
         try {
             LuaState cur = L;
             if (cur != null && !cur.isClosed()) {
-                cur.gc(LuaState.LUA_GCSTEP, 1);
+                cur.gc(LuaState.LUA_GCCOLLECT, 1);
             }
         } catch (Throwable ignored) {
             // 已关闭/正被关闭,忽略
         }
+        System.gc();
 
     }
 

@@ -1853,7 +1853,18 @@ Java_com_luajava_LuaState__1openLibs(JNIEnv *env, jobject jobj, jlong cptr) {
 
 JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1close(JNIEnv *env, jobject jobj, jlong cptr) {
-    lua_State *L = getStateFromCPtr(env, cptr);
+    lua_State *L;
+
+    /* cptr == 0 表示对应的 LuaState wrapper 已经关闭(JNI 侧 Java 字段已置 0)。
+     * 绝不能继续走 getStateFromCPtr:它会 pushJNIEnv 到 NULL 指针上,
+     * 在 lua_pushstring 里直接段错误 —— 这是 native 崩溃,Java 的 try/catch
+     * 拦不住,进程当场消失(表现为"运行一段时间后自动重启")。
+     * Java 侧 LuaState.close() 已有幂等守卫,这里是第二道防线。 */
+    if (cptr == 0) {
+        return;
+    }
+
+    L = getStateFromCPtr(env, cptr);
 
     lua_close(L);
 }
