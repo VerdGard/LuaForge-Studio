@@ -178,6 +178,8 @@ public class LuaObject implements Serializable {
      */
     protected void registerValue(int index) {
         synchronized (L) {
+            if (isClosed()) return;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             L.pushValue(index);
             int key;
             ref = L.Lref(LuaState.LUA_REGISTRYINDEX);
@@ -202,15 +204,24 @@ public class LuaObject implements Serializable {
      * Pushes the object represented by <code>this<code> into L's stack
      */
     public void push() {
+        // 见 isClosed() 的说明:state 关闭后 rawGetI 会把 0 传给 JNI 并崩在 native
+        if (isClosed()) {
+            throw new IllegalStateException("LuaState already closed");
+        }
         L.rawGetI(LuaState.LUA_REGISTRYINDEX, ref);
     }
 
     public void pop() {
+        if (isClosed()) {
+            throw new IllegalStateException("LuaState already closed");
+        }
         L.pop(1);
     }
 
     public boolean isNil() {
         synchronized (L) {
+            if (isClosed()) return false;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             boolean bool = L.isNil(-1);
             L.pop(1);
@@ -220,6 +231,8 @@ public class LuaObject implements Serializable {
 
     public boolean isBoolean() {
         synchronized (L) {
+            if (isClosed()) return false;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             boolean bool = L.isBoolean(-1);
             L.pop(1);
@@ -229,6 +242,8 @@ public class LuaObject implements Serializable {
 
     public boolean isNumber() {
         synchronized (L) {
+            if (isClosed()) return false;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             boolean bool = L.isNumber(-1);
             L.pop(1);
@@ -238,6 +253,8 @@ public class LuaObject implements Serializable {
 
     public boolean isInteger() {
         synchronized (L) {
+            if (isClosed()) return false;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             boolean bool = L.isInteger(-1);
             L.pop(1);
@@ -247,6 +264,8 @@ public class LuaObject implements Serializable {
 
     public boolean isString() {
         synchronized (L) {
+            if (isClosed()) return false;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             boolean bool = L.isString(-1);
             L.pop(1);
@@ -256,6 +275,8 @@ public class LuaObject implements Serializable {
 
     public boolean isFunction() {
         synchronized (L) {
+            if (isClosed()) return false;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             boolean bool = L.isFunction(-1);
             L.pop(1);
@@ -265,6 +286,8 @@ public class LuaObject implements Serializable {
 
     public boolean isJavaObject() {
         synchronized (L) {
+            if (isClosed()) return false;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             boolean bool = L.isObject(-1);
             L.pop(1);
@@ -274,6 +297,8 @@ public class LuaObject implements Serializable {
 
     public boolean isJavaFunction() {
         synchronized (L) {
+            if (isClosed()) return false;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             boolean bool = L.isJavaFunction(-1);
             L.pop(1);
@@ -283,6 +308,8 @@ public class LuaObject implements Serializable {
 
     public boolean isTable() {
         synchronized (L) {
+            if (isClosed()) return false;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             boolean bool = L.isTable(-1);
             L.pop(1);
@@ -292,6 +319,8 @@ public class LuaObject implements Serializable {
 
     public boolean isUserdata() {
         synchronized (L) {
+            if (isClosed()) return false;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             boolean bool = L.isUserdata(-1);
             L.pop(1);
@@ -301,6 +330,8 @@ public class LuaObject implements Serializable {
 
     public int type() {
         synchronized (L) {
+            if (isClosed()) return LuaState.LUA_TNIL;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             int type = L.type(-1);
             L.pop(1);
@@ -310,6 +341,8 @@ public class LuaObject implements Serializable {
 
     public boolean getBoolean() {
         synchronized (L) {
+            if (isClosed()) return false;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             boolean bool = L.toBoolean(-1);
             L.pop(1);
@@ -319,6 +352,8 @@ public class LuaObject implements Serializable {
 
     public double getNumber() {
         synchronized (L) {
+            if (isClosed()) return 0;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             double db = L.toNumber(-1);
             L.pop(1);
@@ -328,6 +363,8 @@ public class LuaObject implements Serializable {
 
     public long getInteger() {
         synchronized (L) {
+            if (isClosed()) return 0;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             long lg = L.toInteger(-1);
             L.pop(1);
@@ -337,6 +374,8 @@ public class LuaObject implements Serializable {
 
     public String getString() {
         synchronized (L) {
+            if (isClosed()) return null;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             String str = L.toString(-1);
             L.pop(1);
@@ -346,6 +385,8 @@ public class LuaObject implements Serializable {
 
     public LuaTable<?, ?> getTable() {
         synchronized (L) {
+            if (isClosed()) return null;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             LuaTable td = new LuaTable(L, -1);
             L.pop(1);
@@ -355,6 +396,8 @@ public class LuaObject implements Serializable {
 
     public LuaFunction<?> getFunction() {
         synchronized (L) {
+            if (isClosed()) return null;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             LuaFunction<?> ft = new LuaFunction(L, -1);
             L.pop(1);
@@ -365,6 +408,8 @@ public class LuaObject implements Serializable {
 
     public Object getObject() throws LuaException {
         synchronized (L) {
+            if (isClosed()) throw new LuaException("LuaState already closed");
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             push();
             Object obj = L.getObjectFromUserdata(-1);
             L.pop(1);
@@ -377,10 +422,12 @@ public class LuaObject implements Serializable {
      * a field value.
      */
     public LuaObject getField(String field) throws LuaException {
+        if (isClosed()) throw new LuaException("LuaState already closed");
         return L.getLuaObject(this, field);
     }
 
     public void setField(String field, Object obj) {
+        if (isClosed()) throw new IllegalStateException("LuaState already closed");
         push();
         try {
             L.pushObjectValue(obj);
@@ -393,10 +440,12 @@ public class LuaObject implements Serializable {
     }
 
     public LuaObject getI(long idx) throws LuaException {
+        if (isClosed()) throw new LuaException("LuaState already closed");
         return L.getLuaObject(this, idx);
     }
 
     public void setI(long idx, Object obj) {
+        if (isClosed()) throw new IllegalStateException("LuaState already closed");
         push();
         try {
             L.pushObjectValue(obj);
@@ -419,6 +468,8 @@ public class LuaObject implements Serializable {
      */
     public Object[] call_aux(Object[] args, int nres) throws LuaException {
         synchronized (L) {
+            if (isClosed()) throw new LuaException("LuaState already closed");
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             if (!isFunction() && !isTable() && !isUserdata())
                 throw new LuaException("Invalid object. Not a function, table or userdata .");
 
@@ -491,6 +542,8 @@ public class LuaObject implements Serializable {
 
     public LuaObject[] _call_aux(Object[] args, int nres) throws LuaException {
         synchronized (L) {
+            if (isClosed()) throw new LuaException("LuaState already closed");
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             if (!isFunction() && !isTable() && !isUserdata())
                 throw new LuaException("Invalid object. Not a function, table or userdata .");
 
@@ -559,6 +612,8 @@ public class LuaObject implements Serializable {
 
     public byte[] dump() throws LuaException {
         synchronized (L) {
+            if (isClosed()) throw new LuaException("LuaState already closed");
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             if (!isFunction())
                 throw new LuaException("Invalid object. Not a function .");
 
@@ -571,6 +626,8 @@ public class LuaObject implements Serializable {
 
     public Object[] asArray() throws IllegalArgumentException, ArrayIndexOutOfBoundsException, LuaException {
         synchronized (L) {
+            if (isClosed()) throw new LuaException("LuaState already closed");
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             if (!isTable())
                 throw new LuaException("Invalid object. Not a table .");
             push();
@@ -590,28 +647,63 @@ public class LuaObject implements Serializable {
         }
     }
 
-    public Map asMap(LuaState L, Class<?> clazz, int idx) throws LuaException {
+    /**
+     * 形参原本叫 {@code L},遮蔽了同名字段:锁加在形参上,而 {@code isClosed()}/
+     * {@code push()} 用的是字段,两者可能不是同一个 state —— 关的是 A 却锁着 B,
+     * 存活判断完全失效。这里改名避开遮蔽。
+     */
+    public Map asMap(LuaState state_, Class<?> clazz, int idx) throws LuaException {
         // TODO: Implement this method
-        synchronized (L) {
+        synchronized (state_) {
+            if (isClosed()) return null;
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             if (!isTable())
                 throw new LuaException("Invalid object. Not a table .");
             HashMap<Object, Object> map = new HashMap<Object, Object>();
             push();
-            L.pushNil();
-            while (L.next(idx) != 0) {
+            state_.pushNil();
+            while (state_.next(idx) != 0) {
                 try {
-                    map.put(L.toJavaObject(-2), L.toJavaObject(-1));
+                    map.put(state_.toJavaObject(-2), state_.toJavaObject(-1));
                 } catch (LuaException e) {
                 }
-                L.pop(1);
+                state_.pop(1);
             }
-            L.pop(1);
+            state_.pop(1);
             return map;
         }
     }
 
+    /**
+     * 本对象所属的 Lua 虚拟机是否已关闭。
+     *
+     * <p>崩溃现场(base.vdex 栈):{@code LuaObject.toString() → isNil() → push()
+     * → LuaState.rawGetI() → pushJNIEnv(NULL)}。即:某个 LuaObject 所属的
+     * LuaState 已经被 {@link LuaState#close()} 释放,但这个对象仍被使用,
+     * 取出的是 0 指针,JNI 侧对 NULL 解引用 → SIGSEGV,进程直接消失。
+     *
+     * <p>{@code toString()} 是**隐式调用**(字符串拼接、日志、{@code String.valueOf}、
+     * 调试器打印),因此页面关闭后任何残留的 LuaObject 都可能触发它。
+     * 这也是"强制关闭/自动重启"最主要的形态:用户看不到 Java 异常栈,
+     * 只有 tombstone 里一条 pushJNIEnv。
+     */
+    public boolean isClosed() {
+        return L == null || L.isClosed();
+    }
+
     public String toString() {
+        // 已关闭的 state 绝不能再进 native:此时 L.getPointer() 为 0,
+        // rawGetI 会把 0 传给 JNI 并对 NULL 解引用。
+        // toString() 不允许抛异常(它常在日志/字符串拼接里被调用,
+        // 抛出去同样会终结进程),因此这里直接返回一个可读占位符。
+        if (isClosed()) {
+            return "LuaObject(closed)";
+        }
         synchronized (L) {
+            // 锁内再判一次:L 可能在上面判空与取锁之间被关闭
+            if (isClosed()) {
+                return "LuaObject(closed)";
+            }
             try {
                 if (isNil())
                     return "nil";
@@ -635,6 +727,12 @@ public class LuaObject implements Serializable {
                     return null;
             } catch (LuaException e) {
                 return null;
+            } catch (IllegalStateException e) {
+                // LuaState 的存活校验在本次调用期间发现 state 已关闭
+                return "LuaObject(closed)";
+            } catch (Throwable e) {
+                // toString() 不能向外抛:调用方多为日志/拼接,抛出会终结进程
+                return "LuaObject(error: " + e.getClass().getSimpleName() + ")";
             }
         }
     }
@@ -646,6 +744,8 @@ public class LuaObject implements Serializable {
      */
     public Object createProxy(String implem) throws ClassNotFoundException, LuaException {
         synchronized (L) {
+            if (isClosed()) throw new LuaException("LuaState already closed");
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             if (!isTable())
                 throw new LuaException("Invalid Object. Must be Table.");
 
@@ -662,6 +762,8 @@ public class LuaObject implements Serializable {
 
     public Object createProxy(Class implem) throws LuaException {
         synchronized (L) {
+            if (isClosed()) throw new LuaException("LuaState already closed");
+            // 进入 native 前再确认一次:取锁期间 state 可能已被关闭
             if (!isTable() && !isFunction())
                 throw new LuaException("Invalid Object. Must be Table or Function.");
 

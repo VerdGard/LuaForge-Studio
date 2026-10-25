@@ -23,6 +23,15 @@ public class LuaTimerTask extends TimerTaskX {
 
     private byte[] mBuffer;
 
+    /** run() 是否正在执行(受 this 保护)。 */
+    private boolean mRunning;
+
+    /** 是否已请求取消;置位后 run() 不再执行新的触发。 */
+    private boolean mCancelPending;
+
+    /** cancel() 撞上 run() 执行中时,待 run() 收尾释放的 state。 */
+    private LuaState mPendingClose;
+
     public LuaTimerTask(LuaContext luaContext, String src) throws LuaException {
         this(luaContext, src, null);
     }
@@ -52,17 +61,45 @@ public class LuaTimerTask extends TimerTaskX {
     public void run() {
         if (!mEnabled)
             return;
-        try {
-            if (L == null) {
-                initLua();
 
+        LuaState cur;
+        boolean justCreated = false;
+        synchronized (this) {
+            // 已请求取消,不再执行
+            if (mCancelPending) {
+                return;
+            }
+            cur = L;
+            if (cur != null && cur.isClosed()) {
+                // 已关闭但字段没被清掉:当作未初始化,绝不能带着 0 指针进 native
+                L = null;
+                cur = null;
+            }
+            if (cur == null) {
+                try {
+                    initLua();
+                } catch (Throwable t) {
+                    mLuaContext.sendError(this.toString(), asException(t));
+                    return;
+                }
+                cur = L;
+                justCreated = true;
+            }
+            mRunning = true;
+        }
+
+        // 注意:Lua 代码在这里**不持 this 锁**执行。
+        // 若一直持锁,cancel()(来自 UI 线程的 LuaTimer.stop()/gc()、
+        // LuaActivity.onDestroy)就会被一次长脚本阻塞到 ANR。
+        try {
+            if (justCreated) {
                 if (mBuffer != null)
                     newLuaThread(mBuffer, mArg);
                 else
                     newLuaThread(mSrc, mArg);
             } else {
-                L.getGlobal("run");
-                if (!L.isNil(-1))
+                cur.getGlobal("run");
+                if (!cur.isNil(-1))
                     runFunc("run");
                 else {
                     if (mBuffer != null)
@@ -73,21 +110,59 @@ public class LuaTimerTask extends TimerTaskX {
             }
         } catch (LuaException e) {
             mLuaContext.sendError(this.toString(), e);
-        }
-        // cancel() 会把 L 关掉并置 null,而定时器(另一个线程)仍可能投递一次
-        // 已排队的执行。这里连"判空后立刻被 cancel 置空"的竞态一起兜住:
-        // 先把引用抓进局部变量,再整体包 try/catch —— 直接写
-        // `if (L != null) L.gc(...)` 在两步之间仍可能 NPE。
-        try {
-            LuaState cur = L;
-            if (cur != null && !cur.isClosed()) {
-                cur.gc(LuaState.LUA_GCCOLLECT, 1);
+        } catch (Throwable t) {
+            // 关键:原本只捕获 LuaException。定时器运行在 TimerX 的调度线程上,
+            // 任何别的 Throwable(NullPointerException、IllegalStateException、
+            // StackOverflowError、OOM......)都会沿 task.run() 一路上抛到该线程的
+            // run(),而这个线程没有任何 UncaughtExceptionHandler 兜底 ——
+            // ART 直接终结整个进程,表现为"定时器一跑就闪退/自动重启",
+            // 且 tombstone 里看不到任何 Lua 栈。
+            mLuaContext.sendError(this.toString(), asException(t));
+        } finally {
+            LuaState toClose = null;
+            LuaState toGc = null;
+            synchronized (this) {
+                mRunning = false;
+                if (mCancelPending) {
+                    // cancel() 在执行期间到达:释放延后到这里,保证不会
+                    // 一边跑 Lua 一边 lua_close(那正是 use-after-free 的来源)
+                    toClose = mPendingClose;
+                    mPendingClose = null;
+                    L = null;
+                } else {
+                    toGc = L;
+                }
             }
-        } catch (Throwable ignored) {
-            // 已关闭/正被关闭,忽略
+            if (toClose != null) {
+                closeQuietly(toClose);
+            } else if (toGc != null && !toGc.isClosed()) {
+                try {
+                    toGc.gc(LuaState.LUA_GCCOLLECT, 1);
+                } catch (Throwable ignored) {
+                    // 已关闭/正被关闭,忽略
+                }
+            }
         }
         System.gc();
 
+    }
+
+    /** 关闭一个 LuaState,任何失败都吞掉(收尾路径不该再抛)。 */
+    private static void closeQuietly(LuaState state) {
+        if (state == null || state.isClosed()) {
+            return;
+        }
+        try {
+            state.gc(LuaState.LUA_GCCOLLECT, 1);
+            state.close();
+        } catch (Throwable ignored) {
+            // 释放失败不该影响收尾
+        }
+    }
+
+    /** 把任意 Throwable 包装成 Exception,供 LuaContext.sendError 使用。 */
+    private static Exception asException(Throwable t) {
+        return (t instanceof Exception) ? (Exception) t : new RuntimeException(t);
     }
 
     /**
@@ -107,14 +182,29 @@ public class LuaTimerTask extends TimerTaskX {
      */
     @Override
     public boolean cancel() {
-        if (L != null && !L.isClosed()) {
-            try {
-                L.gc(LuaState.LUA_GCCOLLECT, 1);
-                L.close();
-            } catch (Throwable ignored) {
-                // 释放失败不该阻止取消
+        LuaState toClose = null;
+        synchronized (this) {
+            mCancelPending = true;
+            LuaState cur = L;
+            if (cur == null) {
+                // 未初始化或已被关闭路径清空,无需处理
+            } else if (mRunning) {
+                // run() 正在执行 Lua:把释放交给它收尾,这里绝不 lua_close,
+                // 否则就是"边跑边释放" —— 崩溃栈 LuaObject.push →
+                // LuaState.rawGetI → pushJNIEnv(NULL) 正是这么产生的。
+                //
+                // 关键:此时**不能**把字段 L 置 null。run() 执行 Lua 时不持
+                // this 锁,而 runFunc()/newLuaThread()/doFile() 等内部都直接用
+                // 字段 L;置空会让正在跑的脚本立刻 NPE。字段 L 由 run() 的
+                // finally 在收尾时统一置 null。
+                mPendingClose = cur;
+            } else {
+                L = null;
+                toClose = cur;
             }
-            L = null;
+        }
+        if (toClose != null) {
+            closeQuietly(toClose);
         }
         return super.cancel();
     }
@@ -136,14 +226,38 @@ public class LuaTimerTask extends TimerTaskX {
     }
 
 
+    /**
+     * 取当前可用的 LuaState,已关闭或未初始化则抛 LuaException。
+     *
+     * <p>原本 set()/get() 直接写 {@code L.xxx}:定时器被 cancel 后 L 为 null,
+     * 或在 run() 之前被外部调用,都会 NPE;若 L 已 close 则是 0 指针进 native。
+     * 两种都会终结进程,这里统一转成可捕获的 LuaException。
+     */
+    private LuaState requireLuaState() throws LuaException {
+        LuaState cur;
+        synchronized (this) {
+            cur = L;
+        }
+        if (cur == null || cur.isClosed()) {
+            throw new LuaException("LuaTimerTask is not running");
+        }
+        return cur;
+    }
+
     public void set(String key, Object value) throws LuaException {
-        L.pushObjectValue(value);
-        L.setGlobal(key);
+        LuaState cur = requireLuaState();
+        synchronized (cur) {
+            cur.pushObjectValue(value);
+            cur.setGlobal(key);
+        }
     }
 
     public Object get(String key) throws LuaException {
-        L.getGlobal(key);
-        return L.toJavaObject(-1);
+        LuaState cur = requireLuaState();
+        synchronized (cur) {
+            cur.getGlobal(key);
+            return cur.toJavaObject(-1);
+        }
     }
 
     private String errorReason(int error) {

@@ -180,6 +180,36 @@ public class LuaState {
     }
 
     /**
+     * 取用于调用 native 的指针,已关闭则抛异常,而不是把 0 传下去。
+     *
+     * <p><b>为什么必须有这一层。</b>{@link #close()} 会把 {@code luaState} 置 0,
+     * 但本类所有 native 调用点原本都是直接 {@code _xxx(checkedPtr(), ...)}。
+     * 一旦某处在关闭之后仍被使用(跨线程回调、定时器、finalize、以及持有
+     * LuaObject 的 Java 对象在页面销毁后才回调......),传下去的就是 0:
+     * JNI 侧 {@code getStateFromCPtr} 会把 0 强转成 {@code lua_State*}(NULL),
+     * 紧接着 {@code pushJNIEnv} 对该指针 {@code lua_pushstring} ——
+     * <b>这是 native 段错误,Java 的 try/catch 拦不住,进程当场消失</b>,
+     * 外部看到的就是"界面被强制关闭"或"自动重启",且拿不到任何 Java 堆栈。
+     *
+     * <p>改成抛 {@link IllegalStateException} 后,同一种误用变成可捕获、可上报的
+     * Java 异常,至少能被 UncaughtExceptionHandler 记录成崩溃报告。
+     *
+     * <p><b>残留竞态(已知)</b>:本方法在进入 native 的 synchronized 之前读取指针,
+     * 若另一线程恰在此刻完成 {@code close()},仍可能带着刚被释放的指针进入 native。
+     * 彻底消除需要把「读指针 + 调 native」放进同一把监视器锁,涉及全部调用点的
+     * 结构性改写;此处先消灭"已关闭后仍被调用"这一主要成因。
+     */
+    private long checkedPtr() {
+        synchronized (this) {
+            long p = luaState;
+            if (p == 0) {
+                throw new IllegalStateException("LuaState already closed");
+            }
+            return p;
+        }
+    }
+
+    /**
      * Return the long representing the LuaState pointer
      *
      * @return long
@@ -460,391 +490,569 @@ public class LuaState {
     // Java Interface -----------------------------------------------------
 
     public LuaState newThread() {
-        LuaState l = new LuaState(_newthread(luaState));
-        LuaStateFactory.insertLuaState(l);
-        return l;
+        synchronized (this) {
+            LuaState l = new LuaState(_newthread(checkedPtr()));
+            LuaStateFactory.insertLuaState(l);
+            return l;
+        }
     }
 
     // STACK MANIPULATION
 
     public int getTop() {
-        return _getTop(luaState);
+        synchronized (this) {
+            return _getTop(checkedPtr());
+        }
     }
 
     public void setTop(int idx) {
-        _setTop(luaState, idx);
+        synchronized (this) {
+            _setTop(checkedPtr(), idx);
+        }
     }
 
     public void pushValue(int idx) {
-        _pushValue(luaState, idx);
+        synchronized (this) {
+            _pushValue(checkedPtr(), idx);
+        }
     }
 
     public void rotate(int idx, int n) {
-        _rotate(luaState, idx, n);
+        synchronized (this) {
+            _rotate(checkedPtr(), idx, n);
+        }
     }
 
     public void copy(int fromidx, int toidx) {
-        _copy(luaState, fromidx, toidx);
+        synchronized (this) {
+            _copy(checkedPtr(), fromidx, toidx);
+        }
     }
 
     public void remove(int idx) {
-        _remove(luaState, idx);
+        synchronized (this) {
+            _remove(checkedPtr(), idx);
+        }
     }
 
     public void insert(int idx) {
-        _insert(luaState, idx);
+        synchronized (this) {
+            _insert(checkedPtr(), idx);
+        }
     }
 
     public void replace(int idx) {
-        _replace(luaState, idx);
+        synchronized (this) {
+            _replace(checkedPtr(), idx);
+        }
     }
 
     public int checkStack(int sz) {
-        return _checkStack(luaState, sz);
+        synchronized (this) {
+            return _checkStack(checkedPtr(), sz);
+        }
     }
 
     public void xmove(LuaState to, int n) {
-        _xmove(luaState, to.luaState, n);
+        synchronized (this) {
+            _xmove(checkedPtr(), to.luaState, n);
+        }
     }
 
     // ACCESS FUNCTION
 
     public boolean isNumber(int idx) {
-        return (_isNumber(luaState, idx) != 0);
+        synchronized (this) {
+            return (_isNumber(checkedPtr(), idx) != 0);
+        }
     }
 
     public boolean isInteger(int idx) {
-        return (_isInteger(luaState, idx) != 0);
+        synchronized (this) {
+            return (_isInteger(checkedPtr(), idx) != 0);
+        }
     }
 
     public boolean isString(int idx) {
-        return (_isString(luaState, idx) != 0);
+        synchronized (this) {
+            return (_isString(checkedPtr(), idx) != 0);
+        }
     }
 
     public boolean isFunction(int idx) {
-        return (_isFunction(luaState, idx) != 0);
+        synchronized (this) {
+            return (_isFunction(checkedPtr(), idx) != 0);
+        }
     }
 
     public boolean isCFunction(int idx) {
-        return (_isCFunction(luaState, idx) != 0);
+        synchronized (this) {
+            return (_isCFunction(checkedPtr(), idx) != 0);
+        }
     }
 
     public boolean isUserdata(int idx) {
-        return (_isUserdata(luaState, idx) != 0);
+        synchronized (this) {
+            return (_isUserdata(checkedPtr(), idx) != 0);
+        }
     }
 
     public boolean isTable(int idx) {
-        return (_isTable(luaState, idx) != 0);
+        synchronized (this) {
+            return (_isTable(checkedPtr(), idx) != 0);
+        }
     }
 
     public boolean isBoolean(int idx) {
-        return (_isBoolean(luaState, idx) != 0);
+        synchronized (this) {
+            return (_isBoolean(checkedPtr(), idx) != 0);
+        }
     }
 
     public boolean isNil(int idx) {
-        return (_isNil(luaState, idx) != 0);
+        synchronized (this) {
+            return (_isNil(checkedPtr(), idx) != 0);
+        }
     }
 
     public boolean isThread(int idx) {
-        return (_isThread(luaState, idx) != 0);
+        synchronized (this) {
+            return (_isThread(checkedPtr(), idx) != 0);
+        }
     }
 
     public boolean isNone(int idx) {
-        return (_isNone(luaState, idx) != 0);
+        synchronized (this) {
+            return (_isNone(checkedPtr(), idx) != 0);
+        }
     }
 
     public boolean isNoneOrNil(int idx) {
-        return (_isNoneOrNil(luaState, idx) != 0);
+        synchronized (this) {
+            return (_isNoneOrNil(checkedPtr(), idx) != 0);
+        }
     }
 
     public int type(int idx) {
-        return _type(luaState, idx);
+        synchronized (this) {
+            return _type(checkedPtr(), idx);
+        }
     }
 
     public String typeName(int tp) {
-        return _typeName(luaState, tp);
+        synchronized (this) {
+            return _typeName(checkedPtr(), tp);
+        }
     }
 
     public int equal(int idx1, int idx2) {
-        return _equal(luaState, idx1, idx2);
+        synchronized (this) {
+            return _equal(checkedPtr(), idx1, idx2);
+        }
     }
 
     public int compare(int idx1, int idx2, int op) {
-        return _compare(luaState, idx1, idx2, op);
+        synchronized (this) {
+            return _compare(checkedPtr(), idx1, idx2, op);
+        }
     }
 
     public int rawequal(int idx1, int idx2) {
-        return _rawequal(luaState, idx1, idx2);
+        synchronized (this) {
+            return _rawequal(checkedPtr(), idx1, idx2);
+        }
     }
 
     public int lessThan(int idx1, int idx2) {
-        return _lessThan(luaState, idx1, idx2);
+        synchronized (this) {
+            return _lessThan(checkedPtr(), idx1, idx2);
+        }
     }
 
     public double toNumber(int idx) {
-        return _toNumber(luaState, idx);
+        synchronized (this) {
+            return _toNumber(checkedPtr(), idx);
+        }
     }
 
     public long toInteger(int idx) {
-        return _toInteger(luaState, idx);
+        synchronized (this) {
+            return _toInteger(checkedPtr(), idx);
+        }
     }
 
     public boolean toBoolean(int idx) {
-        return (_toBoolean(luaState, idx) != 0);
+        synchronized (this) {
+            return (_toBoolean(checkedPtr(), idx) != 0);
+        }
     }
 
     public String toString(int idx) {
-        return new String(_toString(luaState, idx));
+        synchronized (this) {
+            return new String(_toString(checkedPtr(), idx));
+        }
     }
 
     public byte[] toBuffer(int idx) {
-        return _toBuffer(luaState, idx);
+        synchronized (this) {
+            return _toBuffer(checkedPtr(), idx);
+        }
     }
 
     public int strLen(int idx) {
-        return _strlen(luaState, idx);
+        synchronized (this) {
+            return _strlen(checkedPtr(), idx);
+        }
     }
 
     public int objLen(int idx) {
-        return _objlen(luaState, idx);
+        synchronized (this) {
+            return _objlen(checkedPtr(), idx);
+        }
     }
 
     public int rawLen(int idx) {
-        return _rawlen(luaState, idx);
+        synchronized (this) {
+            return _rawlen(checkedPtr(), idx);
+        }
     }
 
     public LuaState toThread(int idx) {
-        return new LuaState(_toThread(luaState, idx));
+        synchronized (this) {
+            return new LuaState(_toThread(checkedPtr(), idx));
+        }
     }
 
     //PUSH FUNCTIONS
 
     public void pushNil() {
-        _pushNil(luaState);
+        synchronized (this) {
+            _pushNil(checkedPtr());
+        }
     }
 
     public void pushNumber(double db) {
-        _pushNumber(luaState, db);
+        synchronized (this) {
+            _pushNumber(checkedPtr(), db);
+        }
     }
 
     public void pushInteger(long integer) {
-        _pushInteger(luaState, integer);
+        synchronized (this) {
+            _pushInteger(checkedPtr(), integer);
+        }
     }
 
     public void pushString(String str) {
-        if (str == null)
-            _pushNil(luaState);
-        else
-            _pushString(luaState, str);
+        synchronized (this) {
+            if (str == null)
+                _pushNil(checkedPtr());
+            else
+                _pushString(checkedPtr(), str);
+        }
     }
 
     public void pushString(byte[] bytes) {
-        if (bytes == null)
-            _pushNil(luaState);
-        else
-            _pushLString(luaState, bytes, bytes.length);
+        synchronized (this) {
+            if (bytes == null)
+                _pushNil(checkedPtr());
+            else
+                _pushLString(checkedPtr(), bytes, bytes.length);
+        }
     }
 
     public void pushBoolean(boolean bool) {
-        _pushBoolean(luaState, bool ? 1 : 0);
+        synchronized (this) {
+            _pushBoolean(checkedPtr(), bool ? 1 : 0);
+        }
     }
 
     // GET FUNCTIONS
 
     public int getTable(int idx) {
-        return _getTable(luaState, idx);
+        synchronized (this) {
+            return _getTable(checkedPtr(), idx);
+        }
     }
 
     public int getField(int idx, String k) {
-        return _getField(luaState, idx, k);
+        synchronized (this) {
+            return _getField(checkedPtr(), idx, k);
+        }
     }
 
     public int getI(int idx, long n) {
-        return _getI(luaState, idx, n);
+        synchronized (this) {
+            return _getI(checkedPtr(), idx, n);
+        }
     }
 
     public int rawGet(int idx) {
-        return _rawGet(luaState, idx);
+        synchronized (this) {
+            return _rawGet(checkedPtr(), idx);
+        }
     }
 
     public int rawGetI(int idx, long n) {
-        return _rawGetI(luaState, idx, n);
+        synchronized (this) {
+            return _rawGetI(checkedPtr(), idx, n);
+        }
     }
 
     public void createTable(int narr, int nrec) {
-        _createTable(luaState, narr, nrec);
+        synchronized (this) {
+            _createTable(checkedPtr(), narr, nrec);
+        }
     }
 
     public void newTable() {
-        _newTable(luaState);
+        synchronized (this) {
+            _newTable(checkedPtr());
+        }
     }
 
     // if returns 0, there is no metatable
     public int getMetaTable(int idx) {
-        return _getMetaTable(luaState, idx);
+        synchronized (this) {
+            return _getMetaTable(checkedPtr(), idx);
+        }
     }
 
     public int getUserValue(int idx) {
-        return _getUserValue(luaState, idx);
+        synchronized (this) {
+            return _getUserValue(checkedPtr(), idx);
+        }
     }
 
     // SET FUNCTIONS
 
     public void setTable(int idx) {
-        _setTable(luaState, idx);
+        synchronized (this) {
+            _setTable(checkedPtr(), idx);
+        }
     }
 
     public void setField(int idx, String k) {
-        _setField(luaState, idx, k);
+        synchronized (this) {
+            _setField(checkedPtr(), idx, k);
+        }
     }
 
     public void setI(int idx, long n) {
-        _setI(luaState, idx, n);
+        synchronized (this) {
+            _setI(checkedPtr(), idx, n);
+        }
     }
 
     public void rawSet(int idx) {
-        _rawSet(luaState, idx);
+        synchronized (this) {
+            _rawSet(checkedPtr(), idx);
+        }
     }
 
     public void rawSetI(int idx, long n) {
-        _rawSetI(luaState, idx, n);
+        synchronized (this) {
+            _rawSetI(checkedPtr(), idx, n);
+        }
     }
 
     // if returns 0, cannot set the metatable to the given object
     public int setMetaTable(int idx) {
-        return _setMetaTable(luaState, idx);
+        synchronized (this) {
+            return _setMetaTable(checkedPtr(), idx);
+        }
     }
 
     public void setUserValue(int idx) {
-        _setUserValue(luaState, idx);
+        synchronized (this) {
+            _setUserValue(checkedPtr(), idx);
+        }
     }
 
     public void call(int nArgs, int nResults) {
-        _call(luaState, nArgs, nResults);
+        synchronized (this) {
+            _call(checkedPtr(), nArgs, nResults);
+        }
     }
 
     // returns 0 if ok of one of the error codes defined
     public int pcall(int nArgs, int nResults, int errFunc) {
-        return _pcall(luaState, nArgs, nResults, errFunc);
+        synchronized (this) {
+            return _pcall(checkedPtr(), nArgs, nResults, errFunc);
+        }
     }
 
     public int yield(int nResults) {
-        return _yield(luaState, nResults);
+        synchronized (this) {
+            return _yield(checkedPtr(), nResults);
+        }
     }
 
     public int resume(LuaState from, int nArgs) {
-        return _resume(luaState, from.getPointer(), nArgs);
+        synchronized (this) {
+            return _resume(checkedPtr(), from.getPointer(), nArgs);
+        }
     }
 
     public int status() {
-        return _status(luaState);
+        synchronized (this) {
+            return _status(checkedPtr());
+        }
     }
 
     public int isYieldable() {
-        return _isYieldable(luaState);
+        synchronized (this) {
+            return _isYieldable(checkedPtr());
+        }
     }
 
     public int gc(int what, int data) {
-        for (Integer i : javaObjectGcList) {
-            javaObjectMap.remove(i);
-            //Log.i("lua", "gc: "+i+";"+javaObjectMap.remove(i));
+        synchronized (this) {
+            for (Integer i : javaObjectGcList) {
+                javaObjectMap.remove(i);
+                //Log.i("lua", "gc: "+i+";"+javaObjectMap.remove(i));
+            }
+            //Log.i("lua", "gc:2 "+javaObjectMap.size()+";"+javaObjectMap);
+            javaObjectGcList.clear();
+            return _gc(checkedPtr(), what, data);
         }
-        //Log.i("lua", "gc:2 "+javaObjectMap.size()+";"+javaObjectMap);
-        javaObjectGcList.clear();
-        return _gc(luaState, what, data);
     }
 
     public int next(int idx) {
-        return _next(luaState, idx);
+        synchronized (this) {
+            return _next(checkedPtr(), idx);
+        }
     }
 
     public int error() {
-        return _error(luaState);
+        synchronized (this) {
+            return _error(checkedPtr());
+        }
     }
 
     public void concat(int n) {
-        _concat(luaState, n);
+        synchronized (this) {
+            _concat(checkedPtr(), n);
+        }
     }
 
 
     // FUNCTION FROM lauxlib
     // returns 0 if ok
     public int LdoFile(String fileName) {
-        return _LdoFile(luaState, fileName);
+        synchronized (this) {
+            return _LdoFile(checkedPtr(), fileName);
+        }
     }
 
     // returns 0 if ok
     public int LdoString(String str) {
-        return _LdoString(luaState, str);
+        synchronized (this) {
+            return _LdoString(checkedPtr(), str);
+        }
     }
 
     public int LgetMetaField(int obj, String e) {
-        return _LgetMetaField(luaState, obj, e);
+        synchronized (this) {
+            return _LgetMetaField(checkedPtr(), obj, e);
+        }
     }
 
     public int LcallMeta(int obj, String e) {
-        return _LcallMeta(luaState, obj, e);
+        synchronized (this) {
+            return _LcallMeta(checkedPtr(), obj, e);
+        }
     }
 
 
     public int LargError(int numArg, String extraMsg) {
-        return _LargError(luaState, numArg, extraMsg);
+        synchronized (this) {
+            return _LargError(checkedPtr(), numArg, extraMsg);
+        }
     }
 
     public String LcheckString(int numArg) {
-        return _LcheckString(luaState, numArg);
+        synchronized (this) {
+            return _LcheckString(checkedPtr(), numArg);
+        }
     }
 
     public String LoptString(int numArg, String def) {
-        return _LoptString(luaState, numArg, def);
+        synchronized (this) {
+            return _LoptString(checkedPtr(), numArg, def);
+        }
     }
 
     public double LcheckNumber(int numArg) {
-        return _LcheckNumber(luaState, numArg);
+        synchronized (this) {
+            return _LcheckNumber(checkedPtr(), numArg);
+        }
     }
 
     public double LoptNumber(int numArg, double def) {
-        return _LoptNumber(luaState, numArg, def);
+        synchronized (this) {
+            return _LoptNumber(checkedPtr(), numArg, def);
+        }
     }
 
     public int LcheckInteger(int numArg) {
-        return _LcheckInteger(luaState, numArg);
+        synchronized (this) {
+            return _LcheckInteger(checkedPtr(), numArg);
+        }
     }
 
     public int LoptInteger(int numArg, int def) {
-        return _LoptInteger(luaState, numArg, def);
+        synchronized (this) {
+            return _LoptInteger(checkedPtr(), numArg, def);
+        }
     }
 
     public void LcheckStack(int sz, String msg) {
-        _LcheckStack(luaState, sz, msg);
+        synchronized (this) {
+            _LcheckStack(checkedPtr(), sz, msg);
+        }
     }
 
     public void LcheckType(int nArg, int t) {
-        _LcheckType(luaState, nArg, t);
+        synchronized (this) {
+            _LcheckType(checkedPtr(), nArg, t);
+        }
     }
 
     public void LcheckAny(int nArg) {
-        _LcheckAny(luaState, nArg);
+        synchronized (this) {
+            _LcheckAny(checkedPtr(), nArg);
+        }
     }
 
     public int LnewMetatable(String tName) {
-        return _LnewMetatable(luaState, tName);
+        synchronized (this) {
+            return _LnewMetatable(checkedPtr(), tName);
+        }
     }
 
     public void LgetMetatable(String tName) {
-        _LgetMetatable(luaState, tName);
+        synchronized (this) {
+            _LgetMetatable(checkedPtr(), tName);
+        }
     }
 
     public void Lwhere(int lvl) {
-        _Lwhere(luaState, lvl);
+        synchronized (this) {
+            _Lwhere(checkedPtr(), lvl);
+        }
     }
 
     public int Lref(int t) {
-        return _Lref(luaState, t);
+        synchronized (this) {
+            return _Lref(checkedPtr(), t);
+        }
     }
 
     public void LunRef(int t, int ref) {
-        _LunRef(luaState, t, ref);
+        synchronized (this) {
+            _LunRef(checkedPtr(), t, ref);
+        }
     }
 
     /**
@@ -855,128 +1063,164 @@ public class LuaState {
      * (只在本来就是语法错误时才走改写),预编译字节码也不改写。
      */
     public int LloadFile(String fileName) {
-        int ok = _LloadFile(luaState, fileName);
-        if (ok != LUA_ERRSYNTAX) {
-            return ok;
+        synchronized (this) {
+            int ok = _LloadFile(checkedPtr(), fileName);
+            if (ok != LUA_ERRSYNTAX) {
+                return ok;
+            }
+            byte[] sugar = com.luaforge.studio.lua.LuaSugar.rewriteFile(fileName);
+            if (sugar == null) {
+                return ok;
+            }
+            // 丢弃上一次的语法错误信息,避免重试后栈上残留
+            pop(1);
+            return _LloadBuffer(checkedPtr(), sugar, sugar.length, fileName);
         }
-        byte[] sugar = com.luaforge.studio.lua.LuaSugar.rewriteFile(fileName);
-        if (sugar == null) {
-            return ok;
-        }
-        // 丢弃上一次的语法错误信息,避免重试后栈上残留
-        pop(1);
-        return _LloadBuffer(luaState, sugar, sugar.length, fileName);
     }
 
     /**
      * 载入 Lua 源码字符串,失败时按语法糖重试一次。见 {@link #LloadFile(String)}。
      */
     public int LloadString(String s) {
-        int ok = _LloadString(luaState, s);
-        if (ok != LUA_ERRSYNTAX || s == null) {
-            return ok;
+        synchronized (this) {
+            int ok = _LloadString(checkedPtr(), s);
+            if (ok != LUA_ERRSYNTAX || s == null) {
+                return ok;
+            }
+            String sugar = com.luaforge.studio.lua.LuaSugar.rewrite(s);
+            if (sugar == null) {
+                return ok;
+            }
+            pop(1);
+            return _LloadString(checkedPtr(), sugar);
         }
-        String sugar = com.luaforge.studio.lua.LuaSugar.rewrite(s);
-        if (sugar == null) {
-            return ok;
-        }
-        pop(1);
-        return _LloadString(luaState, sugar);
     }
 
     /**
      * 载入 Lua 源码缓冲区,失败时按语法糖重试一次。见 {@link #LloadFile(String)}。
      */
     public int LloadBuffer(byte[] buff, String name) {
-        int ok = _LloadBuffer(luaState, buff, buff.length, name);
-        if (ok != LUA_ERRSYNTAX) {
-            return ok;
+        synchronized (this) {
+            int ok = _LloadBuffer(checkedPtr(), buff, buff.length, name);
+            if (ok != LUA_ERRSYNTAX) {
+                return ok;
+            }
+            byte[] sugar = com.luaforge.studio.lua.LuaSugar.rewriteBytes(buff);
+            if (sugar == null) {
+                return ok;
+            }
+            pop(1);
+            return _LloadBuffer(checkedPtr(), sugar, sugar.length, name);
         }
-        byte[] sugar = com.luaforge.studio.lua.LuaSugar.rewriteBytes(buff);
-        if (sugar == null) {
-            return ok;
-        }
-        pop(1);
-        return _LloadBuffer(luaState, sugar, sugar.length, name);
     }
 
     public String Lgsub(String s, String p, String r) {
-        return _Lgsub(luaState, s, p, r);
+        synchronized (this) {
+            return _Lgsub(checkedPtr(), s, p, r);
+        }
     }
 
     public String LtoString(int idx) {
-        return new String(_LtoString(luaState, idx));
+        synchronized (this) {
+            return new String(_LtoString(checkedPtr(), idx));
+        }
     }
 
     public String getUpValue(int funcindex, int n) {
-        return _getUpValue(luaState, funcindex, n);
+        synchronized (this) {
+            return _getUpValue(checkedPtr(), funcindex, n);
+        }
     }
 
     public String setUpValue(int funcindex, int n) {
-        return _setUpValue(luaState, funcindex, n);
+        synchronized (this) {
+            return _setUpValue(checkedPtr(), funcindex, n);
+        }
     }
 
     public byte[] dump(int funcindex) {
-        return _dump(luaState, funcindex);
+        synchronized (this) {
+            return _dump(checkedPtr(), funcindex);
+        }
     }
 
     //IMPLEMENTED C MACROS
 
     public void pop(int n) {
-        //setTop(- (n) - 1);
-        _pop(luaState, n);
+        synchronized (this) {
+            //setTop(- (n) - 1);
+            _pop(checkedPtr(), n);
+        }
     }
 
 
     public synchronized void pushGlobalTable() {
-        _pushGlobalTable(luaState);
+        _pushGlobalTable(checkedPtr());
     }
 
     public synchronized int getGlobal(String global) {
-        return _getGlobal(luaState, global);
+        return _getGlobal(checkedPtr(), global);
     }
 
     public synchronized void setGlobal(String name) {
-        _setGlobal(luaState, name);
+        _setGlobal(checkedPtr(), name);
     }
 
     // Functions to open lua libraries
     public void openBase() {
-        _openBase(luaState);
+        synchronized (this) {
+            _openBase(checkedPtr());
+        }
     }
 
     public void openTable() {
-        _openTable(luaState);
+        synchronized (this) {
+            _openTable(checkedPtr());
+        }
     }
 
     public void openIo() {
-        _openIo(luaState);
+        synchronized (this) {
+            _openIo(checkedPtr());
+        }
     }
 
     public void openOs() {
-        _openOs(luaState);
+        synchronized (this) {
+            _openOs(checkedPtr());
+        }
     }
 
     public void openString() {
-        _openString(luaState);
+        synchronized (this) {
+            _openString(checkedPtr());
+        }
     }
 
     public void openMath() {
-        _openMath(luaState);
+        synchronized (this) {
+            _openMath(checkedPtr());
+        }
     }
 
     public void openDebug() {
-        _openDebug(luaState);
+        synchronized (this) {
+            _openDebug(checkedPtr());
+        }
     }
 
     public void openPackage() {
-        _openPackage(luaState);
+        synchronized (this) {
+            _openPackage(checkedPtr());
+        }
     }
 
     public void openLibs() {
-        _openLibs(luaState);
-        _openLuajava(luaState);
-        pushPrimitive();
+        synchronized (this) {
+            _openLibs(checkedPtr());
+            _openLuajava(checkedPtr());
+            pushPrimitive();
+        }
     }
 
 
@@ -1033,9 +1277,11 @@ public class LuaState {
     private synchronized native boolean _isJavaFunction(long L, int idx);
 
     public void openLuajava() {
-        _openLuajava(luaState);
-        pushPrimitive();
-        Pattern.compile("/(?:^|\\s)[\\u0780-\\u07BF]+?(?:\\s|$)/g");
+        synchronized (this) {
+            _openLuajava(checkedPtr());
+            pushPrimitive();
+            Pattern.compile("/(?:^|\\s)[\\u0780-\\u07BF]+?(?:\\s|$)/g");
+        }
     }
 
     /**
@@ -1046,7 +1292,9 @@ public class LuaState {
      * @throws LuaException if the lua object does not represent a java object.
      */
     public Object getObjectFromUserdata(int idx) throws LuaException {
-        return getJavaObject(_getObjectFromUserdata(luaState, idx));
+        synchronized (this) {
+            return getJavaObject(_getObjectFromUserdata(checkedPtr(), idx));
+        }
     }
 
     /**
@@ -1056,7 +1304,9 @@ public class LuaState {
      * @return boolean
      */
     public boolean isObject(int idx) {
-        return _isObject(luaState, idx);
+        synchronized (this) {
+            return _isObject(checkedPtr(), idx);
+        }
     }
 
     /**
@@ -1086,30 +1336,32 @@ public class LuaState {
     }
 
     public void pushJavaObject(Object obj) {
+        synchronized (this) {
 
-        if (obj == null) {
-            pushNil();
-            return;
+            if (obj == null) {
+                pushNil();
+                return;
+            }
+            int idx = sIdx++;
+            /*int idx = 0;
+            synchronized (ssIdx) {
+                idx = ssIdx.addAndGet(1);
+            }*/
+            pushJavaObject(idx, obj);
+
+            Class clazz;
+            if (obj instanceof Class)
+                clazz = (Class) obj;
+            else
+                clazz = obj.getClass();
+
+            try {
+                _pushJavaObject(checkedPtr(), clazz.getName(), idx, obj instanceof Class);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+
         }
-        int idx = sIdx++;
-        /*int idx = 0;
-        synchronized (ssIdx) {
-            idx = ssIdx.addAndGet(1);
-        }*/
-        pushJavaObject(idx, obj);
-
-        Class clazz;
-        if (obj instanceof Class)
-            clazz = (Class) obj;
-        else
-            clazz = obj.getClass();
-
-        try {
-            _pushJavaObject(luaState, clazz.getName(), idx, obj instanceof Class);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-
     }
 
     /**
@@ -1118,7 +1370,9 @@ public class LuaState {
      * @param func
      */
     public void pushJavaFunction(JavaFunction func) throws LuaException {
-        _pushJavaFunction(luaState, func);
+        synchronized (this) {
+            _pushJavaFunction(checkedPtr(), func);
+        }
     }
 
     /**
@@ -1128,7 +1382,9 @@ public class LuaState {
      * @return boolean
      */
     public boolean isJavaFunction(int idx) {
-        return _isJavaFunction(luaState, idx);
+        synchronized (this) {
+            return _isJavaFunction(checkedPtr(), idx);
+        }
     }
 
     /**
