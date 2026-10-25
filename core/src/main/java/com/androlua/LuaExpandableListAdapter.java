@@ -208,6 +208,9 @@ public class LuaExpandableListAdapter extends BaseExpandableListAdapter {
                 view.setTag(holder);
             } catch (LuaException e) {
                 return new View(mContext.getContext());
+            } catch (Throwable t) {
+                // 同上:LuaState 已关闭时 getGroupView/getChildView 不能把异常抛回主线程
+                return new View(mContext.getContext());
             }
         } else {
             view = convertView;
@@ -270,6 +273,9 @@ public class LuaExpandableListAdapter extends BaseExpandableListAdapter {
                 view = loadlayout.call(mChildLayout, holder, AbsListView.class);
                 view.setTag(holder);
             } catch (LuaException e) {
+                return new View(mContext.getContext());
+            } catch (Throwable t) {
+                // 同上:LuaState 已关闭时 getGroupView/getChildView 不能把异常抛回主线程
                 return new View(mContext.getContext());
             }
         } else {

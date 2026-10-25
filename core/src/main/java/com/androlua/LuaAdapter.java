@@ -217,6 +217,11 @@ public class LuaAdapter extends BaseAdapter implements Filterable {
                 view.setTag(holder);
             } catch (LuaException e) {
                 return new View(mContext.getContext());
+            } catch (Throwable t) {
+                // 页面已销毁/LuaState 已 close 时,L.newTable() 等会抛
+                // IllegalStateException。getView 由 ListView 在主线程绘制流程里调用,
+                // 异常逃出去会沿 Handler.dispatchMessage 终结进程,这里降级成空 View。
+                return new View(mContext.getContext());
             }
         } else {
             view = convertView;

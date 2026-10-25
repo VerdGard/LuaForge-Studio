@@ -142,10 +142,17 @@ public class LuaRunnable extends Thread implements Runnable, LuaMetaTable, LuaGc
             Looper.prepare();
             thandler = new ThreadHandler();
             isRun = true;
-            L.getGlobal("run");
-            if (!L.isNil(-1)) {
-                L.pop(1);
-                runFunc("run");
+            // 这一段原本在 try 之外直接使用 L:state 在本线程跑起来之前被关掉时,
+            // L.getGlobal() 会抛 IllegalStateException,而它位于 Thread.run() 里、
+            // 没有任何 UncaughtExceptionHandler 兜底 —— ART 直接终结进程。
+            try {
+                L.getGlobal("run");
+                if (!L.isNil(-1)) {
+                    L.pop(1);
+                    runFunc("run");
+                }
+            } catch (Throwable t) {
+                sendThreadError("run", t);
             }
 
             Looper.loop();
@@ -162,8 +169,11 @@ public class LuaRunnable extends Thread implements Runnable, LuaMetaTable, LuaGc
         // 放在 loop() 之后:循环线程退出(isRun=false)才轮到这一行,
         // 此时不会再有回调进来;关闭后本对象不再被使用(L 置 null)。
         try {
-            L.gc(LuaState.LUA_GCCOLLECT, 1);
-            L.close();
+            LuaState cur = L;
+            if (cur != null && !cur.isClosed()) {
+                cur.gc(LuaState.LUA_GCCOLLECT, 1);
+                cur.close();
+            }
         } catch (Throwable ignored) {
             // 释放失败不该影响线程收尾
         }
@@ -236,6 +246,22 @@ public class LuaRunnable extends Thread implements Runnable, LuaMetaTable, LuaGc
 
         thandler.sendMessage(message);
 
+    }
+
+    /**
+     * 把异常交给上下文上报,自身绝不抛。
+     *
+     * <p>调用点都在线程 run()/Looper 消息处理里,这些位置没有
+     * UncaughtExceptionHandler 兜底,任何逃逸异常都会终结进程。
+     */
+    private void sendThreadError(String where, Throwable t) {
+        try {
+            Exception e = (t instanceof Exception) ? (Exception) t
+                    : new RuntimeException(t);
+            mLuaContext.sendMsg(where + " " + e.getMessage());
+        } catch (Throwable ignored) {
+            // 上报本身失败也不能影响线程收尾
+        }
     }
 
     private String errorReason(int error) {
@@ -455,14 +481,22 @@ public class LuaRunnable extends Thread implements Runnable, LuaMetaTable, LuaGc
             }
         } catch (LuaException e) {
             mLuaContext.sendMsg(funcName + " " + e.getMessage());
+        } catch (Throwable t) {
+            // LuaState 已关闭时 checkedPtr() 抛 IllegalStateException;
+            // 本方法在自定义线程/Looper 线程上执行,不能让它逃出去。
+            sendThreadError(funcName, t);
         }
 
     }
 
-    private void setField(String key, Object value) {
+    private void setField(String key, Object value) throws Exception {
         try {
-            L.pushObjectValue(value);
-            L.setGlobal(key);
+            LuaState cur = L;
+            if (cur == null || cur.isClosed()) {
+                return;
+            }
+            cur.pushObjectValue(value);
+            cur.setGlobal(key);
         } catch (LuaException e) {
             mLuaContext.sendMsg(e.getMessage());
         }
@@ -472,6 +506,16 @@ public class LuaRunnable extends Thread implements Runnable, LuaMetaTable, LuaGc
         @Override
         public void handleMessage(Message msg) {
             super.handleMessage(msg);
+            // 这些消息由别的线程投递,执行时所属 LuaState 可能已被 close()。
+            // 本方法跑在 Looper 线程上,异常逃出去同样会终结进程,故整体兜底。
+            try {
+                dispatch(msg);
+            } catch (Throwable t) {
+                sendThreadError("handleMessage", t);
+            }
+        }
+
+        private void dispatch(Message msg) throws Exception {
             Bundle data = msg.getData();
             switch (msg.what) {
                 case 0:

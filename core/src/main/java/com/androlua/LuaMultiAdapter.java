@@ -205,6 +205,9 @@ public class LuaMultiAdapter extends BaseAdapter {
                 //mHolderCache.put(view,holder);
             } catch (LuaException e) {
                 return new View(mContext.getContext());
+            } catch (Throwable t) {
+                // 同上:LuaState 已关闭时 getView 不能把异常抛回主线程绘制流程
+                return new View(mContext.getContext());
             }
         } else {
             view = convertView;

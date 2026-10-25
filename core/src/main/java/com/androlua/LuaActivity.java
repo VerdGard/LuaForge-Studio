@@ -404,6 +404,11 @@ public class LuaActivity extends AppCompatActivity
         if (ret != null && ret.getClass() == Boolean.class && (Boolean) ret) return true;
       } catch (LuaException e) {
         sendError("onKeyShortcut", e);
+      } catch (Throwable t) {
+        // state 已关闭时 LuaObject/LuaState 会抛 IllegalStateException。
+        // 本方法由 Android 框架在主线程回调,异常逃出去会沿
+        // ViewRootImpl/Handler.dispatchMessage 直接终结进程。
+        sendError("onKeyShortcut", t);
       }
     }
     return super.onKeyShortcut(keyCode, event);
@@ -920,6 +925,8 @@ public class LuaActivity extends AppCompatActivity
         if (ret != null && ret.getClass() == Boolean.class && (Boolean) ret) return true;
       } catch (LuaException e) {
         sendError("onKeyDown", e);
+      } catch (Throwable t) {
+        sendError("onKeyDown", t);
       }
     }
     return super.onKeyDown(keyCode, event);
@@ -933,6 +940,8 @@ public class LuaActivity extends AppCompatActivity
         if (ret != null && ret.getClass() == Boolean.class && (Boolean) ret) return true;
       } catch (LuaException e) {
         sendError("onKeyUp", e);
+      } catch (Throwable t) {
+        sendError("onKeyUp", t);
       }
     }
     return super.onKeyUp(keyCode, event);
@@ -946,6 +955,8 @@ public class LuaActivity extends AppCompatActivity
         if (ret != null && ret.getClass() == Boolean.class && (Boolean) ret) return true;
       } catch (LuaException e) {
         sendError("onKeyLongPress", e);
+      } catch (Throwable t) {
+        sendError("onKeyLongPress", t);
       }
     }
     return super.onKeyLongPress(keyCode, event);
@@ -959,6 +970,8 @@ public class LuaActivity extends AppCompatActivity
         if (ret != null && ret.getClass() == Boolean.class && (Boolean) ret) return true;
       } catch (LuaException e) {
         sendError("onTouchEvent", e);
+      } catch (Throwable t) {
+        sendError("onTouchEvent", t);
       }
     }
     return super.onTouchEvent(event);
@@ -973,6 +986,8 @@ public class LuaActivity extends AppCompatActivity
               mOnActivityReenter.call(resultCode, data);
           } catch (LuaException e) {
               sendError("onActivityReenter", e);
+          } catch (Throwable t) {
+              sendError("onActivityReenter", t);
           }
       }
   }
@@ -1336,8 +1351,10 @@ public class LuaActivity extends AppCompatActivity
             try {
               func.call();
             } catch (LuaException e) {
-              e.printStackTrace();
               sendError("onTick", e);
+            } catch (Throwable t) {
+              // 定时回调在 CPU/主线程执行,state 关闭后不能再向外抛
+              sendError("onTick", t);
             }
           }
         });
@@ -1596,6 +1613,11 @@ public class LuaActivity extends AppCompatActivity
         }
       }
       if (isUpdata) {}
+    } catch (Throwable t) {
+      // 上面 catch(LuaException) 的分支里仍会继续调 L.*(取权限提示),
+      // state 已关闭时这些调用抛 IllegalStateException。本方法由脚本/主线程调用,
+      // 不能让异常逃出去。
+      sendMsg(String.valueOf(t.getMessage()));
     }
 
     return null;
@@ -1904,6 +1926,9 @@ public class LuaActivity extends AppCompatActivity
         L.setGlobal(key);
       } catch (LuaException e) {
         sendError("setField", e);
+      } catch (Throwable t) {
+        // 取锁期间 state 可能被关闭(L.pushObjectValue 会抛 IllegalStateException)
+        sendError("setField", t);
       }
     }
   }
