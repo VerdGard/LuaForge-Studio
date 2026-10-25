@@ -122,6 +122,19 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 > `compile_file` 的产物命名规则:`main.lua` → `main.luac`,`main.aly` → `main.alyc`。
 > 需求是“只验证能否编译”时保持默认即可;需要产物时显式传 `keepOutput=true`。
 
+#### `run_project` 重复调用的语义
+
+对**已在运行**的项目,`run_project` 默认「先结束旧实例、再启动新实例」,始终只保留一个运行页面:
+
+- 新实例会重新走会话启动钩子,**调试浮窗按本次会话重新注入** —— `capture=debugger` / `debugger_outputs` 拿到的才是这次运行的数据
+- 改了 `main.lua` 后直接再调一次 `run_project` 即可,不必先 `stop_project`
+- 只想像征性贴近已跑着的实例、**不**重跑脚本时传 `reuse=true`;此时返回 `reused=true`,脚本不会重新执行(改了代码也看不到效果)
+- 返回字段:`reused`(是否复用运行中的实例)、`restarted`(是否结束了旧实例后重启)
+
+等待运行实例出现用的是**启动前快照的差集**,只认本次新注册的那个,不会命中同项目的旧实例。
+运行实例表按**对象身份**登记,因此两个项目各自跑 `main.lua`(`pageName` 同为 `main`)可以同时存在;
+`page` 参数命中同名页面时取**最近启动**的那个,需要精确指定请改用 `path`。
+
 编辑器里「构建项目」会先弹出构建类型选择对话框(跟随项目设置 / Debug 版 / Release 版,详见 [README](../README.md) 的 1.6.4 条目)。
 `build_apk` 走的是 `BuildType.PROJECT_DEFAULT`,即加密打包且调试模式沿用项目设置;
 需要指定构建类型时请在编辑器界面构建。

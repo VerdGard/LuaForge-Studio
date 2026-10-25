@@ -91,6 +91,7 @@
   - **`run_project` 不再叠加实例**:项目已在运行时先结束旧实例再启动新的(始终只保留一个运行页面),并让新会话重新走 `onSessionStart`(调试浮窗按本次会话重新注入);`reuse=true` 才复用运行中的实例。等待运行实例出现改为用**启动前快照做差集**,只认本次新注册的那个 —— 旧实现按 luaDir 取"任意一个",常命中旧实例,于是 capture / 断言全部打到旧会话上,看起来就是"重复启动 + 浮窗没注入"
   - **`stop_project` 按对象身份等退出**:原用 `getActivity(pageName)` 判断,同名的另一个实例还在跑时会一直等到超时(误判"没停掉")
   - **会话钩子改为幂等安装**:新增 `session/SessionHooks.ensure(context)`,把 `FirewallHost` / `DebuggerHost` 的安装从「只在 `SplashWelcome.onCreate`」扩到 `MainActivity.onCreate` 与 MCP 启动运行之前。MCP 前台保活服务是 `START_STICKY`,进程被系统回收后重建**不会重走启动页**,旧实现此时从 MCP 触发运行就没有钩子 —— 调试浮窗不注入、防火墙也不生效
+- **文档同步**:`assets/devdoc/MCP.md` 与 `assets/devdoc/SKILL.md` 补 `run_project` 的 `reuse` 参数与「重复调用语义」(默认先结束旧实例再启动、`reused`/`restarted` 返回字段、同名页面取最近启动者),并修正 `stop_project` 的 `timeoutMs` 参数与"按对象身份判断退出"的说明
 
 
 ## 1.6.8

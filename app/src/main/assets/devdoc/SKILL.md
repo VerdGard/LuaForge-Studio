@@ -543,7 +543,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 
 **构建与运行**
 
-`compile_file`(`path`、`keepOutput`)、`clean_compiled`、`build_apk`(`path`)、`run_project`(`path`、`waitMs`、`capture`、`stop`、`clearLogs`、`captureLines`、`returnToEditor`)、`stop_project`(`page`/`path`、`returnToEditor`)、`install_apk`(`path` **必填**)
+`compile_file`(`path`、`keepOutput`)、`clean_compiled`、`build_apk`(`path`)、`run_project`(`path`、`waitMs`、`capture`、`stop`、`clearLogs`、`captureLines`、`returnToEditor`、`reuse`)、`stop_project`(`page`/`path`、`returnToEditor`、`timeoutMs`)、`install_apk`(`path` **必填**)
 
 **运行时界面检查**
 
@@ -608,6 +608,17 @@ stop_project                  # 若上一步没结束运行(如 stop=false),用�
 - `stop=true` 时默认 `waitMs=1500`,让脚本有执行机会;要精确等待请显式传 `waitMs`。
 - `stop_project` 也可单独用来关闭残留运行实例,`returnToEditor=true` 会回到编辑界面。
 
+**重复调用的语义(重要)**
+
+`run_project` 对**已在运行**的项目默认是「先结束旧实例、再启动新实例」,始终只保留一个运行页面:
+
+- 这样才保证本次会话重新走 `onSessionStart`,调试浮窗按**本次**注入(`capture=debugger` / `debugger_outputs` 拿到的才是新会话的数据)
+- 改了 `main.lua` 后直接再调一次 `run_project` 即可,不需要先 `stop_project`
+- 确实只想"贴近已跑着的实例、不重跑脚本"时传 `reuse=true`;此时返回里 `reused=true`、脚本**不会**重新执行,改了代码也看不到效果
+- 返回字段:`reused`(是否复用)、`restarted`(是否结束过旧实例后重启)
+
+`run_project` 等待的是**本次新注册**的运行实例(按对象身份做差集),不会命中同项目的旧实例;两个项目各自跑 `main.lua`(pageName 同为 `main`)也可以并存,`page` 参数同名时取**最近启动**的那个。
+
 **出包**
 
 ```text
@@ -644,7 +655,7 @@ MCP 只允许访问这些根(`McpTools.kt:1429-1443`):
 - 单次 `dump_screen` 最多 3000 节点,超出截断并置 `truncated=true`。
 - `resolveProjectPath`:未传 `path` 且未打开项目时,仅当项目根**只有一个子目录**才自动选中。
 - `delete_file` 只能删空目录;递归删除需客户端先列目录再逐个删。
-- `run_project stop=true` 结束运行依赖实例能从运行表中移除;若脚本卡死,`stop_project` 的 `timeoutMs` 到点仍会尝试回到编辑界面。
+- `run_project stop=true` 结束运行依赖实例能从运行表中移除(按**对象身份**判断,同名页面不会混淆);若脚本卡死,`stop_project` 的 `timeoutMs` 到点仍会尝试回到编辑界面。
 - `capture=debugger` 只对 debugmode 项目有效;非 debug 项目会在 `output.debuggerNote` 里说明未注入浮窗。
 - 错误日志已可在 **设置 → 错误日志** 里查看/导出(记录开关默认开启);日志路径仍为 `luaforge.log`。
 
