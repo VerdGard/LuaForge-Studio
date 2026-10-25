@@ -143,8 +143,25 @@ public class LuaActivity extends AppCompatActivity
   private LuaResources mResources;
   private final ArrayList<LuaGcable> gclist = new ArrayList<LuaGcable>();
   private String pageName = "main";
-  private static final HashMap<String, LuaActivity> sLuaActivityMap =
-      new HashMap<String, LuaActivity>();
+  /**
+   * 运行中的页面实例表。
+   *
+   * <p>原实现是 {@code HashMap<pageName, LuaActivity>},有两个真实故障:
+   * <ol>
+   *   <li><b>同名页面互相覆盖</b>:两个项目各自运行 {@code main.lua} 时 pageName
+   *       都是 {@code "main"},后注册的把前面那个从表里挤掉 —— 先跑的那个页面
+   *       从此不可见(MCP 按 luaDir 找不到它,stop_project 也停不掉)。</li>
+   *   <li><b>销毁时误删别人</b>:{@code onDestroy} 无条件
+   *       {@code remove(pageName)},被挤掉的那个实例销毁时,会把**当前**占着该
+   *       名字的新实例从表里删掉,于是新页面明明还在跑,表里却是空的。</li>
+   * </ol>
+   *
+   * <p>改为按**对象身份**登记(允许同名共存),按名字查询时取最近注册的那个,
+   * 销毁时只移除自己。表本身用 CopyOnWriteArrayList:读多写极少,且所有
+   * 迭代都要在持锁外进行,避免回调里再进锁造成死锁。
+   */
+  private static final java.util.List<LuaActivity> sRunningActivities =
+      new java.util.concurrent.CopyOnWriteArrayList<LuaActivity>();
   private LuaObject mOnKeyShortcut;
 
   /**
@@ -282,9 +299,7 @@ public class LuaActivity extends AppCompatActivity
           // 钩子异常不能阻断页面启动
         }
       }
-      synchronized (sLuaActivityMap) {
-        sLuaActivityMap.put(pageName, this);
-      }
+      registerRunning();
       doFile(luaPath, arg);
       isCreate = true;
       if (!pageName.equals("main")) runFunc("main", arg);
@@ -684,10 +699,38 @@ public class LuaActivity extends AppCompatActivity
     runFunc("onStop");
   }
 
-  public static LuaActivity getActivity(String name) {
-    synchronized (sLuaActivityMap) {
-      return sLuaActivityMap.get(name);
+  /**
+   * 登记本实例。同名页面可以共存(不同项目各自跑 main.lua 是常见情形),
+   * 因此这里不去重,只保证不重复登记同一个对象。
+   */
+  private void registerRunning() {
+    if (!sRunningActivities.contains(this)) {
+      sRunningActivities.add(this);
     }
+  }
+
+  /** 从运行表移除本实例;只移除自己,不会误删同名的其它页面。 */
+  private void unregisterRunning() {
+    sRunningActivities.remove(this);
+  }
+
+  /**
+   * 按 pageName 取运行实例。
+   *
+   * <p>同名时返回**最近登记**的那个(即后启动的),这与「用户刚点运行」
+   * 的直觉一致;需要精确定位请改用 {@link #getActivityByLuaDir(String)}。
+   */
+  public static LuaActivity getActivity(String name) {
+    if (name == null) {
+      return null;
+    }
+    for (int i = sRunningActivities.size() - 1; i >= 0; i--) {
+      LuaActivity activity = sRunningActivities.get(i);
+      if (name.equals(activity.pageName)) {
+        return activity;
+      }
+    }
+    return null;
   }
 
   public String getPageName() {
@@ -701,9 +744,12 @@ public class LuaActivity extends AppCompatActivity
    * LuaState 里,不查运行实例就无法调用它们。返回的是快照,避免与生命周期回调并发修改。
    */
   public static Map<String, LuaActivity> getRunningActivities() {
-    synchronized (sLuaActivityMap) {
-      return new HashMap<String, LuaActivity>(sLuaActivityMap);
+    Map<String, LuaActivity> snapshot = new HashMap<String, LuaActivity>();
+    // 正序覆盖写:同名时保留最后登记的那个,与 getActivity 的语义一致
+    for (LuaActivity activity : sRunningActivities) {
+      snapshot.put(activity.pageName, activity);
     }
+    return snapshot;
   }
 
   /**
@@ -716,15 +762,46 @@ public class LuaActivity extends AppCompatActivity
       return null;
     }
     String target = new File(dir).getAbsolutePath();
-    synchronized (sLuaActivityMap) {
-      for (LuaActivity activity : sLuaActivityMap.values()) {
-        if (activity.luaDir != null
-            && new File(activity.luaDir).getAbsolutePath().equals(target)) {
-          return activity;
-        }
+    // 倒序:同一项目开了多个页面时优先返回最后启动的那个
+    for (int i = sRunningActivities.size() - 1; i >= 0; i--) {
+      LuaActivity activity = sRunningActivities.get(i);
+      if (activity.luaDir != null
+          && new File(activity.luaDir).getAbsolutePath().equals(target)) {
+        return activity;
       }
     }
     return null;
+  }
+
+  /**
+   * 按项目目录列出**全部**运行实例(同一项目可能开了多个页面)。
+   *
+   * <p>供需要遍历所有实例的调用方使用,例如按项目批量停止。
+   */
+  public static java.util.List<LuaActivity> getActivitiesByLuaDir(String dir) {
+    java.util.List<LuaActivity> matched = new java.util.ArrayList<LuaActivity>();
+    if (dir == null || dir.isEmpty()) {
+      return matched;
+    }
+    String target = new File(dir).getAbsolutePath();
+    for (LuaActivity activity : sRunningActivities) {
+      if (activity.luaDir != null
+          && new File(activity.luaDir).getAbsolutePath().equals(target)) {
+        matched.add(activity);
+      }
+    }
+    return matched;
+  }
+
+  /**
+   * 该实例是否仍在运行表中。
+   *
+   * <p>按**对象身份**判断,同名页面不会互相混淆 —— 这正是
+   * {@link #getActivity(String)} 做不到的:同名时它只能返回其中一个。
+   * 供需要"等这个具体实例退出"的调用方(如 MCP 的 stop_project)使用。
+   */
+  public static boolean isRunningInstance(LuaActivity activity) {
+    return activity != null && sRunningActivities.contains(activity);
   }
 
   @Override
@@ -741,9 +818,7 @@ public class LuaActivity extends AppCompatActivity
     for (LuaGcable obj : gclist) {
       obj.gc();
     }
-    synchronized (sLuaActivityMap) {
-      sLuaActivityMap.remove(pageName);
-    }
+    unregisterRunning();
     runFunc("onDestroy");
 
     if (mLuaDexLoader != null) {

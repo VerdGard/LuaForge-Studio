@@ -37,8 +37,7 @@ import com.luaforge.studio.ui.crash.CrashManager
 import com.luaforge.studio.ui.editor.persistence.EditorStateUtil
 import com.luaforge.studio.mcp.ActivityTracker
 import com.luaforge.studio.mcp.McpManager
-import com.luaforge.studio.firewall.FirewallHost
-import com.luaforge.studio.debugger.DebuggerHost
+import com.luaforge.studio.session.SessionHooks
 import com.luaforge.studio.network.NetworkApprovalManager
 import com.luaforge.studio.ui.editor.viewmodel.CompletionDataManager
 import com.luaforge.studio.ui.settings.SettingsManager
@@ -144,19 +143,8 @@ class SplashWelcome : ComponentActivity() {
             LogCatcher.e("SplashWelcome", "初始化网络代理失败", e)
         }
 
-        // 防火墙:安装会话钩子(运行项目时注入 firewall.lua 并预热网关)
-        try {
-            FirewallHost.install(this@SplashWelcome)
-        } catch (e: Exception) {
-            LogCatcher.e("SplashWelcome", "初始化防火墙失败", e)
-        }
-
-        // 调试浮窗:安装会话钩子(运行 debugmode 项目时注入 debugger.lua 并展示浮窗)
-        try {
-            DebuggerHost.install(this@SplashWelcome)
-        } catch (e: Exception) {
-            LogCatcher.e("SplashWelcome", "初始化调试浮窗失败", e)
-        }
+        // IDE 会话钩子(防火墙 + 调试浮窗):幂等安装,其它入口也会各自 ensure 一次
+        SessionHooks.ensure(this@SplashWelcome)
 
         // 语言处理：仅在已持久化用户设置语言时应用；不匹配时不阻塞启动流程
         // （旧版本Android上此处曾因直接return导致从未调用setupSplashUI而白屏卡住）

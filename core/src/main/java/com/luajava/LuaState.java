@@ -142,6 +142,8 @@ public class LuaState {
         this.luaState = 0;
         javaObjectGcList.clear();
         javaObjectMap.clear();
+        // registry 随 VM 一起销毁,排队中的引用不必(也不能)再解
+        pendingUnref.clear();
     }
 
     @Override
@@ -727,6 +729,7 @@ public class LuaState {
     }
 
     public int gc(int what, int data) {
+        drainPendingUnref();
         for (Integer i : javaObjectGcList) {
             javaObjectMap.remove(i);
             //Log.i("lua", "gc: "+i+";"+javaObjectMap.remove(i));
@@ -734,6 +737,64 @@ public class LuaState {
         //Log.i("lua", "gc:2 "+javaObjectMap.size()+";"+javaObjectMap);
         javaObjectGcList.clear();
         return _gc(luaState, what, data);
+    }
+
+    /**
+     * 终结器线程待释放的 registry 引用。
+     *
+     * <p>为什么要有这条队列:{@link LuaObject#finalize()} 原本是
+     * {@code synchronized (L) { ... L.LunRef(...) }} —— 终结器线程要和**正在跑
+     * Lua 代码的线程**抢同一把 LuaState 监视器锁。一次长 Lua 调用(或注入后的
+     * 高频 print/定时器)就能把它挡几秒;超过 {@code FinalizerWatchdogDaemon}
+     * 的超时阈值后,ART 直接以"终结超时"把整个进程打掉。表现为:项目跑一会儿
+     * 就自己重启(打包产物同样如此,因为这个问题在 core 里)。
+     *
+     * <p>现在终结器只做一次无锁入队,真正的 native 解引用交给**已经持有该 state
+     * 的线程**在安全时机排空(见 {@link #drainPendingUnref()})。
+     */
+    private final java.util.concurrent.ConcurrentLinkedQueue<Integer> pendingUnref =
+            new java.util.concurrent.ConcurrentLinkedQueue<Integer>();
+
+    /**
+     * 由 {@link LuaObject#finalize()} 调用:仅入队,不加锁、不碰 native。
+     *
+     * @param ref 待释放的 registry 引用;state 已关闭时直接忽略(registry 整体已销毁)
+     */
+    public void queueUnref(int ref) {
+        if (luaState == 0) {
+            return;
+        }
+        pendingUnref.add(ref);
+    }
+
+    /**
+     * 排空终结器排队的 registry 引用。
+     *
+     * <p>只能在"当前线程有权使用本 state"的时机调用(各回收/收尾路径,
+     * 以及 {@code LuaObject.registerValue} —— 每新建一个 registry 引用就顺手
+     * 回收掉排队中的旧引用,保证长期运行的项目不会因为「只入队不排空」而让
+     * registry 里的死引用无限堆积)。
+     *
+     * <p>本方法自身 synchronized(this):既与 {@link #close()} 互斥(避免读到
+     * 已被释放的指针),也不与其它 native 调用并发。调用点若已持有该监视器锁
+     * (如 {@code LuaObject.registerValue} 的 {@code synchronized (L)}),因为可重入
+     * 不会死锁。
+     */
+    public synchronized void drainPendingUnref() {
+        Integer r = pendingUnref.poll();
+        while (r != null) {
+            if (luaState == 0) {
+                // state 已关闭:registry 随 VM 一起销毁,剩余引用无需再解
+                pendingUnref.clear();
+                return;
+            }
+            try {
+                _LunRef(luaState, LUA_REGISTRYINDEX, r);
+            } catch (Throwable ignored) {
+                // 单个引用释放失败不应影响后续回收
+            }
+            r = pendingUnref.poll();
+        }
     }
 
 

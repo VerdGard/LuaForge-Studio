@@ -66,6 +66,7 @@ import com.luaforge.studio.ui.about.AboutScreen
 import com.luaforge.studio.collab.CollabManager
 import com.luaforge.studio.mcp.McpManager
 import com.luaforge.studio.network.NetworkApprovalManager
+import com.luaforge.studio.session.SessionHooks
 import com.luaforge.studio.ui.components.FilePickerDialog
 import com.luaforge.studio.ui.components.SelectionMode
 import com.luaforge.studio.ui.components.Toast
@@ -1652,6 +1653,16 @@ class MainActivity : ComponentActivity() {
 
     enableEdgeToEdge()
     WindowCompat.setDecorFitsSystemWindows(window, false)
+
+    // IDE 会话钩子(防火墙 / 调试浮窗)幂等安装。
+    // 只在 SplashWelcome 装是不够的:进程被系统回收后,MCP 前台保活服务会以
+    // START_STICKY 重建,**不重走启动页**,此时从 MCP 触发运行就没有钩子,
+    // 调试浮窗不会注入。这里补一次,保证任何进入主界面的路径都装好。
+    try {
+        SessionHooks.ensure(this)
+    } catch (e: Exception) {
+        LogCatcher.e("MainActivity", "安装会话钩子失败", e)
+    }
 
     val isVersionChanged = intent.getBooleanExtra("isVersionChanged", false)
     val newVersionName = intent.getStringExtra("newVersionName")

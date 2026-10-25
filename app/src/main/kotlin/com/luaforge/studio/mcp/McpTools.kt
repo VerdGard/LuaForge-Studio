@@ -16,6 +16,7 @@ import com.luaforge.studio.ui.editor.viewmodel.EditorViewModel
 import com.luaforge.studio.ui.editor.buildProject
 import com.luaforge.studio.ui.editor.getAppNameFromSettings
 import com.luaforge.studio.ui.project.TemplateItem
+import com.luaforge.studio.session.SessionHooks
 import com.luaforge.studio.ui.settings.SettingsManager
 import com.luaforge.studio.utils.ConsoleUtil
 import com.luaforge.studio.utils.JsonUtil
@@ -251,7 +252,8 @@ object McpTools {
             tool(
                 "run_project",
                 "调试运行项目:启动 LuaActivity 加载 main.lua。默认只启动(供后续 wait_for_text / check_screen);" +
-                    "若传 stop=true 则在 waitMs 后抓取 capture 指定内容、结束运行并退回编辑界面,一次性拿到本次运行信息",
+                    "若传 stop=true 则在 waitMs 后抓取 capture 指定内容、结束运行并退回编辑界面,一次性拿到本次运行信息。" +
+                    "项目已在运行时先结束旧实例再启动新的(始终只有一个运行页面);传 reuse=true 则直接复用运行中的实例不重启",
                 obj(
                     "path" to strProp("项目路径,缺省为当前项目"),
                     "waitMs" to intProp("启动后等待多少毫秒再抓取输出;缺省时 stop=true 用 1500,否则 0;上限 60000"),
@@ -262,7 +264,12 @@ object McpTools {
                     "clearLogs" to boolProp("启动前先清空 luaforge.log,便于取得本次运行的干净现场,默认 false"),
                     "captureLines" to intProp("errors/log 抓取的最大行数,默认 200"),
                     "stop" to boolProp("抓取后结束运行并退回编辑界面,默认 false(保持 run 后界面可继续断言)"),
-                    "returnToEditor" to boolProp("stop=true 时结束后回到编辑界面,默认 true")
+                    "returnToEditor" to boolProp("stop=true 时结束后回到编辑界面,默认 true"),
+                    "reuse" to boolProp(
+                        "项目已在运行时是否直接复用该实例、不重新启动,默认 false。" +
+                            "默认会先结束旧实例再启动新的 —— 否则会叠加第二个运行页面," +
+                            "且后续 capture / 断言可能命中旧实例的旧会话"
+                    )
                 )
             )
         )
@@ -1613,6 +1620,17 @@ object McpTools {
         val stop = args.optBoolean("stop", false)
         val returnToEditor = args.optBoolean("returnToEditor", true)
         val clearBefore = args.optBoolean("clearLogs", false)
+        // 默认「先结束后启动」,始终只保留一个运行页面。
+        //
+        // 旧实现无条件 startActivity:同一个项目被 run_project 调用第二次时会再叠
+        // 一个 LuaActivity —— 前一个实例仍登记在运行实例表里(旧实现是
+        // sLuaActivityMap)并被 getActivityByLuaDir 优先命中,于是后续的 capture /
+        // 断言全部打到**旧实例**上;旧实例的调试浮窗早已随上一次会话结束(或压根
+        // 不是本次注入),表现就是「MCP 重复启动 APP、调试窗口不注入」。
+        //
+        // 之所以不默认复用旧实例:复用不会重跑脚本(改了代码看不到效果),也不会
+        // 重新走 onSessionStart 注入 —— 上一会话没注入成功时复用等于把问题留在原地。
+        val reuse = args.optBoolean("reuse", false)
         val capture = args.optString("capture", "debugger,errors")
             .split(',', ';').map { it.trim().lowercase() }.filter { it.isNotEmpty() }
         val captureLines = args.optInt("captureLines", 200).coerceIn(1, 5000)
@@ -1635,27 +1653,54 @@ object McpTools {
             }
         }
 
-        val started = withContext(Dispatchers.Main) {
-            try {
-                val intent = Intent(context, com.androlua.LuaActivity::class.java).apply {
-                    data = Uri.fromFile(mainLua)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                context.startActivity(intent)
-                true
-            } catch (e: Exception) {
-                LogCatcher.e(TAG, "启动运行失败", e)
-                false
-            }
+        // 启动运行前确保 IDE 会话钩子已安装(防火墙 / 调试浮窗)。
+        // 进程被系统回收后由保活服务 START_STICKY 重建时不会重走启动页,
+        // 若这里不补,新起的运行实例拿不到钩子 —— 调试浮窗不会注入。
+        try {
+            SessionHooks.ensure(context)
+        } catch (e: Exception) {
+            LogCatcher.e(TAG, "安装会话钩子失败", e)
         }
-        if (!started) return errorResult("启动失败: 无法启动 LuaActivity")
 
-        // 等运行实例注册到 sLuaActivityMap(onCreate 阶段),再按 waitMs 让脚本跑一会儿
-        val running = waitForRunningActivity(project, 5000)
+        // 启动前先记录该项目已在运行的实例(按对象身份,不是按 pageName)。
+        // 等待新实例时只认「不在这个集合里的那个」,避免命中旧实例。
+        val before = withContext(Dispatchers.Main) {
+            LuaActivity.getActivitiesByLuaDir(project).toMutableList()
+        }
+
+        // reuse=true:直接复用最近启动的那个实例,不再叠加新页面
+        val reused: LuaActivity? = if (reuse) before.lastOrNull() else null
+
+        val running: LuaActivity? = reused ?: run {
+            // 先结束该项目的所有旧实例:既避免叠加第二个运行页面,也保证新会话
+            // 重新走 onSessionStart(调试浮窗必定按本次会话重新注入)
+            for (old in before) {
+                stopRunningActivity(context, old, false, 3000)
+            }
+            val launched = withContext(Dispatchers.Main) {
+                try {
+                    val intent = Intent(context, com.androlua.LuaActivity::class.java).apply {
+                        data = Uri.fromFile(mainLua)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                    true
+                } catch (e: Exception) {
+                    LogCatcher.e(TAG, "启动运行失败", e)
+                    false
+                }
+            }
+            if (!launched) return errorResult("启动失败: 无法启动 LuaActivity")
+
+            // 等**本次**新注册的运行实例出现(onCreate 阶段),再按 waitMs 让脚本跑一会儿
+            waitForNewRunningActivity(project, before, 5000)
+        }
         if (waitMs > 0) delay(waitMs.toLong())
 
         val result = JSONObject()
             .put("started", true)
+            .put("reused", reused != null)
+            .put("restarted", reused == null && before.isNotEmpty())
             .put("entry", mainLua.absolutePath)
             .put("projectPath", project)
 
@@ -1696,20 +1741,31 @@ object McpTools {
     }
 
     /**
-     * 轮询等待指定项目的运行实例出现(启动到 onCreate 注册存在短暂窗口)。
+     * 等待**本次新注册**的运行实例出现(启动到 onCreate 注册存在短暂窗口)。
+     *
+     * <p>不能简单地"按 luaDir 取任意一个":项目已经跑着一个旧实例时,那样会立刻
+     * 返回**旧实例** —— 后续 capture_screen / debugger_outputs 全部打到旧会话上,
+     * 看起来就像"重复启动 APP、调试窗口没注入"。这里用启动前的实例快照做差集,
+     * 只认新出现的那个(按对象身份比较,同名页面不会混淆)。
      *
      * @return 匹配到的实例;超时返回 null(调用方仍可继续抓取日志等不依赖实例的内容)。
      */
-    private suspend fun waitForRunningActivity(project: String, timeoutMs: Int): LuaActivity? {
+    private suspend fun waitForNewRunningActivity(
+        project: String,
+        before: List<LuaActivity>,
+        timeoutMs: Int
+    ): LuaActivity? {
         val started = System.currentTimeMillis()
         while (System.currentTimeMillis() - started < timeoutMs) {
-            val activity = withContext(Dispatchers.Main) {
-                LuaActivity.getActivityByLuaDir(project)
+            val fresh = withContext(Dispatchers.Main) {
+                LuaActivity.getActivitiesByLuaDir(project).firstOrNull { it !in before }
             }
-            if (activity != null) return activity
+            if (fresh != null) return fresh
             delay(100)
         }
-        return withContext(Dispatchers.Main) { LuaActivity.getActivityByLuaDir(project) }
+        return withContext(Dispatchers.Main) {
+            LuaActivity.getActivitiesByLuaDir(project).firstOrNull { it !in before }
+        }
     }
 
     /**
@@ -1724,7 +1780,6 @@ object McpTools {
         timeoutMs: Int
     ): Boolean {
         if (activity != null) {
-            val page = activity.getPageName()
             withContext(Dispatchers.Main) {
                 try {
                     activity.finish()
@@ -1732,10 +1787,13 @@ object McpTools {
                     LogCatcher.e(TAG, "结束运行实例失败", e)
                 }
             }
+            // 按**对象身份**等它退出:旧实现用 getActivity(pageName) 判断,
+            // 同名的另一个实例还在跑时会一直等到超时(误判"没停掉");
+            // 被停的实例已从表里移除、而同名的另一个仍在跑时同理。
             val started = System.currentTimeMillis()
             while (System.currentTimeMillis() - started < timeoutMs) {
                 val stillRunning = withContext(Dispatchers.Main) {
-                    page != null && LuaActivity.getActivity(page) != null
+                    LuaActivity.isRunningInstance(activity)
                 }
                 if (!stillRunning) break
                 delay(100)

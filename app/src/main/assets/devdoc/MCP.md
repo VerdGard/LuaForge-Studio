@@ -115,7 +115,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 | `compile_file` | 编译单个 `.lua`/`.aly`;默认在验证成功后**删除** `.luac`/`.alyc` 产物 | `path`(缺省用活动文件)、`keepOutput`(true 时保留产物) |
 | `clean_compiled` | 清理项目内的编译产物(历史残留) | `path`、`dryRun` |
 | `build_apk` | 构建并签名 APK,返回输出路径(等价于编辑器「构建项目」的**默认构建类型**:加密打包) | `path` |
-| `run_project` | 调试运行项目(启动 `LuaActivity` 加载 `main.lua`)。默认只启动;传 `stop=true` 则在 `waitMs` 后抓取 `capture` 指定内容、结束运行并退回编辑界面,一次性拿到本次运行信息 | `path`、`waitMs`、`capture`(`debugger`/`errors`/`log`)、`clearLogs`、`captureLines`、`stop`、`returnToEditor` |
+| `run_project` | 调试运行项目(启动 `LuaActivity` 加载 `main.lua`)。默认只启动;传 `stop=true` 则在 `waitMs` 后抓取 `capture` 指定内容、结束运行并退回编辑界面,一次性拿到本次运行信息。**项目已在运行时先结束旧实例再启动新的**,始终只保留一个运行页面,并让调试浮窗按本次会话重新注入;`reuse=true` 才复用运行中的实例(不重启) | `path`、`waitMs`、`capture`(`debugger`/`errors`/`log`)、`clearLogs`、`captureLines`、`stop`、`returnToEditor`、`reuse` |
 | `stop_project` | 结束运行中的项目并回到编辑界面(可 `page`/`path` 指定实例) | `page`、`path`、`returnToEditor`、`timeoutMs` |
 | `install_apk` | 唤起系统安装器安装 APK | `path` **必填** |
 

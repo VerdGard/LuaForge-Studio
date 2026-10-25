@@ -80,6 +80,17 @@
   - `LuaAsyncTask` 增加 `closeLua()` / `runCallbackSafely()`,取消路径也释放;`LuaThread` / `LuaRunnable` 在 `run()` 末尾 close 并置 `L = null`,`get()` 对已关闭实例抛明确异常;`LuaTimerTask` 在 `cancel()` 里 close(周期任务不能等 run 结束)
   - `LuaInvocationHandler` 删掉只写不读的静态 `ArrayList cache`;`LuaStateFactory.removeLuaState` 改用 `states.remove(idx)`,不再留 `null` 空条目
   - 其余资源泄漏:`EditorFunctions.backupProject`、`MarkdownView.loadFromFile`、`PackageUtil` 改 `use {}`
+- **修复:项目运行一段时间后自动重启(IDE 与打包产物同样受影响)**
+  - 根因在 `core`,不是打包侧问题:`LuaTimerTask.run()` 原本**每触发一次定时器**就做一次 `LUA_GCCOLLECT`(Lua 全量回收)+ 一次 `System.gc()`(Java 整堆回收);而 `LuaObject.finalize()` 是 `synchronized (L) { ... L.LunRef(...) }`,终结器线程要和正在跑 Lua 的线程抢同一把 `LuaState` 监视器锁
+  - 于是 `activity.timer(fn, 1000)` 这类轮询极常见的写法,每秒喂满一次全堆 GC;GC 一密集,唯一的终结器线程就被长时间堵住,超过 `FinalizerWatchdogDaemon` 阈值后 ART 直接以"终结超时"杀掉进程 —— 外部看到的就是"跑一会儿自己重启"
+  - `LuaTimerTask.run()` 改为 `LUA_GCSTEP`(增量),并删掉每 tick 的 `System.gc()`;真正需要全量回收的时机(`cancel()`、`LuaActivity.onDestroy`)保持原样
+  - `LuaState` 新增终结器解引用队列(`queueUnref` / `drainPendingUnref`):`LuaObject.finalize()` 改为**只入队**(无锁、不碰 native),真正 `_LunRef` 由持有该 state 的线程在安全时机排空(`gc()` 入口 + `LuaObject.registerValue()` 每新建一个 registry 引用就顺手回收),长跑项目的 registry 不会堆积死引用
+  - `drainPendingUnref()` 自身 `synchronized`,与 `close()` 互斥,不会读到已释放的指针
+- **修复:MCP 重复启动 APP、调试浮窗不注入**
+  - **运行实例表按对象身份登记**:`LuaActivity` 的 `static HashMap<pageName, LuaActivity>` 改为 `CopyOnWriteArrayList<LuaActivity>`,允许同名页面共存。旧实现里两个项目都跑 `main.lua` 会互相覆盖,且 `onDestroy` 无条件 `remove(pageName)` 会删掉**别人**的登记 —— 表现为"MCP 按 luaDir 找不到运行实例、`stop_project` 停不掉"
+  - **`run_project` 不再叠加实例**:项目已在运行时先结束旧实例再启动新的(始终只保留一个运行页面),并让新会话重新走 `onSessionStart`(调试浮窗按本次会话重新注入);`reuse=true` 才复用运行中的实例。等待运行实例出现改为用**启动前快照做差集**,只认本次新注册的那个 —— 旧实现按 luaDir 取"任意一个",常命中旧实例,于是 capture / 断言全部打到旧会话上,看起来就是"重复启动 + 浮窗没注入"
+  - **`stop_project` 按对象身份等退出**:原用 `getActivity(pageName)` 判断,同名的另一个实例还在跑时会一直等到超时(误判"没停掉")
+  - **会话钩子改为幂等安装**:新增 `session/SessionHooks.ensure(context)`,把 `FirewallHost` / `DebuggerHost` 的安装从「只在 `SplashWelcome.onCreate`」扩到 `MainActivity.onCreate` 与 MCP 启动运行之前。MCP 前台保活服务是 `START_STICKY`,进程被系统回收后重建**不会重走启动页**,旧实现此时从 MCP 触发运行就没有钩子 —— 调试浮窗不注入、防火墙也不生效
 
 
 ## 1.6.8
