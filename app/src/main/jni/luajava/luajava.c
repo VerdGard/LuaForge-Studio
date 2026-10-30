@@ -36,6 +36,7 @@
 #include <jni.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 #include "lua.h"
 #include "lualib.h"
@@ -112,6 +113,182 @@ static jmethodID java_close_method = NULL;
 static jmethodID get_object_method = NULL;
 
 static jmethodID java_to_jobject_method = NULL;
+
+/***************************************************************************
+*
+*  活跃 / 已关闭 lua_State 的登记表(防止 use-after-close 段错误)
+*
+*  ## 为什么需要它
+*
+*  Java 侧 LuaState 把 native 指针存在一个 long 字段里, close() 会把它置 0。
+*  但这只挡得住「字段已置 0 之后的再次调用」。tombstone 里出现过另一条路径:
+*
+*      #02 libluajava.so (Java_com_luajava_LuaState__1close+16)
+*      #05 base.vdex (com.luajava.LuaState.close+32)
+*      #07 base.vdex (com.luajava.LuaState.finalize+42)
+*      #08 libart.so (Daemons$FinalizerDaemon.doFinalize+288)
+*      signal 11 (SIGSEGV), fault addr 0x540
+*
+*  即 wrapper 的字段**非 0**,但该指针指向的 lua_State 已经被释放过。
+*
+*  ## 为什么必须同时维护存活标记(不能只记「这个地址关过」)
+*
+*  lua_State 的内存会被 allocator 回收,下一个 luaL_newstate() 完全可能拿到
+*  同一个地址。如果只按「地址是否曾被关闭」判断,新 state 就会被误判成已失效
+*  —— 那不是修复,是把偶发崩溃换成必现的逻辑错误(实测:500 次 open/close 中
+*  地址复用 128 次,若只按地址判断则全部误判)。
+*
+*  纠正办法是让判定带上「这个地址当前是否已重新登记为存活」的信息:
+*    - _1newstate / _1newthread 成功时,把新指针登记为存活;
+*    - _1close 真正释放前,把主 state(及其协程)标记为已释放;
+*    - 判定「已关闭」= 有登记项、标记为 dead、且此后没有被重新登记为存活。
+*
+*  被复用出来的新 state 一定会在 _1newstate 里重新登记(dead 清零),
+*  因此不会被误判。
+*
+*  也不能改用 G(L)->ud 之类的分配器上下文来区分:luaL_newstate() 走的是
+*  luaL_alloc,其 ud 恒为 NULL,没有任何区分能力。
+*
+*  ## 无登记项时放行
+*
+*  进程刚启动、或登记表已满而放弃登记时,判定为「未关闭」—— 保持原行为。
+*  宁可漏拦也不能误杀:误杀会把本来正常的 state 变成不可用。
+*
+*  ## 并发
+*
+*  close 可能来自任意线程(含 FinalizerDaemon),所有读写都在 g_state_lock
+*  保护下。
+*
+****************************************************************************/
+
+#define LUAJAVA_MAX_TRACKED 1024
+
+typedef struct {
+    void *ptr;      /* lua_State 地址 */
+    int is_main;    /* 1 = 主 state(可被 lua_close),0 = 协程 */
+    void *main;     /* 所属主 state 地址;主 state 指向自己 */
+    int dead;       /* 1 = 已释放 */
+} luajava_state_rec;
+
+static luajava_state_rec g_states[LUAJAVA_MAX_TRACKED];
+static int g_state_count = 0;
+static pthread_mutex_t g_state_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/*
+ * 查找登记项下标;没有返回 -1。
+ */
+static int luajava_find_state(const void *ptr) {
+    int i;
+    for (i = 0; i < g_state_count; i++) {
+        if (g_states[i].ptr == ptr) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/*
+ * 取一个可用槽位:优先复用已 dead 的旧项,其次追加。满了返回 -1。
+ */
+static int luajava_alloc_slot(void) {
+    int i;
+    for (i = 0; i < g_state_count; i++) {
+        if (g_states[i].dead) {
+            return i;
+        }
+    }
+    if (g_state_count < LUAJAVA_MAX_TRACKED) {
+        return g_state_count++;
+    }
+    return -1;
+}
+
+/*
+ * 登记一个新的存活指针。
+ *
+ * @param ptr      lua_State 地址
+ * @param is_main  1 表示主 state,0 表示协程
+ * @param main_ptr 所属主 state 地址(协程传;主 state 传 NULL 表示自己)
+ */
+static void luajava_register_state(void *ptr, int is_main, void *main_ptr) {
+    int idx;
+
+    if (ptr == NULL) {
+        return;
+    }
+
+    pthread_mutex_lock(&g_state_lock);
+    idx = luajava_find_state(ptr);
+    if (idx < 0) {
+        idx = luajava_alloc_slot();
+    }
+    if (idx >= 0) {
+        g_states[idx].ptr = ptr;
+        g_states[idx].is_main = is_main;
+        g_states[idx].main = is_main ? ptr : (main_ptr ? main_ptr : ptr);
+        g_states[idx].dead = 0;   /* 复用同一地址时,这里把判定复位 */
+    }
+    pthread_mutex_unlock(&g_state_lock);
+}
+
+/*
+ * 该指针是否指向一个已经释放、且此后未被重新登记的 lua_State。
+ */
+static int luajava_is_state_dead(const void *ptr) {
+    int idx;
+    int dead = 0;
+
+    if (ptr == NULL) {
+        return 1;
+    }
+
+    pthread_mutex_lock(&g_state_lock);
+    idx = luajava_find_state(ptr);
+    if (idx >= 0) {
+        dead = g_states[idx].dead;
+    }
+    pthread_mutex_unlock(&g_state_lock);
+    return dead;
+}
+
+/*
+ * 在 lua_close 之前调用:把主 state 及其协程标记为已释放。
+ *
+ * 必须早于 lua_close —— 释放之后连读 G(L) 都是 use-after-free。
+ */
+static void luajava_mark_state_dead(lua_State *L) {
+    int idx;
+    int i;
+
+    if (L == NULL) {
+        return;
+    }
+
+    pthread_mutex_lock(&g_state_lock);
+    idx = luajava_find_state(L);
+    if (idx < 0) {
+        /* 从未登记(例如登记表满时放弃过):补一条,后续即可拦下 */
+        idx = luajava_alloc_slot();
+        if (idx >= 0) {
+            g_states[idx].ptr = L;
+            g_states[idx].is_main = 1;
+            g_states[idx].main = L;
+        }
+    }
+    if (idx >= 0) {
+        g_states[idx].dead = 1;
+    }
+    /*
+     * 同一主 state 下的协程随它一起失效:协程地址在 Java 侧同样以 LuaState
+     * 形式出现(newThread()),其字段非 0 时同样会走到 native 入口。
+     */
+    for (i = 0; i < g_state_count; i++) {
+        if (i != idx && g_states[i].main == (void *) L) {
+            g_states[i].dead = 1;
+        }
+    }
+    pthread_mutex_unlock(&g_state_lock);
+}
 
 static int objectIndex(lua_State *L);
 
@@ -1428,6 +1605,26 @@ lua_State *getStateFromCPtr(JNIEnv *env, jlong cptr) {
     lua_State *L;
     L = (lua_State *) cptr;
 
+    /*
+     * 所有 native 入口都经过这里,因此这是唯一需要设防的关卡。
+     *
+     * cptr == 0:对应的 LuaState wrapper 已关闭(Java 字段已置 0)。
+     * 已登记为 dead:该地址指向的 lua_State 已被释放过,但调用方手里
+     *             仍有非 0 的指针(多个 wrapper 共享同一指针,或 wrapper
+     *             在别的 wrapper 关闭后仍未 finalize)。这正是
+     *             FinalizerDaemon 上那条 SIGSEGV 的成因。
+     *
+     * 两种情况都不能继续执行:pushJNIEnv 会往这个地址上 lua_pushstring,
+     * 而 native 崩溃不受 Java try/catch 约束,进程当场消失。
+     *
+     * 返回 NULL 交由**每个调用点**自行处理(见各 JNI 函数开头的
+     * `if (L == NULL) return;`),不要在这里抛 Java 异常 —— 本函数
+     * 在 JNI 函数最开头被调用,此时还没有可用的 lua_State 来承载错误。
+     */
+    if (L == NULL || luajava_is_state_dead(L)) {
+        return NULL;
+    }
+
     pushJNIEnv(env, L);
 
     return L;
@@ -1584,6 +1781,11 @@ Java_com_luajava_LuaState__1openLuajava(JNIEnv *env, jobject jobj, jlong cptr) {
 
     L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     lua_pushstring(L, LUAJAVASTATEINDEX);
     lua_pushinteger(L, (lua_Integer) cptr);
     lua_settable(L, LUA_REGISTRYINDEX);
@@ -1604,6 +1806,11 @@ Java_com_luajava_LuaState__1getObjectFromUserdata(JNIEnv *env, jobject jobj,
                                                   jlong cptr, jint index) {
     /* Get luastate */
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
     java_object *obj;
 
     if (!isJavaObject(L, index)) {
@@ -1628,6 +1835,11 @@ Java_com_luajava_LuaState__1isObject(JNIEnv *env, jobject jobj, jlong cptr,
     /* Get luastate */
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return JNI_FALSE;
+    }
+
     return (isJavaObject(L, index) ? JNI_TRUE : JNI_FALSE);
 }
 
@@ -1642,6 +1854,11 @@ Java_com_luajava_LuaState__1pushJavaObject(JNIEnv *env, jobject jobj,
                                            jboolean isclass) {
     /* Get luastate */
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
     const char *uts = (*env)->GetStringUTFChars(env, name, NULL);
     //LOGD("pushJavaObject %s %d %x",uts,objidx,isclass);
     pushJavaObject(L, uts, objidx, isclass);
@@ -1658,6 +1875,11 @@ Java_com_luajava_LuaState__1pushJavaFunction(JNIEnv *env, jobject jobj,
                                              jlong cptr, jobject obj) {
     /* Get luastate */
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
 
     jobject *userData, globalRef;
 
@@ -1704,6 +1926,11 @@ Java_com_luajava_LuaState__1isJavaFunction(JNIEnv *env, jobject jobj,
                                            jlong cptr, jint idx) {
     /* Get luastate */
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return JNI_FALSE;
+    }
     jobject *obj;
 
     if (!isJavaObject(L, idx)) {
@@ -1725,6 +1952,15 @@ Java_com_luajava_LuaState__1isJavaFunction(JNIEnv *env, jobject jobj,
 JNIEXPORT jlong JNICALL
 Java_com_luajava_LuaState__1newstate(JNIEnv *env, jobject jobj) {
     lua_State *L = luaL_newstate();
+
+    /*
+     * 登记为存活。这一步是「地址复用不会被误判」的前提:
+     * 上一份 state 释放后，allocator 可能把同一地址再分配给我们，
+     * 登记时会把该地址的 dead 标记复位（见 luajava_register_state）。
+     */
+    if (L != NULL) {
+        luajava_register_state(L, 1, NULL);
+    }
     return (jlong) L;
 }
 
@@ -1736,6 +1972,11 @@ Java_com_luajava_LuaState__1newstate(JNIEnv *env, jobject jobj) {
 JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1openBase(JNIEnv *env, jobject jobj, jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
 
     // luaopen_base( L );
     luaL_requiref(L, "", luaopen_base, 1);
@@ -1750,6 +1991,11 @@ JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1openTable(JNIEnv *env, jobject jobj, jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     // luaopen_table( L );
     luaL_requiref(L, LUA_TABLIBNAME, luaopen_table, 1);
 }
@@ -1763,6 +2009,11 @@ JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1openIo(JNIEnv *env, jobject jobj, jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     // luaopen_io( L );
     luaL_requiref(L, LUA_IOLIBNAME, luaopen_io, 1);
 }
@@ -1775,6 +2026,11 @@ Java_com_luajava_LuaState__1openIo(JNIEnv *env, jobject jobj, jlong cptr) {
 JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1openOs(JNIEnv *env, jobject jobj, jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
 
     // luaopen_os( L );
     luaL_requiref(L, LUA_OSLIBNAME, luaopen_os, 1);
@@ -1790,6 +2046,11 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaState__1openString(JNIEnv *env,
                                                               jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     // luaopen_string( L );
     luaL_requiref(L, LUA_STRLIBNAME, luaopen_string, 1);
 }
@@ -1803,6 +2064,11 @@ JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1openMath(JNIEnv *env, jobject jobj, jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     // luaopen_math( L );
     luaL_requiref(L, LUA_MATHLIBNAME, luaopen_math, 1);
 }
@@ -1815,6 +2081,11 @@ Java_com_luajava_LuaState__1openMath(JNIEnv *env, jobject jobj, jlong cptr) {
 JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1openDebug(JNIEnv *env, jobject jobj, jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
 
     // luaopen_debug( L );
     luaL_requiref(L, LUA_DBLIBNAME, luaopen_debug, 1);
@@ -1830,6 +2101,11 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaState__1openPackage(JNIEnv *env,
                                                                jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     // luaopen_package( L );
     luaL_requiref(L, LUA_LOADLIBNAME, luaopen_package, 1);
 }
@@ -1842,6 +2118,11 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaState__1openPackage(JNIEnv *env,
 JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1openLibs(JNIEnv *env, jobject jobj, jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
 
     luaL_openlibs(L);
 }
@@ -1866,6 +2147,22 @@ Java_com_luajava_LuaState__1close(JNIEnv *env, jobject jobj, jlong cptr) {
 
     L = getStateFromCPtr(env, cptr);
 
+    /* getStateFromCPtr 判定该指针已失效(已被释放过)。
+     * 这正是 FinalizerDaemon 那条 SIGSEGV:第二个 wrapper 对已经释放的
+     * lua_State 再调一次 lua_close。直接返回,不能重复关闭。 */
+    if (L == NULL) {
+        return;
+    }
+
+    /*
+     * 登记必须在 lua_close **之前**:close_state() 会先 lua_free 掉
+     * G(L) 及 ud 本身,之后再也读不出可靠的 ud。
+     *
+     * 登记后,任何仍持有该指针的 wrapper 再进来都会被 getStateFromCPtr
+     * 拒收,不会出现二次 lua_close。
+     */
+    luajava_mark_state_dead(L);
+
     lua_close(L);
 }
 
@@ -1877,9 +2174,21 @@ Java_com_luajava_LuaState__1close(JNIEnv *env, jobject jobj, jlong cptr) {
 JNIEXPORT jlong JNICALL
 Java_com_luajava_LuaState__1newthread(JNIEnv *env, jobject jobj, jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
     lua_State *newThread;
 
     newThread = lua_newthread(L);
+    /*
+     * 协程不单独 lua_close,但会随主 state 一起失效。登记时记下所属主 state
+     * (L 就是主 state),主 state 关闭时会把它们一并标记为 dead。
+     */
+    if (newThread != NULL) {
+        luajava_register_state(newThread, 0, L);
+    }
     return (jlong) newThread;
 }
 
@@ -1891,6 +2200,11 @@ Java_com_luajava_LuaState__1newthread(JNIEnv *env, jobject jobj, jlong cptr) {
 JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1getTop(JNIEnv *env, jobject jobj, jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     return (jint) lua_gettop(L);
 }
@@ -1905,6 +2219,11 @@ Java_com_luajava_LuaState__1setTop(JNIEnv *env, jobject jobj, jlong cptr,
                                    jint top) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     lua_settop(L, (int) top);
 }
 
@@ -1917,6 +2236,11 @@ JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1pushValue(JNIEnv *env, jobject jobj, jlong cptr,
                                       jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
 
     lua_pushvalue(L, (int) idx);
 }
@@ -1931,6 +2255,11 @@ Java_com_luajava_LuaState__1rotate(JNIEnv *env, jobject jobj, jlong cptr,
                                    jint idx, jint n) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     lua_rotate(L, (int) idx, n);
 }
 
@@ -1943,6 +2272,11 @@ JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1copy(JNIEnv *env, jobject jobj, jlong cptr,
                                  jint fromidx, jint toidx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
 
     lua_copy(L, (int) fromidx, (int) toidx);
 }
@@ -1957,6 +2291,11 @@ Java_com_luajava_LuaState__1remove(JNIEnv *env, jobject jobj, jlong cptr,
                                    jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     lua_remove(L, (int) idx);
 }
 
@@ -1969,6 +2308,11 @@ JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1insert(JNIEnv *env, jobject jobj, jlong cptr,
                                    jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
 
     lua_insert(L, (int) idx);
 }
@@ -1983,6 +2327,11 @@ Java_com_luajava_LuaState__1replace(JNIEnv *env, jobject jobj, jlong cptr,
                                     jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     lua_replace(L, (int) idx);
 }
 
@@ -1996,6 +2345,11 @@ Java_com_luajava_LuaState__1checkStack(JNIEnv *env, jobject jobj, jlong cptr,
                                        jint sz) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_checkstack(L, (int) sz);
 }
 
@@ -2008,7 +2362,17 @@ JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1xmove(JNIEnv *env, jobject jobj, jlong from,
                                   jlong to, jint n) {
     lua_State *fr = getStateFromCPtr(env, from);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (fr == NULL) {
+        return;
+    }
     lua_State *t = getStateFromCPtr(env, to);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (t == NULL) {
+        return;
+    }
 
     lua_xmove(fr, t, (int) n);
 }
@@ -2023,6 +2387,11 @@ Java_com_luajava_LuaState__1isNumber(JNIEnv *env, jobject jobj, jlong cptr,
                                      jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_isnumber(L, (int) idx);
 }
 
@@ -2030,6 +2399,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1isInteger(JNIEnv *env, jobject jobj, jlong cptr,
                                       jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     return (jint) lua_isinteger(L, (int) idx);
 }
@@ -2044,6 +2418,11 @@ Java_com_luajava_LuaState__1isString(JNIEnv *env, jobject jobj, jlong cptr,
                                      jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_isstring(L, (int) idx);
 }
 
@@ -2056,6 +2435,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1isFunction(JNIEnv *env, jobject jobj, jlong cptr,
                                        jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     return (jint) lua_isfunction(L, (int) idx);
 }
@@ -2070,6 +2454,11 @@ Java_com_luajava_LuaState__1isCFunction(JNIEnv *env, jobject jobj, jlong cptr,
                                         jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_iscfunction(L, (int) idx);
 }
 
@@ -2082,6 +2471,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1isUserdata(JNIEnv *env, jobject jobj, jlong cptr,
                                        jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     return (jint) lua_isuserdata(L, (int) idx);
 }
@@ -2096,6 +2490,11 @@ Java_com_luajava_LuaState__1isTable(JNIEnv *env, jobject jobj, jlong cptr,
                                     jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_istable(L, (int) idx);
 }
 
@@ -2108,6 +2507,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1isBoolean(JNIEnv *env, jobject jobj, jlong cptr,
                                       jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     return (jint) lua_isboolean(L, (int) idx);
 }
@@ -2122,6 +2526,11 @@ Java_com_luajava_LuaState__1isNil(JNIEnv *env, jobject jobj, jlong cptr,
                                   jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_isnil(L, (int) idx);
 }
 
@@ -2134,6 +2543,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1isNone(JNIEnv *env, jobject jobj, jlong cptr,
                                    jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     return (jint) lua_isnone(L, (int) idx);
 }
@@ -2148,6 +2562,11 @@ Java_com_luajava_LuaState__1isNoneOrNil(JNIEnv *env, jobject jobj, jlong cptr,
                                         jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_isnoneornil(L, (int) idx);
 }
 
@@ -2161,6 +2580,11 @@ Java_com_luajava_LuaState__1type(JNIEnv *env, jobject jobj, jlong cptr,
                                  jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_type(L, (int) idx);
 }
 
@@ -2173,6 +2597,11 @@ JNIEXPORT jstring JNICALL
 Java_com_luajava_LuaState__1typeName(JNIEnv *env, jobject jobj, jlong cptr,
                                      jint tp) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return NULL;
+    }
 
     const char *name = lua_typename(L, tp);
 
@@ -2189,6 +2618,11 @@ Java_com_luajava_LuaState__1equal(JNIEnv *env, jobject jobj, jlong cptr,
                                   jint idx1, jint idx2) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_equal(L, idx1, idx2);
 }
 
@@ -2196,6 +2630,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1compare(JNIEnv *env, jobject jobj, jlong cptr,
                                     jint idx1, jint idx2, jint op) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     return (jint) lua_compare(L, idx1, idx2, op);
 }
@@ -2210,6 +2649,11 @@ Java_com_luajava_LuaState__1rawequal(JNIEnv *env, jobject jobj, jlong cptr,
                                      jint idx1, jint idx2) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_rawequal(L, idx1, idx2);
 }
 
@@ -2222,6 +2666,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1lessThan(JNIEnv *env, jobject jobj, jlong cptr,
                                      jint idx1, jint idx2) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     return (jint) lua_lessthan(L, idx1, idx2);
 }
@@ -2236,6 +2685,11 @@ Java_com_luajava_LuaState__1toNumber(JNIEnv *env, jobject jobj, jlong cptr,
                                      jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jdouble) lua_tonumber(L, idx);
 }
 
@@ -2248,6 +2702,11 @@ JNIEXPORT jlong JNICALL
 Java_com_luajava_LuaState__1toInteger(JNIEnv *env, jobject jobj, jlong cptr,
                                       jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
     if (lua_isinteger(L, idx))
         return (jlong) lua_tointeger(L, idx);
     else
@@ -2264,6 +2723,11 @@ Java_com_luajava_LuaState__1toBoolean(JNIEnv *env, jobject jobj, jlong cptr,
                                       jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_toboolean(L, idx);
 }
 
@@ -2276,6 +2740,11 @@ JNIEXPORT jbyteArray JNICALL
 Java_com_luajava_LuaState__1toString(JNIEnv *env, jobject jobj, jlong cptr,
                                      jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return NULL;
+    }
     size_t size = 0;
     const char *str = lua_tolstring(L, idx, &size);
     jbyteArray arr = (*env)->NewByteArray(env, size);
@@ -2289,6 +2758,11 @@ JNIEXPORT jbyteArray JNICALL
 Java_com_luajava_LuaState__1LtoString(JNIEnv *env, jobject jobj, jlong cptr,
                                       jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return NULL;
+    }
     size_t size = 0;
     const char *str = luaL_tolstring(L, idx, &size);
     lua_pop(L, 1);
@@ -2309,6 +2783,11 @@ Java_com_luajava_LuaState__1strlen(JNIEnv *env, jobject jobj, jlong cptr,
                                    jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_strlen(L, idx);
 }
 
@@ -2322,6 +2801,11 @@ Java_com_luajava_LuaState__1objlen(JNIEnv *env, jobject jobj, jlong cptr,
                                    jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_objlen(L, idx);
 }
 
@@ -2329,6 +2813,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1rawlen(JNIEnv *env, jobject jobj, jlong cptr,
                                    jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     return (jint) lua_rawlen(L, idx);
 }
@@ -2344,6 +2833,11 @@ Java_com_luajava_LuaState__1toThread(JNIEnv *env, jobject jobj, jlong cptr,
     lua_State *L, *thr;
     L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     thr = lua_tothread(L, (int) idx);
     return (jlong) thr;
 }
@@ -2356,6 +2850,11 @@ Java_com_luajava_LuaState__1toThread(JNIEnv *env, jobject jobj, jlong cptr,
 JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1pushNil(JNIEnv *env, jobject jobj, jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
 
     lua_pushnil(L);
 }
@@ -2370,6 +2869,11 @@ Java_com_luajava_LuaState__1pushNumber(JNIEnv *env, jobject jobj, jlong cptr,
                                        jdouble number) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     lua_pushnumber(L, (lua_Number) number);
 }
 
@@ -2383,6 +2887,11 @@ Java_com_luajava_LuaState__1pushInteger(JNIEnv *env, jobject jobj, jlong cptr,
                                         jlong integer) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     lua_pushinteger(L, (lua_Integer) integer);
 }
 
@@ -2395,6 +2904,11 @@ JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1pushString(
         JNIEnv *env, jobject jobj, jlong cptr, jstring str) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
     const char *uniStr;
 
     uniStr = (*env)->GetStringUTFChars(env, str, NULL);
@@ -2413,6 +2927,11 @@ JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1pushLString(
         JNIEnv *env, jobject jobj, jlong cptr, jbyteArray bytes, jint n) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
     char *cBytes;
 
     cBytes = (char *) (*env)->GetByteArrayElements(env, bytes, NULL);
@@ -2432,6 +2951,11 @@ Java_com_luajava_LuaState__1pushBoolean(JNIEnv *env, jobject jobj, jlong cptr,
                                         jint jbool) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     lua_pushboolean(L, (int) jbool);
 }
 
@@ -2445,6 +2969,11 @@ Java_com_luajava_LuaState__1getTable(JNIEnv *env, jobject jobj, jlong cptr,
                                      jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_gettable(L, (int) idx);
 }
 
@@ -2457,6 +2986,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1getField(JNIEnv *env, jobject jobj, jlong cptr,
                                      jint idx, jstring k) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     const char *uniStr;
     uniStr = (*env)->GetStringUTFChars(env, k, NULL);
@@ -2477,6 +3011,11 @@ Java_com_luajava_LuaState__1getI(JNIEnv *env, jobject jobj, jlong cptr,
                                  jint idx, jlong n) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_geti(L, (int) idx, (lua_Integer) n);
 }
 
@@ -2489,6 +3028,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1rawGet(JNIEnv *env, jobject jobj, jlong cptr,
                                    jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     return (jint) lua_rawget(L, (int) idx);
 }
@@ -2503,6 +3047,11 @@ Java_com_luajava_LuaState__1rawGetI(JNIEnv *env, jobject jobj, jlong cptr,
                                     jint idx, jlong n) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_rawgeti(L, idx, (lua_Integer) n);
 }
 
@@ -2516,6 +3065,11 @@ Java_com_luajava_LuaState__1createTable(JNIEnv *env, jobject jobj, jlong cptr,
                                         jint narr, jint nrec) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     lua_createtable(L, (int) narr, (int) nrec);
 }
 
@@ -2527,6 +3081,11 @@ Java_com_luajava_LuaState__1createTable(JNIEnv *env, jobject jobj, jlong cptr,
 JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1newTable(JNIEnv *env, jobject jobj, jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
 
     lua_newtable(L);
 }
@@ -2541,6 +3100,11 @@ Java_com_luajava_LuaState__1getMetaTable(JNIEnv *env, jobject jobj,
                                          jlong cptr, jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return lua_getmetatable(L, idx);
 }
 
@@ -2553,6 +3117,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1getUserValue(JNIEnv *env, jobject jobj,
                                          jlong cptr, jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     return lua_getuservalue(L, (int) idx);
 }
@@ -2567,6 +3136,11 @@ Java_com_luajava_LuaState__1setTable(JNIEnv *env, jobject jobj, jlong cptr,
                                      jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     lua_settable(L, (int) idx);
 }
 
@@ -2579,6 +3153,11 @@ JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1setField(JNIEnv *env, jobject jobj, jlong cptr,
                                      jint idx, jstring k) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
 
     const char *uniStr;
     uniStr = (*env)->GetStringUTFChars(env, k, NULL);
@@ -2598,6 +3177,11 @@ Java_com_luajava_LuaState__1setI(JNIEnv *env, jobject jobj, jlong cptr,
                                  jint idx, jlong n) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     lua_seti(L, (int) idx, (lua_Integer) n);
 }
 
@@ -2610,6 +3194,11 @@ JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1rawSet(JNIEnv *env, jobject jobj, jlong cptr,
                                    jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
 
     lua_rawset(L, (int) idx);
 }
@@ -2624,6 +3213,11 @@ Java_com_luajava_LuaState__1rawSetI(JNIEnv *env, jobject jobj, jlong cptr,
                                     jint idx, jlong n) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     lua_rawseti(L, idx, (lua_Integer) n);
 }
 
@@ -2636,6 +3230,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1setMetaTable(JNIEnv *env, jobject jobj,
                                          jlong cptr, jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     return lua_setmetatable(L, idx);
 }
@@ -2650,6 +3249,11 @@ Java_com_luajava_LuaState__1setUserValue(JNIEnv *env, jobject jobj,
                                          jlong cptr, jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     lua_setuservalue(L, (int) idx);
 }
 
@@ -2663,6 +3267,11 @@ Java_com_luajava_LuaState__1call(JNIEnv *env, jobject jobj, jlong cptr,
                                  jint nArgs, jint nResults) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     lua_call(L, nArgs, nResults);
 }
 
@@ -2675,6 +3284,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1pcall(JNIEnv *env, jobject jobj, jlong cptr,
                                   jint nArgs, jint nResults, jint errFunc) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
     return (jint) lua_pcall(L, nArgs, nResults, errFunc);
 }
 
@@ -2688,6 +3302,11 @@ Java_com_luajava_LuaState__1yield(JNIEnv *env, jobject jobj, jlong cptr,
                                   jint nResults) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_yield(L, nResults);
 }
 
@@ -2700,7 +3319,17 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1resume(JNIEnv *env, jobject jobj, jlong cptr,
                                    jlong cptr2, jint nArgs) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
     lua_State *L2 = getStateFromCPtr(env, cptr2);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L2 == NULL) {
+        return 0;
+    }
 #if defined(LUA_VERSION_NUM) && LUA_VERSION_NUM >= 502
     int nres;
     // Lua 5.3 及更新版本
@@ -2721,6 +3350,11 @@ JNIEXPORT jint JNICALL Java_com_luajava_LuaState__1isYieldable(JNIEnv *env,
                                                                jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_isyieldable(L);
 }
 
@@ -2732,6 +3366,11 @@ JNIEXPORT jint JNICALL Java_com_luajava_LuaState__1isYieldable(JNIEnv *env,
 JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1status(JNIEnv *env, jobject jobj, jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     return (jint) lua_status(L);
 }
@@ -2746,6 +3385,11 @@ JNIEXPORT jint JNICALL Java_com_luajava_LuaState__1gc(JNIEnv *env, jobject jobj,
                                                       jint data) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_gc(L, what, data);
 }
 
@@ -2759,6 +3403,11 @@ Java_com_luajava_LuaState__1next(JNIEnv *env, jobject jobj, jlong cptr,
                                  jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_next(L, idx);
 }
 
@@ -2770,6 +3419,11 @@ Java_com_luajava_LuaState__1next(JNIEnv *env, jobject jobj, jlong cptr,
 JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1error(JNIEnv *env, jobject jobj, jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     return (jint) lua_error(L);
 }
@@ -2784,6 +3438,11 @@ Java_com_luajava_LuaState__1concat(JNIEnv *env, jobject jobj, jlong cptr,
                                    jint n) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     lua_concat(L, n);
 }
 
@@ -2797,6 +3456,11 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaState__1pop(JNIEnv *env,
                                                        jlong cptr, jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     lua_pop(L, (int) idx);
 }
 
@@ -2808,6 +3472,11 @@ JNIEXPORT void JNICALL Java_com_luajava_LuaState__1pop(JNIEnv *env,
 JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1pushGlobalTable(JNIEnv *env, jobject jobj, jlong cptr) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
     lua_pushglobaltable(L);
 }
 
@@ -2820,6 +3489,11 @@ JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1setGlobal(JNIEnv *env, jobject jobj, jlong cptr,
                                       jstring name) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
 
     const char *str = (*env)->GetStringUTFChars(env, name, NULL);
 
@@ -2838,6 +3512,11 @@ Java_com_luajava_LuaState__1getGlobal(JNIEnv *env, jobject jobj, jlong cptr,
                                       jstring name) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     const char *str = (*env)->GetStringUTFChars(env, name, NULL);
 
     int ret = lua_getglobal(L, str);
@@ -2855,6 +3534,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1LdoFile(JNIEnv *env, jobject jobj, jlong cptr,
                                     jstring fileName) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     const char *file = (*env)->GetStringUTFChars(env, fileName, NULL);
 
@@ -2877,6 +3561,11 @@ Java_com_luajava_LuaState__1LdoString(JNIEnv *env, jobject jobj, jlong cptr,
                                       jstring str) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     const char *utfStr = (*env)->GetStringUTFChars(env, str, NULL);
 
     int ret;
@@ -2895,6 +3584,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1LgetMetaField(JNIEnv *env, jobject jobj,
                                           jlong cptr, jint obj, jstring e) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
     const char *str = (*env)->GetStringUTFChars(env, e, NULL);
     int ret;
 
@@ -2914,6 +3608,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1LcallMeta(JNIEnv *env, jobject jobj, jlong cptr,
                                       jint obj, jstring e) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
     const char *str = (*env)->GetStringUTFChars(env, e, NULL);
     int ret;
 
@@ -2933,6 +3632,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1LargError(JNIEnv *env, jobject jobj, jlong cptr,
                                       jint numArg, jstring extraMsg) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
     const char *msg = (*env)->GetStringUTFChars(env, extraMsg, NULL);
     int ret;
 
@@ -2952,6 +3656,11 @@ JNIEXPORT jstring JNICALL
 Java_com_luajava_LuaState__1LcheckString(JNIEnv *env, jobject jobj,
                                          jlong cptr, jint numArg) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return NULL;
+    }
     const char *res;
 
     res = luaL_checkstring(L, (int) numArg);
@@ -2968,6 +3677,11 @@ JNIEXPORT jstring JNICALL
 Java_com_luajava_LuaState__1LoptString(JNIEnv *env, jobject jobj, jlong cptr,
                                        jint numArg, jstring def) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return NULL;
+    }
     const char *d = (*env)->GetStringUTFChars(env, def, NULL);
     const char *res;
     jstring ret;
@@ -2991,6 +3705,11 @@ Java_com_luajava_LuaState__1LcheckNumber(JNIEnv *env, jobject jobj,
                                          jlong cptr, jint numArg) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jdouble) luaL_checknumber(L, (int) numArg);
 }
 
@@ -3003,6 +3722,11 @@ JNIEXPORT jdouble JNICALL
 Java_com_luajava_LuaState__1LoptNumber(JNIEnv *env, jobject jobj, jlong cptr,
                                        jint numArg, jdouble def) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     return (jdouble) luaL_optnumber(L, (int) numArg, (lua_Number) def);
 }
@@ -3017,6 +3741,11 @@ Java_com_luajava_LuaState__1LcheckInteger(JNIEnv *env, jobject jobj,
                                           jlong cptr, jint numArg) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) luaL_checkinteger(L, (int) numArg);
 }
 
@@ -3030,6 +3759,11 @@ Java_com_luajava_LuaState__1LoptInteger(JNIEnv *env, jobject jobj, jlong cptr,
                                         jint numArg, jint def) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) luaL_optinteger(L, (int) numArg, (lua_Integer) def);
 }
 
@@ -3042,6 +3776,11 @@ JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1LcheckStack(JNIEnv *env, jobject jobj, jlong cptr,
                                         jint sz, jstring msg) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
     const char *m = (*env)->GetStringUTFChars(env, msg, NULL);
 
     luaL_checkstack(L, (int) sz, m);
@@ -3059,6 +3798,11 @@ Java_com_luajava_LuaState__1LcheckType(JNIEnv *env, jobject jobj, jlong cptr,
                                        jint nArg, jint t) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     luaL_checktype(L, (int) nArg, (int) t);
 }
 
@@ -3072,6 +3816,11 @@ Java_com_luajava_LuaState__1LcheckAny(JNIEnv *env, jobject jobj, jlong cptr,
                                       jint nArg) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     luaL_checkany(L, (int) nArg);
 }
 
@@ -3084,6 +3833,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1LnewMetatable(JNIEnv *env, jobject jobj,
                                           jlong cptr, jstring tName) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
     const char *name = (*env)->GetStringUTFChars(env, tName, NULL);
     int ret;
 
@@ -3103,6 +3857,11 @@ JNIEXPORT void JNICALL
 Java_com_luajava_LuaState__1LgetMetatable(JNIEnv *env, jobject jobj,
                                           jlong cptr, jstring tName) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
     const char *name = (*env)->GetStringUTFChars(env, tName, NULL);
 
     luaL_getmetatable(L, name);
@@ -3120,6 +3879,11 @@ Java_com_luajava_LuaState__1Lwhere(JNIEnv *env, jobject jobj, jlong cptr,
                                    jint lvl) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     luaL_where(L, (int) lvl);
 }
 
@@ -3132,6 +3896,11 @@ JNIEXPORT jint JNICALL Java_com_luajava_LuaState__1Lref(JNIEnv *env,
                                                         jobject jobj,
                                                         jlong cptr, jint t) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
 
     return (jint) luaL_ref(L, (int) t);
 }
@@ -3146,6 +3915,11 @@ Java_com_luajava_LuaState__1LunRef(JNIEnv *env, jobject jobj, jlong cptr,
                                    jint t, jint ref) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return;
+    }
+
     luaL_unref(L, (int) t, (int) ref);
 }
 
@@ -3158,6 +3932,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1LloadFile(JNIEnv *env, jobject jobj, jlong cptr,
                                       jstring fileName) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
     const char *fn = (*env)->GetStringUTFChars(env, fileName, NULL);
     int ret;
 
@@ -3177,6 +3956,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1LloadBuffer(JNIEnv *env, jobject jobj, jlong cptr,
                                         jbyteArray buff, jlong sz, jstring n) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
     jbyte *cBuff = (*env)->GetByteArrayElements(env, buff, NULL);
     const char *name = (*env)->GetStringUTFChars(env, n, NULL);
     int ret;
@@ -3199,6 +3983,11 @@ JNIEXPORT jint JNICALL
 Java_com_luajava_LuaState__1LloadString(JNIEnv *env, jobject jobj, jlong cptr,
                                         jstring str) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
     const char *fn = (*env)->GetStringUTFChars(env, str, NULL);
     int ret;
 
@@ -3218,6 +4007,11 @@ JNIEXPORT jstring JNICALL
 Java_com_luajava_LuaState__1Lgsub(JNIEnv *env, jobject jobj, jlong cptr,
                                   jstring s, jstring p, jstring r) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return NULL;
+    }
     const char *utS = (*env)->GetStringUTFChars(env, s, NULL);
     const char *utP = (*env)->GetStringUTFChars(env, p, NULL);
     const char *utR = (*env)->GetStringUTFChars(env, r, NULL);
@@ -3241,6 +4035,11 @@ Java_com_luajava_LuaState__1getUpValue(JNIEnv *env, jobject jobj, jlong cptr,
                                        jint funcindex, jint n) {
     lua_State *L = getStateFromCPtr(env, cptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return NULL;
+    }
+
     const char *name = lua_getupvalue(L, (int) funcindex, (int) n);
     return (*env)->NewStringUTF(env, name);
 }
@@ -3254,6 +4053,11 @@ JNIEXPORT jstring JNICALL
 Java_com_luajava_LuaState__1setUpValue(JNIEnv *env, jobject jobj, jlong cptr,
                                        jint funcindex, jint n) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return NULL;
+    }
 
     const char *name = lua_setupvalue(L, (int) funcindex, (int) n);
     return (*env)->NewStringUTF(env, name);
@@ -3269,6 +4073,11 @@ static int writer(lua_State *L, const void *p, size_t size, void *ud) {
 JNIEXPORT jbyteArray JNICALL
 Java_com_luajava_LuaState__1dump(JNIEnv *env, jobject jobj, jlong cptr, jint funcindex) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return NULL;
+    }
     int idx = lua_absindex(L, funcindex);
 
     if (!lua_isfunction(L, idx)) {
@@ -3306,6 +4115,11 @@ Java_com_luajava_LuaState__1isThread(JNIEnv *env, jobject instance, jlong ptr, j
 
     lua_State *L = getStateFromCPtr(env, ptr);
 
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return 0;
+    }
+
     return (jint) lua_isthread(L, (int) idx);
 
 }
@@ -3313,6 +4127,11 @@ Java_com_luajava_LuaState__1isThread(JNIEnv *env, jobject instance, jlong ptr, j
 JNIEXPORT jbyteArray JNICALL
 Java_com_luajava_LuaState__1toBuffer(JNIEnv *env, jobject instance, jlong cptr, jint idx) {
     lua_State *L = getStateFromCPtr(env, cptr);
+
+    /* 指针已失效(cptr 为 0 或该 lua_State 已被释放),不能在它上面调用任何 lua_* 函数。 */
+    if (L == NULL) {
+        return NULL;
+    }
     size_t size = 0;
     const char *str = lua_tolstring(L, idx, &size);
     jbyteArray arr = (*env)->NewByteArray(env, size);

@@ -102,7 +102,13 @@
     - 走到 `_close()` 说明 wrapper 的 `luaState` 字段**非 0**,即 `luaState == 0` 那道幂等守卫管不到这种情况(它对"字段置 0 后的重复调用"有效,对"字段仍有值但指针已在 native 侧失效"无效)
     - `finalize()` 原有两处问题:日志 `"finalize: " + luaState` 在拿到 monitor **之前**读字段;`catch (Exception)` 不够 —— 任何 `Throwable` 逃出终结器都会被 ART 记为未捕获异常并终结进程
     - **修复**:删掉该行日志,`catch` 收紧到 `Throwable`
-    - **如实说明:此处只做到止血,未消除根因。** 二次/失效 `lua_close` 属于 native 侧 use-after-free,Java 层无法得知指针是否已失效。彻底消除需在 JNI 侧维护已关闭指针集合(`_1close` 登记、`getStateFromCPtr` 入口拒收);该改动与 `LuaStateFactory` 复用同一指针的现有语义存在冲突风险,本轮未实施
+    - **根因已在 native 侧消除(JNI 登记表 + 唯一入口设防)**
+      - 失效指针之所以还能走到 `lua_close`,是因为 `getStateFromCPtr`(所有 native 调用的唯一入口)**只把 cptr 强转成指针就直接 `pushJNIEnv`** —— 对一个已经 `lua_close` 过的地址做 `lua_pushstring`,必然 SIGSEGV
+      - 现在 `luajava.c` 维护一张 `lua_State` 登记表:`_1newstate` / `_1newthread` 登记存活,`_1close` 在真正释放前标记为已释放;`getStateFromCPtr` 命中「已释放且此后未重新登记」时返回 `NULL`,由 124 个 JNI 入口各自按返回类型提前返回(116 处 `lua_State *L = ...` 形式统一插入守卫,另含 `xmove`/`resume` 双指针与 `openLuajava`/`toThread` 等特例)
+      - **关键点:不能只记「这个地址关过」。** `lua_State` 内存会被分配器回收,下一个 `luaL_newstate()` 完全可能拿到同一地址 —— 只按地址判断会把新 state 误判为失效,那是把偶发崩溃换成必现逻辑错误(实测旧方案 500 次 open/close 中地址复用 128 次、误判 250 次)。因此判定是「有登记项 **且** 标记为已释放 **且** 此后未被重新登记为存活」,被复用的新 state 会在 `_1newstate` 里把标记复位
+      - 也不能用 `G(L)->ud` 作区分:`luaL_newstate()` 走 `luaL_alloc`,其 `ud` 恒为 `NULL`,没有区分能力
+      - 协程随主 state 一并失效(`_1newthread` 登记所属主 state,主 state 关闭时一并标记),避免 `newThread()` 产生的 wrapper 绕过设防
+      - **真机级行为验证**:抽出 `luajava.c` 中的登记表实现,与仓库自带的 Lua 源码(41 个 `.c`)一起在本机编译运行 —— 2000 次 open/close、2000 次地址复用(复用 1999 次、误判 0 次)、4 线程 × 200 state 并发 close(每个 state 恰好关闭一次、其余 600 次全部拒收)、协程随主 state 失效,全部通过
   - **顺带收紧的同类残留**
     - `LuaObject.call()`:判活与取锁之间 state 被关闭时,`checkedPtr()` 抛的 `IllegalStateException` 统一收敛成 `LuaException` —— `call()` 调用点遍布主线程回调(定时器、监听器、Http 回调、代理 handler),那里通常只 `catch (LuaException)`
     - `LuaObject.call_aux()`:`L.getTop()` 原本被调两次且中间隔着可能抛异常的取值循环,收进局部变量,避免两次读到不同栈深
