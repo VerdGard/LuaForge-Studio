@@ -91,6 +91,21 @@
     - `LuaStateFactory.removeLuaState(long, LuaState)` 增加**归属校验**:`getExistingState` 在指针未知时会新建 wrapper 并登记同一指针,同一 `idx` 可能对应多个 wrapper,关闭 A 时若无条件 `remove(idx)` 会把仍存活的 B 从表里摘掉;随后 Lua 回调再拿到该指针会新建 C,而 A 的 `_close` 已释放了这块内存 —— B/C 后续操作全是 use-after-free
     - JNI 侧 `_1close` 增加 `cptr == 0` 早返回,作为第二道防线(native 越界无法靠 Java 兜底)
   - **已回退上一版基于错误根因的改动**:曾把问题归到「`LuaTimerTask` 每 tick 全量 GC + `LuaObject.finalize()` 抢 `LuaState` 锁导致 `FinalizerWatchdogDaemon` 超时」,并据此改了 GC 策略、给终结器加了无锁解引用队列。对照原作者代码后确认该写法在原版中**完全相同**,并非差异点,故 `LuaTimerTask` 与 `LuaObject` 已还原为原实现,避免留下无依据的改动
+- **修复:网络回调与终结器两条路径上的 use-after-close**(`IllegalStateException` 打掉主线程 / `FinalizerDaemon` SIGSEGV)
+  - 两份崩溃堆栈对应两个不同缺陷,共用同一条因果链:**判活与实际进入 native 不是原子的,且异常捕获范围过窄**
+  - **主线程 `IllegalStateException: LuaState already closed`**(`Http$HttpTask.onPostExecute` → `LuaState.pushGlobalTable` → `getLuaObject`)
+    - `onPostExecute` 在主线程执行(`AsyncTaskX.InternalHandler` → `finish`),而发起请求的 Lua 会话可能在网络往返期间就已销毁并 `close()` 掉 `LuaState`
+    - 原实现在 `catch (LuaException)` 的**处理体内**调 `mCallback.getLuaState().getLuaObject("print").call(...)`:state 已关闭时 `getLuaObject` 第一步 `pushGlobalTable()` 抛的是 `IllegalStateException`,内层只 `catch (LuaException)` → 异常逃出 `onPostExecute` → 沿 `Handler.dispatchMessage` 终结进程
+    - 同类漏点:即使 state 存活,脚本未定义 `print` 时 `getLuaObject` 得到 nil,对 nil 调 `call()` 抛 `LuaException`,同样逃出
+    - **修复**:入口判空 + `isClosed()` 提前返回;`catch` 补 `IllegalStateException` 与 `Throwable`;错误上报抽成 `logErrorToLua()`,内部判活、兜 `Throwable`、失败静默
+  - **`FinalizerDaemon` 上 SIGSEGV**(`LuaState.finalize` → `close` → `_close` → `pushJNIEnv` → `signal 11`)
+    - 走到 `_close()` 说明 wrapper 的 `luaState` 字段**非 0**,即 `luaState == 0` 那道幂等守卫管不到这种情况(它对"字段置 0 后的重复调用"有效,对"字段仍有值但指针已在 native 侧失效"无效)
+    - `finalize()` 原有两处问题:日志 `"finalize: " + luaState` 在拿到 monitor **之前**读字段;`catch (Exception)` 不够 —— 任何 `Throwable` 逃出终结器都会被 ART 记为未捕获异常并终结进程
+    - **修复**:删掉该行日志,`catch` 收紧到 `Throwable`
+    - **如实说明:此处只做到止血,未消除根因。** 二次/失效 `lua_close` 属于 native 侧 use-after-free,Java 层无法得知指针是否已失效。彻底消除需在 JNI 侧维护已关闭指针集合(`_1close` 登记、`getStateFromCPtr` 入口拒收);该改动与 `LuaStateFactory` 复用同一指针的现有语义存在冲突风险,本轮未实施
+  - **顺带收紧的同类残留**
+    - `LuaObject.call()`:判活与取锁之间 state 被关闭时,`checkedPtr()` 抛的 `IllegalStateException` 统一收敛成 `LuaException` —— `call()` 调用点遍布主线程回调(定时器、监听器、Http 回调、代理 handler),那里通常只 `catch (LuaException)`
+    - `LuaObject.call_aux()`:`L.getTop()` 原本被调两次且中间隔着可能抛异常的取值循环,收进局部变量,避免两次读到不同栈深
 - **修复:MCP 重复启动 APP、调试浮窗不注入**
   - **运行实例表按对象身份登记**:`LuaActivity` 的 `static HashMap<pageName, LuaActivity>` 改为 `CopyOnWriteArrayList<LuaActivity>`,允许同名页面共存。旧实现里两个项目都跑 `main.lua` 会互相覆盖,且 `onDestroy` 无条件 `remove(pageName)` 会删掉**别人**的登记 —— 表现为"MCP 按 luaDir 找不到运行实例、`stop_project` 停不掉"
   - **`run_project` 不再叠加实例**:项目已在运行时先结束旧实例再启动新的(始终只保留一个运行页面),并让新会话重新走 `onSessionStart`(调试浮窗按本次会话重新注入);`reuse=true` 才复用运行中的实例。等待运行实例出现改为用**启动前快照做差集**,只认本次新注册的那个 —— 旧实现按 luaDir 取"任意一个",常命中旧实例,于是 capture / 断言全部打到旧会话上,看起来就是"重复启动 + 浮窗没注入"

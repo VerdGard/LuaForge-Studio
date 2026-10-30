@@ -464,7 +464,8 @@ public class LuaObject implements Serializable {
      * @param nres -
      *             Number of objects returned
      * @return Object[] - Returned Objects
-     * @throws LuaException
+     * @throws IllegalStateException state 已关闭(或调用期间被关闭)
+     * @throws LuaException          调用本身出错
      */
     public Object[] call_aux(Object[] args, int nres) throws LuaException {
         synchronized (L) {
@@ -512,9 +513,14 @@ public class LuaObject implements Serializable {
                 throw new LuaException(str);
             }
 
-            if (nres == LuaState.LUA_MULTRET)
-                nres = L.getTop() - top;
-            if (L.getTop() - top < nres) {
+            // getTop() 原本被调了两次,且中间隔着一次可能抛异常的 rightToLeft 取值循环。
+            // 收进局部变量:既省一次 native 调用,也避免两次读到不同的栈深
+            // (state 在两次调用之间被关闭时,第二次抛 IllegalStateException)。
+            int newTop = L.getTop();
+            if (nres == LuaState.LUA_MULTRET) {
+                nres = newTop - top;
+            }
+            if (newTop - top < nres) {
                 throw new LuaException("Invalid Number of Results .");
             }
 
@@ -537,7 +543,16 @@ public class LuaObject implements Serializable {
      * @throws LuaException
      */
     public Object call(Object... args) throws LuaException {
-        return call_aux(args, 1)[0];
+        // pcall 返回 0 个值时 call_aux 会抛 "Invalid Number of Results"(LuaException),
+        // 这里再兜一层:取锁期间 state 被关闭时 LuaState.checkedPtr() 抛的是
+        // IllegalStateException,而 call() 的调用点遍布主线程回调(定时器、监听器、
+        // Http 回调、代理 handler……),那里通常只 catch LuaException。
+        // 让"已关闭"这一种情况统一收敛成 LuaException,调用方只需处理这一种异常。
+        try {
+            return call_aux(args, 1)[0];
+        } catch (IllegalStateException e) {
+            throw new LuaException("LuaState already closed");
+        }
     }
 
     public LuaObject[] _call_aux(Object[] args, int nres) throws LuaException {

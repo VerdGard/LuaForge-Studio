@@ -5,6 +5,7 @@ import android.webkit.MimeTypeMap;
 import com.androlua.util.AsyncTaskX;
 import com.luajava.LuaException;
 import com.luajava.LuaObject;
+import com.luajava.LuaState;
 import com.luajava.LuaString;
 
 import java.io.BufferedReader;
@@ -607,14 +608,83 @@ public class Http {
             // TODO: Implement this method
             if (isCancelled())
                 return;
+
+            // onPostExecute 在**主线程**执行(AsyncTaskX.InternalHandler -> finish),
+            // 而发起请求的 Lua 会话可能在网络往返期间就已经被销毁并 close()
+            // 了它的 LuaState。此时 mCallback 所属的 state 已不可用,任何 native
+            // 调用都会抛 IllegalStateException("LuaState already closed") ——
+            // 崩在这里等于把主线程打掉,进程直接消失。
+            if (mCallback == null) {
+                return;
+            }
+            if (mCallback.isClosed()) {
+                android.util.Log.i("lua", "Http: 请求完成但所属 LuaState 已关闭,丢弃回调: " + mUrl);
+                return;
+            }
+
+            boolean failed = false;
+            String errMsg = null;
             try {
                 mCallback.call((Object[]) result);
             } catch (LuaException e) {
-                try {
-                    mCallback.getLuaState().getLuaObject("print").call(e.getMessage());
-                } catch (LuaException e2) {
+                failed = true;
+                errMsg = describe(e);
+                android.util.Log.i("lua", "Http 回调出错: " + errMsg);
+            } catch (IllegalStateException e) {
+                // 判活与实际调用之间 state 被关闭
+                android.util.Log.i("lua", "Http: 回调期间 LuaState 被关闭,丢弃: " + mUrl);
+                return;
+            } catch (Throwable t) {
+                // onPostExecute 位于主线程消息派发路径上,任何 Throwable 逃出去
+                // 都会沿 Handler.dispatchMessage 终结进程。
+                failed = true;
+                errMsg = describe(t);
+                android.util.Log.i("lua", "Http 回调异常: " + errMsg);
+            }
+
+            if (failed) {
+                logErrorToLua(errMsg);
+            }
+        }
+
+        /**
+         * 把回调错误转成字符串,自身绝不抛。
+         */
+        private String describe(Throwable t) {
+            try {
+                String m = t.getMessage();
+                return m != null ? m : t.toString();
+            } catch (Throwable ignored) {
+                return t.getClass().getName();
+            }
+        }
+
+        /**
+         * 尽力把错误写进 Lua 的 print。
+         *
+         * <p>这里原本是 {@code mCallback.getLuaState().getLuaObject("print").call(...)}:
+         * <ul>
+         *   <li>{@code getLuaObject} 的第一步就是 {@code pushGlobalTable()}
+         *       —— 恰好就是崩溃堆栈里的那一帧;state 已关闭时它抛
+         *       {@link IllegalStateException},而外层只 catch 了 {@link LuaException},
+         *       于是异常直接逃出 onPostExecute 打掉主线程;</li>
+         *   <li>即使 state 还活着,脚本没定义 print 时 {@code getLuaObject} 会得到
+         *       nil,对 nil 调 {@code call()} 抛的是 LuaException,同样会漏出去。</li>
+         * </ul>
+         * 现在:先判活,整个上报过程可失败、失败即静默。
+         */
+        private void logErrorToLua(String msg) {
+            try {
+                LuaState L = mCallback.getLuaState();
+                if (L == null || L.isClosed()) {
+                    return;
                 }
-                android.util.Log.i("lua", e.getMessage());
+                LuaObject print = L.getLuaObject("print");
+                if (print != null && !print.isNil() && !print.isClosed()) {
+                    print.call(msg);
+                }
+            } catch (Throwable ignored) {
+                // 上报失败不影响主线程
             }
         }
 

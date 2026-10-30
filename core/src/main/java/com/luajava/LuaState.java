@@ -162,13 +162,41 @@ public class LuaState {
         javaObjectMap.clear();
     }
 
+    /**
+     * 终结器兜底。
+     *
+     * <p><b>这里每一行都不能抛,也不能让 native 崩溃。</b> finalize() 跑在
+     * {@code FinalizerDaemon} 线程上,tombstone 里出现过这样一条:
+     * <pre>
+     *   #02 libluajava.so (Java_com_luajava_LuaState__1close+16)
+     *   #05 base.vdex (com.luajava.LuaState.close+32)
+     *   #07 base.vdex (com.luajava.LuaState.finalize+42)
+     *   #08 libart.so (Daemons$FinalizerDaemon.doFinalize+288)
+     *   signal 11 (SIGSEGV), fault addr 0x540
+     * </pre>
+     * 即在终结器里走到了 {@code _close()} —— 意味着这个 wrapper 的 {@code luaState}
+     * 字段是**非 0**,但对应指针在 native 侧已经不可用。
+     *
+     * <p>两条必须守住的边界:
+     * <ol>
+     *   <li><b>日志不能读字段后拼字符串。</b> 原写法 {@code "finalize: " + luaState}
+     *       在拿到 monitor 之前读字段,读到的是过期值,且日志本身没有任何诊断价值
+     *       (崩溃之后也没人会去翻它)—— 删掉;</li>
+     *   <li><b>catch 必须是 Throwable。</b> 原写法只 catch Exception,
+     *       而 {@code close()} 内部的 native 调用失败可能表现为 Error;
+     *       任何 Throwable 逃出 finalize() 都会被 ART 记为未捕获异常并终结进程。</li>
+     * </ol>
+     *
+     * <p>注意本条<b>不能</b>消除已释放指针被二次 {@code lua_close} 的情形
+     * (那属于 native 侧 use-after-free,Java 层看不到指针是否已失效);
+     * 它的作用是保证终结器路径本身不再抛出逃逸异常。
+     */
     @Override
     protected void finalize() {
-        Log.i("luaState", "finalize: " + luaState);
         try {
             close();
-        } catch (Exception e) {
-            System.err.println("Unable to release luaState " + luaState);
+        } catch (Throwable e) {
+            System.err.println("Unable to release luaState: " + e);
         }
     }
 
