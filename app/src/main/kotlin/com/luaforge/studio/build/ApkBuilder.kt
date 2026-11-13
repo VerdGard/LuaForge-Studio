@@ -2485,6 +2485,9 @@ class ApkBuilder {
             /** 目标 minSdk,传给 D8/R8 决定 desugaring 行为。 */
             minApi: Int = 21
         ) {
+            // 构建日志会话(供本函数内各处记录;独立调用时为 null)
+            val blog = BuildLogger.active()
+
             // 1. 检查 java 目录
             val javaDir = File(projectPath, "java")
             val hasJavaSource = javaDir.exists() && javaDir.isDirectory && javaDir.walk().any { it.isFile && it.name.endsWith(".java", ignoreCase = true) }
@@ -2534,13 +2537,28 @@ class ApkBuilder {
                     Charsets.UTF_8
                 )
                 javaFiles.add(srcFile)
+
+                // 每个分片类各自一个源文件:让 ECJ 逐个编译小单元,
+                // 而不是把全部常量压进一个编译单元(大项目会 OOM)
+                val groups = LuaPayloadBuilder.splitPayload(encrypted)
+                groups.forEachIndexed { index, groupChunks ->
+                    val groupFile = File(pkgDir, LuaPayloadBuilder.dexGroupClass(index) + ".java")
+                    groupFile.writeText(
+                        LuaPayloadBuilder.buildDexGroupSource(index, groupChunks),
+                        Charsets.UTF_8
+                    )
+                    javaFiles.add(groupFile)
+                }
                 LogCatcher.i(
                     "ApkBuilder",
-                    "dex 打包模式:已生成载荷类源文件(${dexPayload.size} 字节载荷)"
+                    "dex 打包模式:已生成载荷类源文件(${dexPayload.size} 字节载荷,${groups.size} 个分片)"
+                )
+                BuildLogger.info(
+                    blog,
+                    "载荷源文件: ${javaFiles.size} 个(主类 + ${groups.size} 个分片)"
                 )
             }
 
-            val blog = BuildLogger.active()
             if (javaFiles.isEmpty()) {
                 LogCatcher.i("ApkBuilder", "没有可编译的 Java 文件，跳过 Java 编译")
                 BuildLogger.info(blog, "没有可编译的 Java 文件,跳过 Java 编译")
@@ -2657,7 +2675,35 @@ class ApkBuilder {
                 )
 
                 // 将生成的 dex 文件复制到 APK 工作目录
+                val generatedDex = dexOutputDir.listFiles { _, n ->
+                    n.endsWith(".dex", ignoreCase = true)
+                }?.sortedBy { it.name } ?: emptyList()
+                BuildLogger.info(
+                    blog,
+                    "D8 产出 ${generatedDex.size} 个 dex: " +
+                        generatedDex.joinToString { "${it.name}=${it.length()}B" }
+                )
+                if (generatedDex.isEmpty()) {
+                    // dex 模式没有产出任何 dex = 载荷没进包,产物启动必然找不到脚本
+                    val msg = if (dexPayload != null) {
+                        "dex 模式但 D8 未产出任何 dex 文件,载荷未能进包"
+                    } else {
+                        "D8 未产出任何 dex 文件"
+                    }
+                    LogCatcher.e("ApkBuilder", msg, null)
+                    BuildLogger.error(blog, msg)
+                    if (dexPayload != null) throw RuntimeException(msg)
+                }
                 addDexFilesToApkWorkDir(dexOutputDir, workDir)
+                BuildLogger.info(
+                    blog,
+                    "APK 工作目录 dex: " + (
+                        workDir.listFiles { _, n ->
+                            n.matches(Regex("classes(\\d*)\\.dex", RegexOption.IGNORE_CASE))
+                        }?.sortedBy { it.name }?.joinToString { "${it.name}=${it.length()}B" }
+                            ?: "(无)"
+                        )
+                )
 
                 // 清理临时文件
                 classOutputDir.deleteRecursively()

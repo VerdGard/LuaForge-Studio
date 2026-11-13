@@ -275,13 +275,22 @@ object LuaPayloadBuilder {
      * @param encryptedPayload 已加密的载荷
      * @return Java 源码文本
      */
+    /**
+     * 生成载荷主类的源码(只含 GROUPS / PER_GROUP 两个常量)。
+     *
+     * 主类与各分片类**分别成为独立源文件**(见 [buildDexGroupSource]):
+     * 把全部常量塞进同一个编译单元时,ECJ 的常量池与符号表会一次性驻留,
+     * 512MB 堆内编译大项目容易 OOM —— 而 OOM 是 Error 不是 Exception,
+     * 旧代码的 catch(Exception) 抓不到,表现就是"构建卡在 Java 编译、
+     * 构建日志里连失败行都没有"。
+     *
+     * @param encryptedPayload 已加密的载荷
+     * @return 主类源码文本
+     */
     fun buildDexSource(encryptedPayload: ByteArray): String {
-        val base64 = android.util.Base64.encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
-        val chunks = base64.chunked(MAX_STRING_CHUNK)
-
+        val groupCount = groupCountFor(encryptedPayload)
         val className = DEX_PAYLOAD_CLASS.substringAfterLast('/')
         val packageName = DEX_PAYLOAD_CLASS.substringBeforeLast('/').replace('/', '.')
-        val groups = chunks.chunked(FIELDS_PER_CLASS)
 
         return buildString {
             appendLine("package $packageName;")
@@ -294,36 +303,55 @@ object LuaPayloadBuilder {
             appendLine("    private $className() {}")
             appendLine()
             appendLine("    /** 分片类个数。 */")
-            appendLine("    public static final int GROUPS = ${groups.size};")
+            appendLine("    public static final int GROUPS = $groupCount;")
             appendLine()
             appendLine("    /** 每片字段上限(最后一片可能更少)。 */")
             appendLine("    public static final int PER_GROUP = $FIELDS_PER_CLASS;")
             appendLine("}")
-            appendLine()
-            appendLine("/**")
-            appendLine(" * 载荷分片(第 0 片)。")
-            appendLine(" *")
-            appendLine(" * 载荷被拆成多个类而不是塞进单个类的常量池:class 文件里")
-            appendLine(" * `CONSTANT_Utf8_info` 单条上限 65535 字节,而 ECJ 在处理一个含大量")
-            appendLine(" * 长字符串常量的类时峰值内存显著高于把同样内容摊到多个小类。")
-            appendLine(" * 用一个类承载全部载荷时,512MB 堆内编译大项目容易 OOM。")
-            appendLine(" */")
-            groups.forEachIndexed { groupIndex, groupChunks ->
-                if (groupIndex > 0) appendLine()
-                appendLine("final class ${dexGroupClass(groupIndex)} {")
-                appendLine("    private ${dexGroupClass(groupIndex)}() {}")
-                appendLine()
-                groupChunks.forEachIndexed { fieldIndex, chunk ->
-                    appendLine(
-                        "    static final String $DEX_PAYLOAD_FIELD$fieldIndex = \"$chunk\";"
-                    )
-                }
-                appendLine()
-                appendLine("    static final int N = ${groupChunks.size};")
-                appendLine("}")
-            }
         }
     }
+
+    /**
+     * 生成第 [groupIndex] 个载荷分片类的源码(独立编译单元)。
+     *
+     * @param groupChunks 该片的 Base64 片段
+     */
+    fun buildDexGroupSource(groupIndex: Int, groupChunks: List<String>): String {
+        val packageName = DEX_PAYLOAD_CLASS.substringBeforeLast('/').replace('/', '.')
+        val cls = dexGroupClass(groupIndex)
+
+        return buildString {
+            appendLine("package $packageName;")
+            appendLine()
+            appendLine("/**")
+            appendLine(" * 载荷分片 $groupIndex(构建自动生成,请勿手工修改)。")
+            appendLine(" */")
+            appendLine("final class $cls {")
+            appendLine("    private $cls() {}")
+            appendLine()
+            groupChunks.forEachIndexed { fieldIndex, chunk ->
+                appendLine("    static final String $DEX_PAYLOAD_FIELD$fieldIndex = \"$chunk\";")
+            }
+            appendLine()
+            appendLine("    static final int N = ${groupChunks.size};")
+            appendLine("}")
+        }
+    }
+
+    /**
+     * 把载荷切成 Base64 片段,再按 [FIELDS_PER_CLASS] 分组。
+     *
+     * 构建侧([buildDexGroupSource])与读取侧(PayloadContainer)共用同一套
+     * 切分规则,全靠这两个常量对齐。
+     */
+    fun splitPayload(encryptedPayload: ByteArray): List<List<String>> =
+        android.util.Base64
+            .encodeToString(encryptedPayload, android.util.Base64.NO_WRAP)
+            .chunked(MAX_STRING_CHUNK)
+            .chunked(FIELDS_PER_CLASS)
+
+    /** 载荷会切成几个分片类。 */
+    fun groupCountFor(encryptedPayload: ByteArray): Int = splitPayload(encryptedPayload).size
 
     /**
      * 第 [index] 个载荷分片类的**简单类名**。
