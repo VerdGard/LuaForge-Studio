@@ -48,8 +48,11 @@
 
 /* ============ 配置(编译期可被 -D 覆盖) ============ */
 
-#ifndef LUA_PROTECT_KEY
-/* 32 字节主密钥:与旧版 0x5A5A5A5A 完全不同,旧版产物不再兼容(见下方 version)。 */
+#ifndef LUA_PROTECT_KEY_BYTES
+/* 32 字节主密钥:与旧版 0x5A5A5A5A 完全不同,旧版产物不再兼容(见下方 version)。
+ *
+ * 可用 -DLUA_PROTECT_KEY_BYTES='{...}' 在编译期整体替换 —— 发行方若要为不同
+ * 客户产出互不兼容的包,只需在此注入各自的密钥即可。 */
 #define LUA_PROTECT_KEY_BYTES \
     {0x7Bu, 0x4Bu, 0x3Au, 0x91u, 0x08u, 0xD7u, 0x66u, 0x2Fu, \
      0xB5u, 0x4Cu, 0x13u, 0xE8u, 0x71u, 0x9Au, 0x2Du, 0xC3u,            \

@@ -11,7 +11,7 @@ import java.io.FileOutputStream
  *
  * 构建时 `ApkBuilder` 把项目的全部 Lua/ALY 字节码打成一份载荷,加密后
  * **追加到 `libluaforge_payload.so` 尾部**。产物 APK 里因此没有任何
- * `assets/*.lua`,只有这一条原生库记录。
+ * `assets/` 下的 `.lua`,只有这一条原生库记录。
  *
  * ## 运行形态
  *
