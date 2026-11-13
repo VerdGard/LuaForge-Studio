@@ -226,7 +226,10 @@ class McpServer(
             if (token.isNotBlank()) {
                 val raw = headers["authorization"] ?: headers["x-mcp-token"] ?: ""
                 val provided = raw.removePrefix("Bearer ").trim()
-                if (provided != token) {
+                // 恒定时间比较:普通 `!=` 会在首个不同字节处提前返回,
+                // 攻击者可通过响应时间差逐字节猜出令牌。MCP 令牌是唯一鉴权手段,
+                // 这里用定长遍历抹掉时间侧信道。
+                if (!constantTimeEquals(provided, token)) {
                     writeResponse(output, 401, errorJson(null, -32001, "Unauthorized"), "application/json")
                     return
                 }
@@ -342,6 +345,14 @@ class McpServer(
     // HTTP 解析与写出
     // ------------------------------------------------------------------
 
+    /**
+     * 读一行(以 `\n` 结束)。
+     *
+     * **必须有长度上限**:HTTP 头行的长度在协议里没有上限,而这里是逐字节
+     * 读取并追加进内存缓冲。一个不换行的超长"请求行"(几 GB)会直接把堆打满
+     * —— MCP 端口又常在本机/局域网可达,这是一个真实的 OOM 攻击面。
+     * 超过 [MAX_LINE_BYTES] 时返回 null,调用方会当作请求结束并关闭连接。
+     */
     private fun readLine(input: InputStream): String? {
         val buffer = ByteArrayOutputStream()
         var read: Int
@@ -351,9 +362,29 @@ class McpServer(
                 return if (buffer.size() == 0) null else buffer.toString("UTF-8")
             }
             if (read == '\n'.code) break
-            if (read != '\r'.code) buffer.write(read)
+            if (read != '\r'.code) {
+                if (buffer.size() >= MAX_LINE_BYTES) {
+                    LogCatcher.w(TAG, "请求行超过 $MAX_LINE_BYTES 字节,已拒绝")
+                    return null
+                }
+                buffer.write(read)
+            }
         }
         return buffer.toString("UTF-8")
+    }
+
+    /**
+     * 恒定时间字符串比较。
+     *
+     * 长度不同直接返回 false(长度本身不是秘密),内容比较始终走完全程。
+     */
+    private fun constantTimeEquals(a: String, b: String): Boolean {
+        if (a.length != b.length) return false
+        var diff = 0
+        for (i in a.indices) {
+            diff = diff or (a[i].code xor b[i].code)
+        }
+        return diff == 0
     }
 
     private fun readBody(input: InputStream, length: Int): String {
@@ -425,6 +456,9 @@ class McpServer(
 
         /** 请求体上限:防止畸形/超长 Content-Length 触发巨型分配。 */
         private const val MAX_BODY_BYTES = 8 * 1024 * 1024
+
+        /** 单行(请求行 / 单个 header)长度上限,防止无换行超长输入打满内存。 */
+        private const val MAX_LINE_BYTES = 16 * 1024
 
         /** 并发客户端线程上限与排队上限,超限直接 503。 */
         private const val MAX_CLIENT_THREADS = 8

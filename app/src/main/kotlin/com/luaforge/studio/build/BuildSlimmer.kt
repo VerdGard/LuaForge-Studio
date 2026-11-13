@@ -134,7 +134,16 @@ object BuildSlimmer {
         templateClasses: Set<String>,
         projectPath: String,
         outDir: File,
-        enabled: Boolean
+        enabled: Boolean,
+        /**
+         * 目标 minSdk。
+         *
+         * D8/R8 的 desugaring 行为(接口默认方法、try-with-resources、
+         * `java.time` 等)完全由 `--min-api` 决定。写死 21 会让 minSdk=24 的项目
+         * 被按 21 的方式脱糖 —— 产出能在低版本跑、却在目标版本上缺少应有的
+         * 优化甚至走错分支。这里改为由调用方传入项目真实的 minSdkVersion。
+         */
+        minApi: Int = 21
     ): Result {
         if (jars.isEmpty()) return Result(shrunk = false)
         outDir.mkdirs()
@@ -169,7 +178,7 @@ object BuildSlimmer {
 
             // 2. 开关关闭:沿用原本的 D8 直转
             if (!enabled) {
-                runD8(prunedJars, androidJar, outDir)
+                runD8(prunedJars, androidJar, outDir, minApi)
                 return Result(shrunk = false, duplicateClasses = duplicates)
             }
 
@@ -179,7 +188,7 @@ object BuildSlimmer {
             //    宁可退回 D8 全量保留,也不产出一个必然崩溃的包。
             if (declared.isEmpty()) {
                 LogCatcher.w(TAG, "未扫描到任何声明类,跳过精简以免裁空项目自身类(回退 D8)")
-                runD8(prunedJars, androidJar, outDir)
+                runD8(prunedJars, androidJar, outDir, minApi)
                 return Result(shrunk = false, duplicateClasses = duplicates)
             }
             LogCatcher.i(TAG, "项目源码中声明的 Java 类: ${declared.size} 个")
@@ -192,7 +201,7 @@ object BuildSlimmer {
             pro.writeText(buildKeepRules(declared, composeUsed), Charsets.UTF_8)
 
             val ok = try {
-                runR8(prunedJars, androidJar, outDir, pro)
+                runR8(prunedJars, androidJar, outDir, pro, minApi)
                 true
             } catch (t: Throwable) {
                 // 精简属于增强能力,失败绝不能连累构建 —— 回退到 D8 并如实记录原因
@@ -205,7 +214,7 @@ object BuildSlimmer {
             }
 
             if (!ok) {
-                runD8(prunedJars, androidJar, outDir)
+                runD8(prunedJars, androidJar, outDir, minApi)
                 return Result(shrunk = false, duplicateClasses = duplicates, declaredClasses = declared)
             }
 
@@ -232,7 +241,9 @@ object BuildSlimmer {
         libsDir: File,
         templateClasses: Set<String>,
         /** 供 R8 重写 dex 时作为 library 输入;为 null 时跳过 dex 重写(只做整体丢弃)。 */
-        androidJar: String? = null
+        androidJar: String? = null,
+        /** 目标 minSdk,用于 dex 重写的 desugaring。 */
+        minApi: Int = 21
     ): Result {
         if (!libsDir.isDirectory || templateClasses.isEmpty()) return Result(shrunk = false)
 
@@ -306,7 +317,7 @@ object BuildSlimmer {
                     // 把"要保留的类"显式 keep 住。
                     val keepSet = classes.filterNot { templateClasses.contains(it) }.toSet()
                     val rewritten = try {
-                        rewriteDexKeeping(f, keepSet, androidJar)
+                        rewriteDexKeeping(f, keepSet, androidJar, minApi)
                     } catch (e: Exception) {
                         LogCatcher.w(TAG, "重写 libs dex 失败,原样保留: ${f.name} (${e.message})")
                         false
@@ -344,7 +355,8 @@ object BuildSlimmer {
         jars: List<File>,
         androidJar: String,
         outDir: File,
-        keepFile: File
+        keepFile: File,
+        minApi: Int
     ) {
         val args = mutableListOf<String>()
         args.add("--release")
@@ -355,15 +367,15 @@ object BuildSlimmer {
         args.add("--pg-conf")
         args.add(keepFile.absolutePath)
         args.add("--min-api")
-        args.add("21")
+        args.add(minApi.toString())
         jars.forEach { args.add(it.absolutePath) }
 
-        LogCatcher.i(TAG, "执行 R8 精简,输入 ${jars.size} 个 jar")
+        LogCatcher.i(TAG, "执行 R8 精简,输入 ${jars.size} 个 jar, min-api=$minApi")
         R8.main(args.toTypedArray())
     }
 
     /** 原有行为:不做任何裁剪,直接把 jar 转成 dex。 */
-    private fun runD8(jars: List<File>, androidJar: String, outDir: File) {
+    private fun runD8(jars: List<File>, androidJar: String, outDir: File, minApi: Int) {
         val args = mutableListOf<String>()
         args.add("--lib")
         args.add(androidJar)
@@ -371,9 +383,9 @@ object BuildSlimmer {
         args.add(outDir.absolutePath)
         jars.forEach { args.add(it.absolutePath) }
         args.add("--min-api")
-        args.add("21")
+        args.add(minApi.toString())
 
-        LogCatcher.i(TAG, "执行 D8 转换,输入 ${jars.size} 个 jar")
+        LogCatcher.i(TAG, "执行 D8 转换,输入 ${jars.size} 个 jar, min-api=$minApi")
         D8.main(args.toTypedArray())
     }
 
@@ -650,7 +662,8 @@ object BuildSlimmer {
     private fun rewriteDexKeeping(
         dexFile: File,
         keepClasses: Set<String>,
-        androidJar: String?
+        androidJar: String?,
+        minApi: Int
     ): Boolean {
         if (keepClasses.isEmpty()) return false
         if (androidJar == null || !File(androidJar).isFile) {
@@ -697,7 +710,7 @@ object BuildSlimmer {
             args.add("--pg-conf")
             args.add(keepFile.absolutePath)
             args.add("--min-api")
-            args.add("21")
+            args.add(minApi.toString())
             args.add(dexFile.absolutePath)
 
             LogCatcher.i(TAG, "R8 重写 dex: ${dexFile.name}, 保留 ${keepClasses.size} 个类")

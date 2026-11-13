@@ -284,7 +284,8 @@ class ApkBuilder {
                     abiTarget,
                     skipCompileFiles,
                     buildSlimEnabled,
-                    packageMode
+                    packageMode,
+                    minSdkVersion
                 )
 
                 if (unsignedApkPath == null) {
@@ -296,7 +297,8 @@ class ApkBuilder {
                 File(coreApkPath).delete()
 
                 // 8. 对未签名APK进行签名
-                val signedApkPath = signApkWithDefaultKey(context, unsignedApkPath, outputPath)
+                val signedApkPath =
+                    signApkWithDefaultKey(context, unsignedApkPath, outputPath, targetSdkVersion)
 
                 // 9. 清理临时文件
                 File(unsignedApkPath).delete()
@@ -386,7 +388,8 @@ class ApkBuilder {
             androidJarPath: String?,
             templateClasses: Set<String> = emptySet(),
             projectPath: String = "",
-            buildSlimEnabled: Boolean = false
+            buildSlimEnabled: Boolean = false,
+            minApi: Int = 21
         ) {
             if (jarFiles.isEmpty()) return
 
@@ -409,7 +412,8 @@ class ApkBuilder {
                     templateClasses = templateClasses,
                     projectPath = projectPath,
                     outDir = dexOutputDir,
-                    enabled = buildSlimEnabled
+                    enabled = buildSlimEnabled,
+                    minApi = minApi
                 )
                 LogCatcher.i(
                     "ApkBuilder",
@@ -444,7 +448,8 @@ class ApkBuilder {
         private fun signApkWithDefaultKey(
             context: Context,
             unsignedApkPath: String,
-            outputPath: String
+            outputPath: String,
+            targetSdk: Int
         ): String? {
             LogCatcher.i("ApkBuilder", "开始对APK进行签名")
 
@@ -478,7 +483,8 @@ class ApkBuilder {
                     signConfig.keyAlias,        // alias
                     signConfig.keyPassword,     // keyPass
                     unsignedApkPath,            // inPath
-                    outputPath                  // outPath
+                    outputPath,                 // outPath
+                    targetSdk                   // 页对齐宽度依据
                 )
 
                 // 4. 清理临时签名文件(内置签名提取自 assets,需删除;自定义签名直接引用用户文件,不删)
@@ -899,7 +905,9 @@ class ApkBuilder {
             abiTarget: AbiTarget = AbiTarget.UNIVERSAL,
             skipCompileFiles: List<String> = emptyList(),
             buildSlimEnabled: Boolean = false,
-            packageMode: PackageMode = PackageMode.PLAIN_ENC
+            packageMode: PackageMode = PackageMode.PLAIN_ENC,
+            /** 目标 minSdk:D8/R8 的 desugaring 依据。 */
+            minSdkVersion: Int = 21
         ): String? {
             val L = getSharedLuaState()
 
@@ -974,7 +982,8 @@ class ApkBuilder {
                     val slimLibs = BuildSlimmer.slimProjectLibs(
                         File(assetsDir, "libs"),
                         templateClasses,
-                        slimAndroidJar
+                        slimAndroidJar,
+                        minSdkVersion
                     )
                     LogCatcher.i(
                         "ApkBuilder",
@@ -1037,7 +1046,8 @@ class ApkBuilder {
                             context, mavenJars, workDir, androidJarPath,
                             templateClasses = templateClasses,
                             projectPath = projectPath,
-                            buildSlimEnabled = buildSlimEnabled
+                            buildSlimEnabled = buildSlimEnabled,
+                            minApi = minSdkVersion
                         )
                     }
                     
@@ -1050,7 +1060,8 @@ class ApkBuilder {
                         mavenJars,
                         templateClasses = templateClasses,
                         buildSlimEnabled = buildSlimEnabled,
-                        dexPayload = payloadForDex
+                        dexPayload = payloadForDex,
+                        minApi = minSdkVersion
                     )
 
                     // 删除 assets 下的 java 源文件（避免打包进 APK）
@@ -1985,12 +1996,14 @@ class ApkBuilder {
             alias: String,
             keyPass: String,
             inPath: String,
-            outPath: String
+            outPath: String,
+            /** 目标 SDK:转发给 zipalign 决定页对齐宽度。 */
+            targetSdk: Int
         ): Boolean {
             return try {
                 // 先对输入的APK进行对齐处理（使用真正的 zipalign）
                 val alignedPath = inPath + ".aligned"
-                val aligned = zipAlignApk(context, inPath, alignedPath)
+                val aligned = zipAlignApk(context, inPath, alignedPath, targetSdk)
 
                 val inputFile = if (aligned) {
                     File(alignedPath)
@@ -2031,7 +2044,9 @@ class ApkBuilder {
         private fun zipAlignApk(
             context: Context,
             inputPath: String,
-            outputPath: String
+            outputPath: String,
+            /** 目标 SDK:决定页对齐宽度(35+ 用 16KB)。 */
+            targetSdk: Int
         ): Boolean {
             return try {
                 // 获取 zipalign 路径：/data/app/.../lib/arm64/libzipalign.so
@@ -2048,13 +2063,19 @@ class ApkBuilder {
                 // 删除已存在的输出文件
                 File(outputPath).delete()
 
-                // 构建命令：zipalign -f -p -v 4 input.apk output.apk
+                // 构建命令：zipalign -f -p -v <align> input.apk output.apk
+                //
+                // 对齐宽度必须与目标设备页大小匹配:Android 15(API 35)+ 要求
+                // `lib/*.so` 按 **16KB** 页对齐,否则在 16KB 页设备上直接装不上
+                // (INSTALL_FAILED_INVALID_APK)或运行即崩。
+                // 旧代码写死 4,只在 4KB 页设备上正常。
+                val alignBytes = if (targetSdk >= 35) "16384" else "4"
                 val cmd = arrayOf(
                     zipalignPath,
                     "-f",           // 强制覆盖
-                    "-p",           // 页对齐（4KB）
+                    "-p",           // 页对齐
                     "-v",           // 详细输出
-                    "4",            // 4字节对齐
+                    alignBytes,
                     inputPath,
                     outputPath
                 )
@@ -2197,7 +2218,9 @@ class ApkBuilder {
              * dex 打包模式的载荷。非 null 时会额外生成一个承载载荷常量的
              * Java 源文件一起编译,结果 dex 里就带上了脚本(产物无 .lua 文件)。
              */
-            dexPayload: ByteArray? = null
+            dexPayload: ByteArray? = null,
+            /** 目标 minSdk,传给 D8/R8 决定 desugaring 行为。 */
+            minApi: Int = 21
         ) {
             // 1. 检查 java 目录
             val javaDir = File(projectPath, "java")
@@ -2322,7 +2345,8 @@ class ApkBuilder {
                     templateClasses = templateClasses,
                     projectPath = projectPath,
                     outDir = dexOutputDir,
-                    enabled = buildSlimEnabled
+                    enabled = buildSlimEnabled,
+                    minApi = minApi
                 )
                 LogCatcher.i(
                     "ApkBuilder",

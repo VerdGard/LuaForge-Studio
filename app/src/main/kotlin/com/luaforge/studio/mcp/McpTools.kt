@@ -25,6 +25,7 @@ import com.luaforge.studio.utils.LuaParserUtil
 import com.luaforge.studio.utils.FileUtil
 import com.luaforge.studio.utils.LogBuffer
 import com.luaforge.studio.utils.LogCatcher
+import com.luaforge.studio.utils.LogFileAccess
 import com.luaforge.studio.utils.ProjectFileIO
 import com.luaforge.studio.utils.ProjectUtil
 import com.luaforge.studio.widget.BuiltinWidgets
@@ -1668,7 +1669,7 @@ object McpTools {
 
         if (clearBefore) {
             withContext(Dispatchers.IO) {
-                runCatching { File(LOG_FILE_PATH).writeText("", Charsets.UTF_8) }
+                runCatching { LogFileAccess.clear() }
             }
         }
 
@@ -1867,8 +1868,9 @@ object McpTools {
         }
 
         if (capture.contains("errors") || capture.contains("log")) {
-            val file = File(LOG_FILE_PATH)
-            if (file.exists()) {
+            // 走 LogFileAccess 的解析:日志可能在外部目录,也可能回退到私有目录
+            val file = LogFileAccess.existingLogFile(context)
+            if (file != null) {
                 val content = withContext(Dispatchers.IO) { readTailText(file, 512 * 1024) }
                 if (capture.contains("errors")) {
                     val matched = content.lines().filter { line ->
@@ -1886,7 +1888,7 @@ object McpTools {
                     output.put("log", JSONArray(tail))
                 }
             } else {
-                output.put("logNote", "日志文件不存在: $LOG_FILE_PATH")
+                output.put("logNote", "日志文件不存在(已检查外部与私有目录)")
             }
         }
 
@@ -2050,8 +2052,8 @@ object McpTools {
 
     private suspend fun getLogs(args: JSONObject): JSONObject {
         val lines = args.optInt("lines", 200).coerceIn(1, 5000)
-        val file = File(LOG_FILE_PATH)
-        if (!file.exists()) return errorResult("日志文件不存在: $LOG_FILE_PATH")
+        val file = LogFileAccess.existingLogFile(context)
+            ?: return errorResult("日志文件不存在(已检查外部与私有目录)")
 
         val content = withContext(Dispatchers.IO) {
             // 大文件只读取末尾部分,避免占用内存
@@ -2062,7 +2064,7 @@ object McpTools {
         val tail = if (all.size > lines) all.subList(all.size - lines, all.size) else all
         return textResult(
             JSONObject()
-                .put("path", LOG_FILE_PATH)
+                .put("path", file.absolutePath)
                 .put("lines", tail.size)
                 .put("content", tail.joinToString("\n"))
                 .toString()
@@ -2231,8 +2233,8 @@ object McpTools {
 
     private suspend fun getRuntimeErrors(args: JSONObject): JSONObject {
         val lines = args.optInt("lines", 50).coerceIn(1, 2000)
-        val file = File(LOG_FILE_PATH)
-        if (!file.exists()) return errorResult("日志文件不存在: $LOG_FILE_PATH")
+        val file = LogFileAccess.existingLogFile(context)
+            ?: return errorResult("日志文件不存在(已检查外部与私有目录)")
 
         val content = withContext(Dispatchers.IO) {
             val maxBytes = 512 * 1024
@@ -2246,7 +2248,7 @@ object McpTools {
         val tail = if (matched.size > lines) matched.subList(matched.size - lines, matched.size) else matched
         return textResult(
             JSONObject()
-                .put("path", LOG_FILE_PATH)
+                .put("path", file.absolutePath)
                 .put("matched", matched.size)
                 .put("lines", tail.size)
                 .put("content", tail.joinToString("\n"))
@@ -2256,10 +2258,18 @@ object McpTools {
 
     private suspend fun clearLogs(): JSONObject = withContext(Dispatchers.IO) {
         try {
-            val file = File(LOG_FILE_PATH)
-            if (file.exists()) {
-                file.writeText("", Charsets.UTF_8)
-                textResult(JSONObject().put("cleared", true).put("path", LOG_FILE_PATH).toString(2))
+            // 同时清空外部与私有两处,避免"清了外部、私有里还有旧内容"
+            val targets = listOfNotNull(
+                LogFileAccess.existingLogFile(context),
+                runCatching { LogFileAccess.privateLogFile(context) }.getOrNull()
+            ).distinct()
+            val cleared = LogFileAccess.clear()
+            if (cleared) {
+                textResult(
+                    JSONObject().put("cleared", true)
+                        .put("paths", JSONArray(targets.map { it.absolutePath }))
+                        .toString(2)
+                )
             } else {
                 textResult(
                     JSONObject().put("cleared", false)
@@ -2422,6 +2432,8 @@ object McpTools {
         roots.add(FileUtil.getProjectsPath(context))
         // 日志目录 + 构建/备份输出
         roots.add(runCatching { File(LOG_FILE_PATH).parentFile?.canonicalPath }.getOrNull() ?: "/storage/emulated/0/LuaForge-Studio")
+        // 日志回退到私有目录时,MCP 也要能清理它(否则 clear_logs 对其无效)
+        roots.add(runCatching { File(context.filesDir, "logs").canonicalPath }.getOrNull() ?: "")
         roots.addAll(extraAllowedDirs)
         return roots.any { root ->
             val normalized = runCatching { File(root).canonicalPath }.getOrElse { root }.trimEnd('/')

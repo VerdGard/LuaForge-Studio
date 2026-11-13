@@ -38,6 +38,14 @@ object LuaPayloadBuilder {
     private const val MAX_PATH_LEN = 65535
 
     /**
+     * 载荷总量上限。
+     *
+     * dex 模式的载荷要落进 Java `String` 常量(每段 60000 字符),so 模式要
+     * 一次性读进内存;两者都吃不下超大载荷。留 256MB 余量,正常项目远达不到。
+     */
+    private const val MAX_PAYLOAD_BYTES = 256L * 1024 * 1024
+
+    /**
      * 把目录下所有 `.lua` 文件收进载荷。
      *
      * @param sourceDir 已加密编译的项目目录(通常是 APK 工作目录的 `assets`)
@@ -59,13 +67,26 @@ object LuaPayloadBuilder {
             return null
         }
 
-        // 先算总长,避免 ByteArrayOutputStream 反复扩容
-        var total = 4
+        // 先算总长,避免 ByteArrayOutputStream 反复扩容。
+        //
+        // 用 Long 累加:单个文件超过 2GiB 时 `file.length().toInt()` 会溢出成
+        // **负数**,`ByteArray(负数)` 直接抛 NegativeArraySizeException,
+        // 而错误信息只会说"数组长度为负",完全看不出是哪个文件。
+        // 同时整个载荷必须能放进 Java 数组(约 2GiB 上限),超出时明确报错。
+        var totalLong = 4L
         for ((file, rel) in files) {
             val pathBytes = rel.toByteArray(Charsets.UTF_8)
             require(pathBytes.size <= MAX_PATH_LEN) { "路径过长: $rel" }
-            total += 2 + pathBytes.size + 4 + file.length().toInt()
+            val length = file.length()
+            require(length <= Int.MAX_VALUE.toLong()) {
+                "单个脚本过大(>2GiB),无法打进载荷: $rel"
+            }
+            totalLong += 2 + pathBytes.size + 4 + length
+            require(totalLong <= MAX_PAYLOAD_BYTES) {
+                "载荷超过上限(${MAX_PAYLOAD_BYTES / 1024 / 1024}MB),无法打进单个 dex/so"
+            }
         }
+        val total = totalLong.toInt()
 
         val out = ByteArray(total)
         var pos = 0

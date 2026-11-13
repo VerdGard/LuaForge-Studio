@@ -352,6 +352,25 @@ object LogFileAccess {
     }
 
     /**
+     * 找出当前**存在且有内容**的日志文件。
+     *
+     * 日志可能落在外部路径(有权限时)或私有目录(回退时),调用方不该假定只有一个。
+     * 外部优先 —— 它与用户/工具脚本直接查看的路径一致。
+     *
+     * @return 命中的文件;都不存在时返回 null
+     */
+    fun existingLogFile(context: android.content.Context? = null): File? {
+        val files = mutableListOf(File(LEGACY_LOG_FILE_PATH))
+        try {
+            val ctx = context ?: currentAppContext
+            if (ctx != null) files.add(privateLogFile(ctx))
+        } catch (_: Throwable) {
+        }
+        return files.firstOrNull { it.exists() && it.length() > 0 }
+            ?: files.firstOrNull { it.exists() }
+    }
+
+    /**
      * 读取日志文本。
      *
      * @param errorsOnly 为 true 时只返回含 [ERROR] 级别的行(用于「查看错误日志」)。
