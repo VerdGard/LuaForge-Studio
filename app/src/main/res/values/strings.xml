@@ -70,6 +70,22 @@
     <!-- 内容描述 (Content Description) -->
     <string name="cd_logo">Logo</string>
     <string name="cd_back">返回</string>
+    <string name="logs_copied">已复制当前过滤结果</string>
+    <string name="logs_cleared">日志已清空</string>
+    <string name="logs_pause">暂停</string>
+    <string name="logs_resume">继续</string>
+    <string name="logs_jump_latest">跳到最新</string>
+    <string name="logs_filter">过滤</string>
+    <string name="logs_search_hint">搜索正文 / tag</string>
+    <string name="logs_tag_hint">tag</string>
+    <string name="logs_copy">复制</string>
+    <string name="logs_share">分享</string>
+    <string name="logs_clear">清空</string>
+    <string name="logs_expand_stack">展开异常栈</string>
+    <string name="logs_collapse_stack">收起异常栈</string>
+    <string name="logs_empty_title">暂无日志</string>
+    <string name="logs_empty_desc">编辑器运行、构建、MCP 请求的日志会实时出现在这里</string>
+    <string name="logs_share_title">分享日志</string>
     <string name="logs_title">日志</string>
     <string name="cd_menu">打开菜单</string>
     <string name="cd_add">添加</string>

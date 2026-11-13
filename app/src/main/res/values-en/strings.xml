@@ -70,6 +70,22 @@
     <!-- Content Descriptions -->
     <string name="cd_logo">Logo</string>
     <string name="cd_back">Back</string>
+    <string name="logs_copied">Copied filtered logs</string>
+    <string name="logs_cleared">Logs cleared</string>
+    <string name="logs_pause">Pause</string>
+    <string name="logs_resume">Resume</string>
+    <string name="logs_jump_latest">Jump to latest</string>
+    <string name="logs_filter">Filter</string>
+    <string name="logs_search_hint">Search message / tag</string>
+    <string name="logs_tag_hint">tag</string>
+    <string name="logs_copy">Copy</string>
+    <string name="logs_share">Share</string>
+    <string name="logs_clear">Clear</string>
+    <string name="logs_expand_stack">Show stack trace</string>
+    <string name="logs_collapse_stack">Hide stack trace</string>
+    <string name="logs_empty_title">No logs yet</string>
+    <string name="logs_empty_desc">Editor, build and MCP logs will appear here in real time</string>
+    <string name="logs_share_title">Share logs</string>
     <string name="logs_title">Logs</string>
     <string name="cd_menu">Open menu</string>
     <string name="cd_add">Add</string>

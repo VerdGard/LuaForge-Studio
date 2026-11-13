@@ -61,6 +61,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -152,7 +153,7 @@ fun LogsScreen(
                     title = {
                         Column {
                             Text(
-                                text = stringResourceSafe(R.string.logs_title, "日志"),
+                                text = stringResource(R.string.logs_title),
                                 style = MaterialTheme.typography.titleLarge
                             )
                             Text(
@@ -166,7 +167,7 @@ fun LogsScreen(
                         IconButton(onClick = onBack) {
                             Icon(
                                 Icons.Filled.ArrowBack,
-                                contentDescription = stringResourceSafe(R.string.cd_back, "返回")
+                                contentDescription = stringResource(R.string.cd_back)
                             )
                         }
                     },
@@ -174,7 +175,8 @@ fun LogsScreen(
                         IconButton(onClick = { paused = !paused }) {
                             Icon(
                                 if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
-                                contentDescription = if (paused) "继续" else "暂停",
+                                contentDescription = if (paused) stringResource(R.string.logs_resume)
+                                else stringResource(R.string.logs_pause),
                                 tint = if (paused) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -182,7 +184,7 @@ fun LogsScreen(
                         IconButton(onClick = { followTail = true }) {
                             Icon(
                                 Icons.Filled.KeyboardArrowDown,
-                                contentDescription = "跳到最新",
+                                contentDescription = stringResource(R.string.logs_jump_latest),
                                 tint = if (followTail) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -190,7 +192,7 @@ fun LogsScreen(
                         IconButton(onClick = { showFilters = !showFilters }) {
                             Icon(
                                 Icons.Filled.Search,
-                                contentDescription = "过滤",
+                                contentDescription = stringResource(R.string.logs_filter),
                                 tint = if (showFilters) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -212,7 +214,7 @@ fun LogsScreen(
                         levelCounts = levelCounts,
                         onCopy = {
                             copyToClipboard(context, LogBuffer.exportText(minLevel))
-                            toast?.showToast("已复制当前过滤结果")
+                            toast?.showToast(context.getString(R.string.logs_copied))
                         },
                         onShare = {
                             shareText(context, LogBuffer.exportText(minLevel))
@@ -221,7 +223,7 @@ fun LogsScreen(
                             LogBuffer.clear()
                             LogFileAccess.clear()
                             revision++
-                            toast?.showToast("已清空")
+                            toast?.showToast(context.getString(R.string.logs_cleared))
                         }
                     )
                 }
@@ -301,7 +303,7 @@ private fun FiltersBar(
                 value = keyword,
                 onValueChange = onKeywordChange,
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("搜索正文 / tag", fontSize = 13.sp) },
+                placeholder = { Text(stringResource(R.string.logs_search_hint), fontSize = 13.sp) },
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodySmall
             )
@@ -309,7 +311,7 @@ private fun FiltersBar(
                 value = tagFilter,
                 onValueChange = onTagChange,
                 modifier = Modifier.width(120.dp),
-                placeholder = { Text("tag", fontSize = 13.sp) },
+                placeholder = { Text(stringResource(R.string.logs_tag_hint), fontSize = 13.sp) },
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodySmall
             )
@@ -318,7 +320,7 @@ private fun FiltersBar(
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             AssistChip(
                 onClick = onCopy,
-                label = { Text("复制", fontSize = 12.sp) },
+                label = { Text(stringResource(R.string.logs_copy), fontSize = 12.sp) },
                 leadingIcon = {
                     Icon(Icons.Filled.ContentCopy, null, Modifier.size(16.dp))
                 },
@@ -326,13 +328,13 @@ private fun FiltersBar(
             )
             AssistChip(
                 onClick = onShare,
-                label = { Text("分享", fontSize = 12.sp) },
+                label = { Text(stringResource(R.string.logs_share), fontSize = 12.sp) },
                 leadingIcon = { Icon(Icons.Filled.Share, null, Modifier.size(16.dp)) },
                 colors = AssistChipDefaults.assistChipColors()
             )
             AssistChip(
                 onClick = onClear,
-                label = { Text("清空", fontSize = 12.sp) },
+                label = { Text(stringResource(R.string.logs_clear), fontSize = 12.sp) },
                 leadingIcon = { Icon(Icons.Filled.ClearAll, null, Modifier.size(16.dp)) },
                 colors = AssistChipDefaults.assistChipColors()
             )
@@ -408,7 +410,8 @@ private fun LogRow(entry: LogBuffer.Entry) {
                     contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
                 ) {
                     Text(
-                        if (expanded) "收起异常栈" else "展开异常栈",
+                        if (expanded) stringResource(R.string.logs_collapse_stack)
+                        else stringResource(R.string.logs_expand_stack),
                         fontSize = 11.sp
                     )
                 }
@@ -446,13 +449,13 @@ private fun EmptyLogs(modifier: Modifier = Modifier) {
             )
             Spacer(Modifier.height(12.dp))
             Text(
-                "暂无日志",
+                stringResource(R.string.logs_empty_title),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                "编辑器运行、构建、MCP 请求的日志会实时出现在这里",
+                stringResource(R.string.logs_empty_desc),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline
             )
@@ -483,15 +486,7 @@ private fun shareText(context: Context, text: String) {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, text)
         }
-        context.startActivity(Intent.createChooser(intent, "分享日志"))
+        context.startActivity(Intent.createChooser(intent, context.getString(R.string.logs_share_title)))
     } catch (_: Throwable) {
     }
-}
-
-/** `stringResource` 需要 Composable 上下文;这里允许传入兜底文案。 */
-@Composable
-private fun stringResourceSafe(id: Int, fallback: String): String = try {
-    androidx.compose.ui.res.stringResource(id)
-} catch (_: Throwable) {
-    fallback
 }
