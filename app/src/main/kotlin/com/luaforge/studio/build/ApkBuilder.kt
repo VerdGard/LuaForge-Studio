@@ -80,18 +80,16 @@ enum class BuildType(
  */
 enum class PackageMode(
     /** 产物文件名中的片段,便于一眼看出打包方式。 */
-    val artifactTag: String,
-    /** 是否需要把项目源码编译成字节码(三种模式都要,明文模式只是不合并)。 */
-    val encrypts: Boolean
+    val artifactTag: String
 ) {
     /** 普通加密:字节码保持为独立文件。 */
-    PLAIN_ENC("enc", true),
+    PLAIN_ENC("enc"),
 
     /** 封装进 dex:字节码合并为单一载荷嵌入 classes*.dex。 */
-    DEX("dex", true),
+    DEX("dex"),
 
     /** 封装进 so:字节码合并为单一载荷追加到 libluaforge_payload.so。 */
-    SO("so", true);
+    SO("so");
 
     companion object {
         /** 供构建对话框展示的可选模式。 */

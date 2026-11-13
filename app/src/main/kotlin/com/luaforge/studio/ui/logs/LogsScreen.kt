@@ -54,7 +54,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -71,10 +70,6 @@ import com.luaforge.studio.R
 import com.luaforge.studio.utils.LogBuffer
 import com.luaforge.studio.utils.LogFileAccess
 import com.luaforge.studio.utils.NonBlockingToastState
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * 编辑器自身日志查看页(仿 LogFox)。
@@ -103,7 +98,6 @@ fun LogsScreen(
     toast: NonBlockingToastState? = null
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     var minLevel by remember { mutableStateOf(LogBuffer.Level.VERBOSE) }
     var tagFilter by remember { mutableStateOf("") }

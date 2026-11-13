@@ -235,7 +235,6 @@ object BuildSlimmer {
         androidJar: String? = null
     ): Result {
         if (!libsDir.isDirectory || templateClasses.isEmpty()) return Result(shrunk = false)
-        val androidJarForSlim = androidJar
 
         val duplicates = ArrayList<String>()
         var prunedJars = 0
@@ -307,7 +306,7 @@ object BuildSlimmer {
                     // 把"要保留的类"显式 keep 住。
                     val keepSet = classes.filterNot { templateClasses.contains(it) }.toSet()
                     val rewritten = try {
-                        rewriteDexKeeping(f, keepSet, androidJarForSlim)
+                        rewriteDexKeeping(f, keepSet, androidJar)
                     } catch (e: Exception) {
                         LogCatcher.w(TAG, "重写 libs dex 失败,原样保留: ${f.name} (${e.message})")
                         false

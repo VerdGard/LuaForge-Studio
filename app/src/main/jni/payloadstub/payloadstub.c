@@ -85,6 +85,11 @@ static uint32_t payload_crc32(const uint8_t *data, size_t len) {
 /* 定位自身 .so 文件                                                   */
 /* ------------------------------------------------------------------ */
 
+/* JNI_OnLoad 的地址被 dladdr 用来反查自身路径,但它的定义在文件末尾。
+ * C 语言要求先声明后使用,否则在 C99 下是隐式声明(返回值类型错)或被
+ * 当成未定义标识符 —— 两者都是编译期错误。 */
+JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved);
+
 /*
  * 取本库在磁盘上的真实路径。
  *

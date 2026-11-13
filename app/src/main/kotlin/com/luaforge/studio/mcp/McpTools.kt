@@ -13,6 +13,7 @@ import com.androlua.LuaTokenTypes
 import com.luaforge.studio.langs.lua.tools.CompleteHashmapUtils
 import com.luaforge.studio.ui.editor.backupProject
 import com.luaforge.studio.ui.editor.viewmodel.EditorViewModel
+import com.luaforge.studio.build.PackageMode
 import com.luaforge.studio.ui.editor.buildProject
 import com.luaforge.studio.ui.editor.getAppNameFromSettings
 import com.luaforge.studio.ui.project.TemplateItem
@@ -245,7 +246,13 @@ object McpTools {
             tool(
                 "build_apk",
                 "构建项目为已签名 APK(与编辑器“构建”一致),返回输出路径",
-                obj("path" to strProp("项目路径,缺省为当前项目"))
+                obj(
+                    "path" to strProp("项目路径,缺省为当前项目"),
+                    "packageMode" to strProp(
+                        "打包方式:enc(普通加密,默认) / dex(脚本并入 dex) / " +
+                            "so(脚本藏进原生库);后两者产物中不含 lua 文件"
+                    )
+                )
             )
         )
 
@@ -1592,7 +1599,16 @@ object McpTools {
             withContext(Dispatchers.Main) { viewModel.saveAllFilesSilently() }
         }
 
-        val result = withContext(Dispatchers.IO) { buildProject(context, project) }
+        // 打包方式:与编辑器构建对话框等价,默认保持传统形态
+        val packageMode = when (args.optString("packageMode", "enc").lowercase(Locale.ROOT)) {
+            "dex" -> PackageMode.DEX
+            "so" -> PackageMode.SO
+            else -> PackageMode.PLAIN_ENC
+        }
+
+        val result = withContext(Dispatchers.IO) {
+            buildProject(context, project, packageMode = packageMode)
+        }
         return if (result.startsWith("error")) {
             errorResult(result)
         } else {
