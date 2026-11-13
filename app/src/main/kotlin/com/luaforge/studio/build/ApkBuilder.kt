@@ -439,12 +439,21 @@ class ApkBuilder {
                 BuildLogger.finish(blog)
                 return signedApkPath
 
-            } catch (e: Exception) {
-                LogCatcher.e("ApkBuilder", "构建APK失败", e)
+            } catch (e: Throwable) {
+                // 必须是 Throwable 而不是 Exception。
+                //
+                // 编译器组件(ECJ / D8)在静态初始化失败时抛的是
+                // `ExceptionInInitializerError`、内存不足时抛
+                // `OutOfMemoryError`、栈溢出时抛 `StackOverflowError` ——
+                // 它们全部继承 Error,`catch (Exception)` 一个都接不住。
+                // 实际后果:构建日志在最后一条记录之后**直接断掉**,
+                // 既没有失败步骤也没有堆栈,用户只看到"卡住然后没了"。
+                LogCatcher.eThrowable("ApkBuilder", "构建APK失败: ${e.javaClass.simpleName}", e)
                 // 完整堆栈进构建日志:这是"定位到堆栈"的主要落点
                 BuildLogger.error(
                     blog,
-                    "构建抛出异常,总耗时 ${(System.nanoTime() - buildStartNanos) / 1_000_000}ms",
+                    "构建失败(${e.javaClass.name}),总耗时 " +
+                        "${(System.nanoTime() - buildStartNanos) / 1_000_000}ms",
                     e
                 )
                 BuildLogger.finish(blog)
@@ -452,7 +461,7 @@ class ApkBuilder {
                 // 清理临时文件
                 unsignedApkPath?.let { File(it).delete() }
 
-                return "error: 构建失败: ${e.message}"
+                return "error: 构建失败(${e.javaClass.simpleName}): ${e.message ?: "无详细信息,详见构建日志"}"
             } finally {
                 // 构建完成后清理共享资源
                 cleanupSharedLuaState()
@@ -1315,9 +1324,10 @@ class ApkBuilder {
 
                 return outputPath
 
-            } catch (e: Exception) {
-                LogCatcher.e("ApkBuilder", "添加项目文件失败", e)
-                BuildLogger.error(blog, "打入项目文件时抛出异常", e)
+            } catch (e: Throwable) {
+                // 同 bin():Error 也要接住,否则日志会在此处无声中断
+                LogCatcher.eThrowable("ApkBuilder", "添加项目文件失败: ${e.javaClass.simpleName}", e)
+                BuildLogger.error(blog, "打入项目文件时失败(${e.javaClass.name})", e)
                 return null
             }
         }
@@ -2646,9 +2656,14 @@ class ApkBuilder {
                 throw RuntimeException(
                     "Java 编译内存不足:源文件过大,请减少脚本体积或开关构建精简后重试", e
                 )
-            } catch (e: Exception) {
-                LogCatcher.e("ApkBuilder", "Java 编译异常", e)
-                throw RuntimeException("Java 编译失败: ${e.message}", e)
+            } catch (e: Throwable) {
+                // 兜底 Throwable:ECJ 静态初始化失败会抛 ExceptionInInitializerError
+                // (Error,不是 Exception),这是"日志停在 ECJ 前内存之后"的真实原因
+                LogCatcher.eThrowable("ApkBuilder", "Java 编译失败: ${e.javaClass.simpleName}", e)
+                BuildLogger.error(blog, "ECJ 编译失败(${e.javaClass.name})", e)
+                throw RuntimeException(
+                    "Java 编译失败(${e.javaClass.simpleName}): ${e.message}", e
+                )
             }
 
             // 7. 将编译后的 class 文件打包为 JAR

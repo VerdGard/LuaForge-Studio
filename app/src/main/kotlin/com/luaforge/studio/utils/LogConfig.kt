@@ -208,6 +208,27 @@ object LogCatcher {
         }
     }
 
+    /**
+     * 记录任意 [Throwable](含 `Error`)。
+     *
+     * 原有 [e] 只接 `Exception`,于是 `OutOfMemoryError` /
+     * `ExceptionInInitializerError` / `StackOverflowError` 这类 **Error**
+     * 无法落盘 —— 而构建期 ECJ/D8 恰恰会抛这些。加这个重载让它们也能
+     * 连同堆栈一起记入日志与结构化缓冲。
+     */
+    @JvmStatic
+    fun eThrowable(tag: String, message: String, throwable: Throwable?) {
+        if (throwable == null) {
+            e(tag, message, null as Exception?)
+            return
+        }
+        android.util.Log.e(tag, message, throwable)
+        LogBuffer.addError(tag, message, throwable)
+        if (shouldLog()) {
+            writeToFile("ERROR", tag, "$message - ${throwable.message}\n${throwable.stackTraceToString()}")
+        }
+    }
+
     @JvmStatic
     fun permission(tag: String, action: String, result: String) {
         val message = "权限操作: $action - $result"

@@ -175,3 +175,44 @@
 -keep class com.luaforge.studio.compose.** { *; }
 -dontwarn com.luaforge.studio.compose.**
 
+
+# ---------------------------------------------------------------------------
+# 构建期的 Java 编译 / DEX 生成器
+# ---------------------------------------------------------------------------
+# IDE 在设备上完成用户项目的 Java 编译与 dex 生成,依赖两个"编译器库":
+#   org.eclipse.jdt:ecj   —— ECJ(Java 源码 -> class)
+#   com.android.tools:r8  —— D8/R8(class -> dex,以及构建精简)
+#
+# 这两者都是**编译器**,内部大量依赖反射、ServiceLoader、按类名字符串查找
+# 组件,以及通过 `getDeclaredField/Method` 访问内部结构。R8 看不到这些引用,
+# 会把它们判为不可达并裁掉/改名,后果是运行时在某个类的静态初始化块里抛
+# `ExceptionInInitializerError`。
+#
+# 典型症状(已实际发生):用户构建 dex 打包方式时,构建日志停在
+# "ECJ 前内存: ..." 之后没有任何后续 —— 因为
+# `ExceptionInInitializerError` 是 **Error 而非 Exception**,
+# 外层的 `catch (Exception)` 接不住,异常直接冒到协程顶层。
+#
+# 注意:ECJ 与 D8 是**工具链**,不是应用逻辑,keep 它们不会影响
+# 用户代码的精简效果(用户项目走的是另一条 D8 链路)。
+-keep class org.eclipse.jdt.** { *; }
+-dontwarn org.eclipse.jdt.**
+
+-keep class com.android.tools.r8.** { *; }
+-keep class com.android.tools.r8.internal.** { *; }
+-dontwarn com.android.tools.r8.**
+
+# D8/R8 通过反射加载的辅助组件与资源
+-keep class com.android.tools.** { *; }
+-dontwarn com.android.tools.**
+
+# 编译器用到的 JDK 抽象(注解处理、文件管理器)在 Android 上是空实现,
+# 只需保住类名不被裁剪,不需要实现
+-keep class javax.annotation.processing.** { *; }
+-keep class javax.tools.** { *; }
+-dontwarn javax.tools.**
+-dontwarn javax.annotation.processing.**
+
+# ECJ 通过 `messages.properties` 之类的资源文件取本地化报错文本,
+# 需要保留目录结构以便 ClassLoader 按路径查找
+-keepdirectories org/eclipse/jdt/**
