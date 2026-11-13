@@ -1513,6 +1513,9 @@ object McpTools {
                     luaState?.let { state ->
                         state.gc(LuaState.LUA_GCCOLLECT, 1)
                         state.top = 0
+                        // 私有实例必须显式关闭:否则每次 compile_file 都留下一整个
+                        // Lua 虚拟机,直到终结器轮到为止(见 EditorFunctions 同名说明)
+                        if (!state.isClosed) state.close()
                     }
                 } catch (_: Exception) {
                 }

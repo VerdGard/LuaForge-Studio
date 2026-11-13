@@ -142,6 +142,16 @@ class ApkBuilder {
         }
 
         // 清理共享 LuaState
+        /**
+         * 释放构建期间复用的 LuaState。
+         *
+         * 每次构建结束都调用,因此这里**必须真正 close()**,而不只是 gc():
+         * 构建会编译整个项目的脚本,一个 LuaState 里会积累大量 proto / 字符串,
+         * 只 gc 不关会把这些 native 内存留到下一次 GC(甚至终结器队列),
+         * 连做几次构建就能看到 native 堆持续上涨直至 OOM。
+         *
+         * close() 幂等(内部先置 0),缓存字段同时置空,下次构建重新创建。
+         */
         private fun cleanupSharedLuaState() {
             synchronized(this) {
                 sharedLuaState?.let { state ->
@@ -149,12 +159,18 @@ class ApkBuilder {
                         try {
                             state.gc(LuaState.LUA_GCCOLLECT, 1)
                             state.top = 0
-                            LogCatcher.i("ApkBuilder", "清理共享 LuaState")
                         } catch (e: Exception) {
                             LogCatcher.e("ApkBuilder", "清理共享 LuaState 失败", e)
                         }
+                        try {
+                            state.close()
+                            LogCatcher.i("ApkBuilder", "已关闭共享 LuaState")
+                        } catch (e: Exception) {
+                            LogCatcher.e("ApkBuilder", "关闭共享 LuaState 失败", e)
+                        }
                     }
                 }
+                sharedLuaState = null
             }
         }
 
@@ -614,21 +630,30 @@ class ApkBuilder {
                 // 目标文件路径
                 val coreApkFile = File(cacheDir, "core.apk")
 
-                // 如果文件已存在且较新，直接使用
-                if (coreApkFile.exists()) {
-                    val lastModified = coreApkFile.lastModified()
-                    val currentTime = System.currentTimeMillis()
-                    // 如果文件在5分钟内创建过，直接使用
-                    if (currentTime - lastModified < 5 * 60 * 1000) {
-                        return coreApkFile.absolutePath
-                    }
+                // 缓存有效性必须与**内容**挂钩。
+                //
+                // 旧实现按"文件在 5 分钟内创建过"就复用缓存。应用升级后
+                // `assets/core.apk` 已经换了新模板,可缓存文件仍然"很新",
+                // 于是用旧模板打包 —— 表现为升级 IDE 后新加的内置能力在
+                // 产物里不存在,极难联想到是缓存问题。
+                //
+                // 这里改为比对 assets 中条目的长度:长度不同必然要重新提取;
+                // assets 长度取不到时(不同 ROM 行为差异)退化为每次重新提取,
+                // 宁可慢一点也不能打错包。
+                val assetLength = try {
+                    context.assets.openFd("core.apk").use { it.length }
+                } catch (_: Throwable) {
+                    -1L
+                }
+                if (coreApkFile.exists() && assetLength > 0 && coreApkFile.length() == assetLength) {
+                    return coreApkFile.absolutePath
                 }
 
                 // 从assets复制文件
                 val assetManager = context.assets
                 assetManager.open("core.apk").use { input ->
                     FileOutputStream(coreApkFile).use { output ->
-                        val buffer = ByteArray(8192)
+                        val buffer = ByteArray(64 * 1024)
                         var length: Int
                         while (input.read(buffer).also { length = it } > 0) {
                             output.write(buffer, 0, length)
@@ -2188,7 +2213,18 @@ class ApkBuilder {
                 if (!cacheDir.exists()) cacheDir.mkdirs()
 
                 val androidJar = File(cacheDir, "android.jar")
-                if (androidJar.exists() && androidJar.length() > 0) {
+                // 与 core.apk 同理:缓存必须按内容失效。
+                // 应用升级后 `assets/android.jar` 可能换了 API level,
+                // 复用过期的 android.jar 会让 ECJ 按错误的平台签名编译,
+                // 报出"方法不存在"这类与真实代码无关的错误。
+                val assetLength = try {
+                    context.assets.openFd("android.jar").use { it.length }
+                } catch (_: Throwable) {
+                    -1L
+                }
+                if (androidJar.exists() && androidJar.length() > 0 &&
+                    (assetLength <= 0 || androidJar.length() == assetLength)
+                ) {
                     return androidJar.absolutePath
                 }
 

@@ -183,6 +183,20 @@ static uint8_t *payload_load(size_t *out_len, const char **err) {
         return NULL;
     }
 
+    /* 版本校验:算法一旦演进(密钥/段基/字节变换),旧载荷用新运行时解出来
+     * 只会是随机字节,CRC 也会失败 —— 但那时错误信息会指向"校验和不匹配",
+     * 让人误以为是数据损坏。提前按版本拒绝,错误原因才准确。 */
+    uint32_t payload_version =
+            (uint32_t) trailer[OFF_VERSION]
+            | ((uint32_t) trailer[OFF_VERSION + 1] << 8)
+            | ((uint32_t) trailer[OFF_VERSION + 2] << 16)
+            | ((uint32_t) trailer[OFF_VERSION + 3] << 24);
+    if (payload_version != LF_PROTECT_VERSION) {
+        fclose(fp);
+        *err = "payload version mismatch";
+        return NULL;
+    }
+
     uint8_t *cipher = (uint8_t *) malloc(payload_len);
     uint8_t *plain = (uint8_t *) malloc(payload_len + 1);
     if (cipher == NULL || plain == NULL) {

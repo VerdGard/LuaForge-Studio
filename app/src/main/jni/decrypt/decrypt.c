@@ -121,14 +121,28 @@ static uint8_t *decrypt_buffer(const uint8_t *input, size_t input_size,
 
     /* 是加密文件 */
     const EncryptHeader *hdr = (const EncryptHeader *)input;
+
+    /* 版本校验:算法升级后,旧密文用新代码解只会得到随机字节 ——
+     * 若不在这里拦下,调用方看到的将是"加载字节码报 bad binary format",
+     * 完全看不出真正原因是版本不匹配。 */
+    if (hdr->version != LF_PROTECT_VERSION) {
+        return NULL;
+    }
+
     size_t data_offset = sizeof(EncryptHeader);
     size_t data_size = input_size - data_offset;
 
     if (data_size < hdr->orig_size) {
         return NULL; /* 文件损坏 */
     }
+    /* orig_size 来自文件头(不可信输入)。orig_size == UINT32_MAX 时
+     * `orig_size + 1` 在 size_t 上不会溢出(64 位),但在 32 位设备上会回绕成 0,
+     * malloc(0) 返回的小块随后会被写穿 —— 必须显式拒绝。 */
+    if (hdr->orig_size == (uint32_t) -1) {
+        return NULL;
+    }
 
-    uint8_t *plain = (uint8_t *)malloc(hdr->orig_size + 1);
+    uint8_t *plain = (uint8_t *)malloc((size_t) hdr->orig_size + 1);
     if (!plain) return NULL;
 
     {

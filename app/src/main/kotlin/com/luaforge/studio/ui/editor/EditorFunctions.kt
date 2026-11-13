@@ -87,13 +87,28 @@ suspend fun compileCurrentFile(
                 LogCatcher.e("CodeEditScreen", "编译文件失败: $filePath", e)
                 Pair(null, e.message)
             } finally {
-                // 只进行GC，不关闭LuaState
+                // **必须 close()**。
+                //
+                // 旧实现只 `gc()` 就撒手,注释还写着"不关闭 LuaState" —— 但这里是
+                // 每个文件编译都 `LuaStateFactory.newLuaState()` 新建的**私有**实例,
+                // 不是共享状态。LuaState 持有 native lua_State 与 JNI 全局引用,
+                // 只靠 finalize 兜底意味着:每次「运行/编译」都留下一整个 Lua
+                // 虚拟机,直到 GC 与终结器队列轮到它为止。连续编译几十次就会看到
+                // native 内存持续上涨。
+                //
+                // close() 是幂等的(内部先置 0 再释放),因此不必担心二次关闭;
+                // 这里也仍保留 gc(),让循环引用在关闭前先释放,减少一次性峰值。
                 luaState?.let {
                     try {
                         it.gc(LuaState.LUA_GCCOLLECT, 1)
                         it.top = 0 // 清理栈
                     } catch (e: Exception) {
                         LogCatcher.e("CodeEditScreen", "清理LuaState失败", e)
+                    }
+                    try {
+                        if (!it.isClosed) it.close()
+                    } catch (e: Exception) {
+                        LogCatcher.e("CodeEditScreen", "关闭LuaState失败", e)
                     }
                 }
             }
