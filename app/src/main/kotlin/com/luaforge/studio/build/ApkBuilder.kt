@@ -2525,6 +2525,16 @@ class ApkBuilder {
                     pkgDir,
                     LuaPayloadBuilder.DEX_PAYLOAD_CLASS.substringAfterLast('/') + ".java"
                 )
+                // 加密前先跑一次自检:两端(app 的 PayloadCrypto 与 core 的
+                // PayloadDecryptor)是各自实现的同一套算法,任何一处偏差都会
+                // 让产物"打包成功、启动白屏"。自检失败在这里就报,别等到用户装包。
+                PayloadCrypto.selfTest()?.let { err ->
+                    val msg = "加密自检失败: $err"
+                    LogCatcher.e("ApkBuilder", msg, null)
+                    BuildLogger.error(blog, msg)
+                    throw RuntimeException(msg)
+                }
+
                 // 载荷在写进 dex 之前必须加密:dex 里的字符串常量是
                 // 最容易被 `strings` 直接读出来的位置,明文等于没打包。
                 val encrypted = PayloadCrypto.encrypt(
