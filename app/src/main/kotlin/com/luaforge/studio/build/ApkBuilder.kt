@@ -1188,6 +1188,10 @@ class ApkBuilder {
                             "dex 打包模式缺少 android.jar,无法生成载荷类",
                             null
                         )
+                        BuildLogger.stepFail(
+                            blog, "71 编译 Java 与生成 DEX", null,
+                            "dex 模式缺少 android.jar"
+                        )
                         deleteDirectory(workDir)
                         return null
                     }
@@ -1221,6 +1225,7 @@ class ApkBuilder {
                 // 12. 验证APK文件
                 if (!outputFile.exists()) {
                     LogCatcher.e("ApkBuilder", "APK文件未创建成功: $outputPath")
+                    BuildLogger.stepFail(blog, "77 压缩为最终 APK", null, "输出文件未生成: $outputPath")
                     deleteDirectory(workDir)
                     return null
                 }
