@@ -227,8 +227,16 @@ class ApkBuilder {
              */
             packageMode: PackageMode = PackageMode.PLAIN_ENC
         ): String {
-            // 串行化:同一时刻只允许一个构建占用共享 LuaState 与缓存目录
-            buildLock.lock()
+            // 串行化:同一时刻只允许一个构建占用共享 LuaState 与缓存目录。
+            // 若已有构建在跑,这里会**排队等待**而不是失败 —— 但要明确告诉用户
+            // "在等",否则界面看起来像卡住了。
+            if (!buildLock.tryLock()) {
+                LogCatcher.w(
+                    "ApkBuilder",
+                    "已有构建在进行,本次构建排队等待(打包方式: $packageMode)"
+                )
+                buildLock.lock()
+            }
             try {
                 return binLocked(
                     context, mRootDir, projectPath, appName, packageName, versionName,
@@ -1499,6 +1507,16 @@ class ApkBuilder {
             // 统计进构建日志:0 个成功 + 0 个失败 = "assets 里根本没有脚本",
             // 这是区分"编译出错"和"根本没文件可编译"的唯一线索
             BuildLogger.info(BuildLogger.active(), "加密统计: $summary")
+
+            // 有失败就中止:产物里混着明文/密文脚本会让运行期出现
+            // 难以解释的加载错误,不如在这里明确失败并列出全部问题文件。
+            val failed = counters[2] + counters[3]
+            if (failed > 0) {
+                val msg = "有 $failed 个脚本编译失败,构建中止。详见上方 '加密失败' 行与构建日志"
+                LogCatcher.e("ApkBuilder", msg, null)
+                BuildLogger.error(BuildLogger.active(), msg)
+                throw RuntimeException(msg)
+            }
         }
 
         // 递归加密目录
@@ -1610,23 +1628,20 @@ class ApkBuilder {
                     throw RuntimeException("Lua文件编译失败: ${errorMsg ?: "未知错误"}")
                 }
             } catch (e: Exception) {
-                // 停止构建,但**必须把出问题的文件与原始原因写清楚**。
+                // 不再直接抛出:交给调用方**汇总所有失败文件**后一次性报错。
                 //
-                // 旧实现只抛 "加密Lua文件失败: <e.message>",而 e 往往就是
-                // 一个没有 message 的包装异常,最终日志里只剩
+                // 旧实现遇到第一个坏文件就 throw,而错误信息只有
+                // "加密Lua文件失败: <e.message>",最终日志里常常只剩
                 // "Lua文件编译失败: 未知错误" —— 既不知道是哪个文件,
-                // 也不知道 Lua 到底报了什么。这里改为带上相对路径、
-                // 文件大小与完整的 cause 链。
+                // 也不知道 Lua 到底报了什么,还看不到其余文件是否正常。
+                // 现在把细节写进日志,由 encryptProjectFiles 统一决策。
                 LogCatcher.e("ApkBuilder", "加密Lua文件异常: ${luaFile.absolutePath}", e)
                 BuildLogger.error(
                     BuildLogger.active(),
-                    "加密失败: ${luaFile.absolutePath} (${luaFile.length()}B)",
+                    "加密失败: ${luaFile.absolutePath} (${luaFile.length()}B) — ${describeChain(e)}",
                     e
                 )
-                throw RuntimeException(
-                    "加密Lua文件失败: ${luaFile.name} (${luaFile.length()}B) — ${describeChain(e)}",
-                    e
-                )
+                false
             }
         }
 
@@ -2543,6 +2558,15 @@ class ApkBuilder {
             val classOutputDir = File(workDir, "java_build_classes")
             classOutputDir.mkdirs()
 
+            // 大源文件(载荷类)编译前记录一次活跃内存:若这一步之后进程被杀,
+            // 日志里的这条就是判断"是不是 OOM"的直接依据。
+            val rtPre = Runtime.getRuntime()
+            BuildLogger.info(
+                blog,
+                "ECJ 前内存: used=${(rtPre.totalMemory() - rtPre.freeMemory()) / 1024 / 1024}MB / " +
+                    "max=${rtPre.maxMemory() / 1024 / 1024}MB"
+            )
+
             // 6. 使用 ECJ 编译 Java 源文件
             val outputStream = ByteArrayOutputStream()
             val errorStream = ByteArrayOutputStream()
@@ -2580,6 +2604,20 @@ class ApkBuilder {
                 }
                 LogCatcher.i("ApkBuilder", "Java 编译成功")
                 BuildLogger.info(blog, "ECJ 编译成功")
+            } catch (e: OutOfMemoryError) {
+                // Error 不是 Exception,原来的 catch(Exception) 抓不到 ——
+                // 于是 OOM 会一路冒到线程顶层,构建日志里只留下"步骤开始"
+                // 而无任何结束或失败行,完全看不出发生了什么。
+                LogCatcher.e("ApkBuilder", "Java 编译内存不足(ECJ)", null)
+                BuildLogger.error(
+                    blog,
+                    "Java 编译内存不足(OOM):用于编译的源文件共 " +
+                        "${javaFiles.sumOf { it.length() }}B,载荷 ${dexPayload?.size ?: 0}B",
+                    e
+                )
+                throw RuntimeException(
+                    "Java 编译内存不足:源文件过大,请减少脚本体积或开关构建精简后重试", e
+                )
             } catch (e: Exception) {
                 LogCatcher.e("ApkBuilder", "Java 编译异常", e)
                 throw RuntimeException("Java 编译失败: ${e.message}", e)

@@ -171,8 +171,8 @@ object PayloadContainer {
     @JvmStatic
     fun hasDexPayload(): Boolean = try {
         val clazz = Class.forName(DEX_PAYLOAD_CLASS)
-        val count = clazz.getField("COUNT").getInt(null)
-        count > 0
+        val groups = clazz.getField("GROUPS").getInt(null)
+        groups > 0
     } catch (t: Throwable) {
         false
     }
@@ -202,21 +202,40 @@ object PayloadContainer {
         }
     }
 
-    /** 读出 dex 里承载的加密载荷(Base64 片段拼接后解码)。 */
+    /**
+     * 读出 dex 里承载的加密载荷(Base64 片段拼接后解码)。
+     *
+     * 载荷被拆成 `D0`、`D1`… 多个**包内可见**的分片类(不是塞进单个类的
+     * 常量池):class 文件里 `CONSTANT_Utf8_info` 单条上限 65535 字节,
+     * 而构建期用 ECJ 编译一个含海量长字符串常量的类时峰值内存远高于
+     * 把同样内容摊到多个小类 —— 单类方案在 512MB 堆内编译大项目会 OOM。
+     *
+     * 这里按 `GROUPS` / `PER_GROUP` 遍历分片,最后一片用它的 `N` 收尾。
+     */
     private fun readDexPayload(): ByteArray? = try {
         val clazz = Class.forName(DEX_PAYLOAD_CLASS)
-        val count = clazz.getField("COUNT").getInt(null)
-        if (count <= 0) {
+        val groups = clazz.getField("GROUPS").getInt(null)
+        val perGroup = clazz.getField("PER_GROUP").getInt(null)
+        if (groups <= 0 || perGroup <= 0) {
             null
         } else {
-            val sb = StringBuilder(count * 512)
-            for (i in 0 until count) {
-                val part = clazz.getField("$DEX_PAYLOAD_FIELD$i").get(null) as? String ?: ""
-                sb.append(part)
+            val pkg = DEX_PAYLOAD_CLASS.substringBeforeLast('.')
+            val sb = StringBuilder(groups * perGroup * 64)
+            for (g in 0 until groups) {
+                // 分片类与主类同包、包内可见,必须用全名 + 字段可见性放宽
+                val groupClazz = Class.forName("$pkg.D$g")
+                val n = groupClazz.getDeclaredField("N").apply { isAccessible = true }.getInt(null)
+                for (i in 0 until n) {
+                    val field = groupClazz.getDeclaredField("$DEX_PAYLOAD_FIELD$i").apply {
+                        isAccessible = true
+                    }
+                    sb.append(field.get(null) as? String ?: "")
+                }
             }
             android.util.Base64.decode(sb.toString(), android.util.Base64.NO_WRAP)
         }
     } catch (t: Throwable) {
+        android.util.Log.e(TAG, "读取 dex 载荷失败: ${t.message}", t)
         null
     }
 

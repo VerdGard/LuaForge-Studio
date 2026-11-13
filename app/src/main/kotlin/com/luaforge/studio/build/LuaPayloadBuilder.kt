@@ -281,6 +281,7 @@ object LuaPayloadBuilder {
 
         val className = DEX_PAYLOAD_CLASS.substringAfterLast('/')
         val packageName = DEX_PAYLOAD_CLASS.substringBeforeLast('/').replace('/', '.')
+        val groups = chunks.chunked(FIELDS_PER_CLASS)
 
         return buildString {
             appendLine("package $packageName;")
@@ -292,15 +293,47 @@ object LuaPayloadBuilder {
             appendLine("public final class $className {")
             appendLine("    private $className() {}")
             appendLine()
-            chunks.forEachIndexed { index, chunk ->
-                appendLine("    public static final String $DEX_PAYLOAD_FIELD$index = \"$chunk\";")
-            }
+            appendLine("    /** 分片类个数。 */")
+            appendLine("    public static final int GROUPS = ${groups.size};")
             appendLine()
-            appendLine("    /** 片段个数。 */")
-            appendLine("    public static final int COUNT = ${chunks.size};")
+            appendLine("    /** 每片字段上限(最后一片可能更少)。 */")
+            appendLine("    public static final int PER_GROUP = $FIELDS_PER_CLASS;")
             appendLine("}")
+            appendLine()
+            appendLine("/**")
+            appendLine(" * 载荷分片(第 0 片)。")
+            appendLine(" *")
+            appendLine(" * 载荷被拆成多个类而不是塞进单个类的常量池:class 文件里")
+            appendLine(" * `CONSTANT_Utf8_info` 单条上限 65535 字节,而 ECJ 在处理一个含大量")
+            appendLine(" * 长字符串常量的类时峰值内存显著高于把同样内容摊到多个小类。")
+            appendLine(" * 用一个类承载全部载荷时,512MB 堆内编译大项目容易 OOM。")
+            appendLine(" */")
+            groups.forEachIndexed { groupIndex, groupChunks ->
+                if (groupIndex > 0) appendLine()
+                appendLine("final class ${dexGroupClass(groupIndex)} {")
+                appendLine("    private ${dexGroupClass(groupIndex)}() {}")
+                appendLine()
+                groupChunks.forEachIndexed { fieldIndex, chunk ->
+                    appendLine(
+                        "    static final String $DEX_PAYLOAD_FIELD$fieldIndex = \"$chunk\";"
+                    )
+                }
+                appendLine()
+                appendLine("    static final int N = ${groupChunks.size};")
+                appendLine("}")
+            }
         }
     }
+
+    /**
+     * 第 [index] 个载荷分片类的**简单类名**。
+     *
+     * 与载荷主类同包,包内可见(不导出),读取端按名字反射取用。
+     */
+    fun dexGroupClass(index: Int): String = "D${index}"
+
+    /** 每个分片类承载的字符串常量条数。 */
+    const val FIELDS_PER_CLASS = 8
 
     /**
      * 单个字符串常量的最大长度。
