@@ -122,11 +122,13 @@ object ConsoleUtil {
             try {
                 val ok = state.LloadFile(path)
                 if (ok != 0) {
-                    val err = state.toString(-1)
+                    // 编译失败:把 Lua 的报错原文带出去
+                    val err = state.toString(-1) ?: "LloadFile 返回 $ok 但取不到错误信息"
                     state.pop(1)
-                    return@withCleanStack createResultTable(state, null, err)
+                    createResultTable(state, null, err)
+                } else {
+                    dumpTopAndWrite(state, File(path + "c"))
                 }
-                dumpTopAndWrite(state, File(path + "c"))
             } catch (e: Exception) {
                 createResultTable(state, null, "Internal error: ${e.message}")
             }
@@ -150,11 +152,12 @@ object ConsoleUtil {
                 val wrapped = prefix + raw + suffix
                 val ok = state.LloadBuffer(wrapped, File(path).name)
                 if (ok != 0) {
-                    val err = state.toString(-1)
+                    val err = state.toString(-1) ?: "LloadBuffer 返回 $ok 但取不到错误信息"
                     state.pop(1)
-                    return@withCleanStack createResultTable(state, null, err)
+                    createResultTable(state, null, err)
+                } else {
+                    dumpTopAndWrite(state, File(path + "c"))
                 }
-                dumpTopAndWrite(state, File(path + "c"))
             } catch (e: Exception) {
                 createResultTable(state, null, "Internal error: ${e.message}")
             }

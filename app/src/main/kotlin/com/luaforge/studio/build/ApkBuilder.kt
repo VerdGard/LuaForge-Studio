@@ -129,6 +129,20 @@ class ApkBuilder {
         // LuaState 单例实例
         private var sharedLuaState: LuaState? = null
 
+        /**
+         * 构建互斥锁。
+         *
+         * 构建**不是**可并发的操作:它复用同一个 `sharedLuaState`,还会在
+         * `cacheDir` 下用时间戳建工作目录、读写同一份 `core.apk` / `android.jar`
+         * 缓存。两次构建并行跑会互相破坏对方的 Lua 栈与中间产物 ——
+         * 典型症状是"先构建一次 dex 成功,紧接着构建 so 就在编译脚本这步
+         * 报 Lua文件编译失败: 未知错误",而项目源码完全正常。
+         *
+         * 这里用**进程级**锁串行化:后来的构建排队等待,而不是失败。
+         * 用 ReentrantLock 而非 synchronized,是为了后续能加超时/状态查询。
+         */
+        private val buildLock = java.util.concurrent.locks.ReentrantLock(true)
+
         // 获取共享的 LuaState 实例
         private fun getSharedLuaState(): LuaState {
             synchronized(this) {
@@ -212,6 +226,45 @@ class ApkBuilder {
              * 同样是追加参数,理由与 buildSlimEnabled 相同。
              */
             packageMode: PackageMode = PackageMode.PLAIN_ENC
+        ): String {
+            // 串行化:同一时刻只允许一个构建占用共享 LuaState 与缓存目录
+            buildLock.lock()
+            try {
+                return binLocked(
+                    context, mRootDir, projectPath, appName, packageName, versionName,
+                    versionCode, iconPath, permissions, isDebug, outputPath,
+                    minSdkVersion, targetSdkVersion, mavenDependencies, buildType,
+                    encryptEnabled, mergeDexEnabled, abiTarget, skipCompileFiles,
+                    buildSlimEnabled, packageMode
+                )
+            } finally {
+                buildLock.unlock()
+            }
+        }
+
+        /** [bin] 的实际实现(调用方已持有 [buildLock])。 */
+        private fun binLocked(
+            context: Context,
+            mRootDir: String,
+            projectPath: String,
+            appName: String,
+            packageName: String,
+            versionName: String,
+            versionCode: String,
+            iconPath: String?,
+            permissions: Array<String>?,
+            isDebug: Boolean,
+            outputPath: String,
+            minSdkVersion: Int,
+            targetSdkVersion: Int,
+            mavenDependencies: List<String>,
+            buildType: BuildType,
+            encryptEnabled: Boolean,
+            mergeDexEnabled: Boolean,
+            abiTarget: AbiTarget,
+            skipCompileFiles: List<String>,
+            buildSlimEnabled: Boolean,
+            packageMode: PackageMode
         ): String {
             LogCatcher.i("ApkBuilder", "开始构建APK")
             LogCatcher.i("ApkBuilder", "项目路径: $projectPath")
@@ -1064,6 +1117,10 @@ class ApkBuilder {
                 // 7. 复制项目文件到assets
                 stepNanos = BuildLogger.stepBegin(blog, "67 复制项目文件到 assets")
                 copyProjectToAssets(projectPath, assetsDir.absolutePath)
+                BuildLogger.stepEnd(
+                    blog, "67 复制项目文件到 assets", stepNanos,
+                    "files=${countFiles(assetsDir)}"
+                )
 
                 // 7.5 精简项目 libs/ 目录(开关关闭时零开销跳过)
                 if (buildSlimEnabled) {
@@ -1091,6 +1148,18 @@ class ApkBuilder {
                 // 9. 加密项目文件(未加密版跳过,保持明文)
                 stepNanos = BuildLogger.stepBegin(blog, "69 编译加密脚本", "encrypt=$encryptLua")
                 if (encryptLua) {
+                    // 加密前把共享 LuaState 恢复到干净状态。
+                    //
+                    // 这个 LuaState 在同一进程里被多次构建复用;上一次构建(尤其是
+                    // 不同的打包方式)可能在栈上留下残余,或让 registry 里累积了
+                    // 上一批 chunk。表现为"第一次构建成功、紧接着换模式再构建就报
+                    // Lua文件编译失败: 未知错误" —— 而源文件本身完全没问题。
+                    runCatching {
+                        if (!L.isClosed) {
+                            L.gc(LuaState.LUA_GCCOLLECT, 1)
+                            L.top = 0
+                        }
+                    }
                     encryptProjectFiles(L, assetsDir, skipCompileFiles)
                     BuildLogger.stepEnd(blog, "69 编译加密脚本", stepNanos)
                 } else {
@@ -1423,10 +1492,13 @@ class ApkBuilder {
                 intArrayOf(0, 0, 0, 0) // [luaEncrypted, alyEncrypted, luaFailed, alyFailed]
             encryptDirectoryRecursive(L, assetsDir, assetsDir, counters, skipSet)
 
-            LogCatcher.i(
-                "ApkBuilder",
-                "项目文件加密完成: Lua成功 ${counters[0]} 个, ALY成功 ${counters[1]} 个, Lua失败 ${counters[2]} 个, ALY失败 ${counters[3]} 个"
-            )
+            val summary =
+                "Lua成功 ${counters[0]} 个, ALY成功 ${counters[1]} 个, " +
+                    "Lua失败 ${counters[2]} 个, ALY失败 ${counters[3]} 个"
+            LogCatcher.i("ApkBuilder", "项目文件加密完成: $summary")
+            // 统计进构建日志:0 个成功 + 0 个失败 = "assets 里根本没有脚本",
+            // 这是区分"编译出错"和"根本没文件可编译"的唯一线索
+            BuildLogger.info(BuildLogger.active(), "加密统计: $summary")
         }
 
         // 递归加密目录
@@ -1538,9 +1610,23 @@ class ApkBuilder {
                     throw RuntimeException("Lua文件编译失败: ${errorMsg ?: "未知错误"}")
                 }
             } catch (e: Exception) {
-                // 捕获异常并重新抛出，停止构建进程
+                // 停止构建,但**必须把出问题的文件与原始原因写清楚**。
+                //
+                // 旧实现只抛 "加密Lua文件失败: <e.message>",而 e 往往就是
+                // 一个没有 message 的包装异常,最终日志里只剩
+                // "Lua文件编译失败: 未知错误" —— 既不知道是哪个文件,
+                // 也不知道 Lua 到底报了什么。这里改为带上相对路径、
+                // 文件大小与完整的 cause 链。
                 LogCatcher.e("ApkBuilder", "加密Lua文件异常: ${luaFile.absolutePath}", e)
-                throw RuntimeException("加密Lua文件失败: ${e.message}")
+                BuildLogger.error(
+                    BuildLogger.active(),
+                    "加密失败: ${luaFile.absolutePath} (${luaFile.length()}B)",
+                    e
+                )
+                throw RuntimeException(
+                    "加密Lua文件失败: ${luaFile.name} (${luaFile.length()}B) — ${describeChain(e)}",
+                    e
+                )
             }
         }
 
@@ -2068,6 +2154,37 @@ class ApkBuilder {
         }
 
         // 工具方法：复制目录
+        /**
+         * 把异常链压成一行可读文本。
+         *
+         * 构建失败信息常被层层包装(`RuntimeException("...失败: null")`),
+         * 单看最外层什么也看不出;这里把每一层的 message 都串起来。
+         */
+        private fun describeChain(t: Throwable): String {
+            val parts = ArrayList<String>(4)
+            var cur: Throwable? = t
+            var depth = 0
+            while (cur != null && depth < 5) {
+                val msg = cur.message
+                if (!msg.isNullOrBlank() && parts.none { it == msg }) {
+                    parts.add(msg)
+                }
+                cur = cur.cause
+                depth++
+            }
+            return if (parts.isEmpty()) t.javaClass.simpleName else parts.joinToString(" <- ")
+        }
+
+        /** 递归统计目录下的文件数(仅供构建日志展示规模)。 */
+        private fun countFiles(dir: File): Int {
+            val files = dir.listFiles() ?: return 0
+            var total = 0
+            for (f in files) {
+                total += if (f.isDirectory) countFiles(f) else 1
+            }
+            return total
+        }
+
         private fun copyDirectory(source: File, destination: File) {
             if (source.isDirectory) {
                 if (!destination.exists()) {
@@ -2408,13 +2525,19 @@ class ApkBuilder {
                 )
             }
 
+            val blog = BuildLogger.active()
             if (javaFiles.isEmpty()) {
                 LogCatcher.i("ApkBuilder", "没有可编译的 Java 文件，跳过 Java 编译")
+                BuildLogger.info(blog, "没有可编译的 Java 文件,跳过 Java 编译")
                 return
             }
 
             LogCatcher.i("ApkBuilder", "开始编译 Java 文件，共 ${javaFiles.size} 个")
             LogCatcher.i("ApkBuilder", "编译 classpath: $classpath")
+            BuildLogger.info(blog, "ECJ 输入: ${javaFiles.size} 个源文件")
+            javaFiles.forEach { f ->
+                BuildLogger.info(blog, "  - ${f.name} (${f.length()}B)")
+            }
 
             // 5. 创建临时输出目录
             val classOutputDir = File(workDir, "java_build_classes")
@@ -2433,6 +2556,12 @@ class ApkBuilder {
             args.add("-cp")
             args.add(classpath)
             args.add("-1.8")
+            // 关掉注解处理:项目里不可能有需要 APT 的源码,而 ECJ 默认会在
+            // 类路径上做一轮注解处理器发现 —— 载荷类的源文件有几百 KB,
+            // 这一轮扫描会显著拖慢编译,且在没有处理器时纯属浪费。
+            args.add("-proc:none")
+            // 只报告错误:项目源码的 warning 不该污染构建日志
+            args.add("-nowarn")
             javaFiles.forEach { file -> args.add(file.absolutePath) }
 
             try {
@@ -2444,9 +2573,13 @@ class ApkBuilder {
                 
                 if (!success) {
                     LogCatcher.e("ApkBuilder", "Java 编译失败，输出: $output, 错误: $error")
+                    BuildLogger.error(blog, "ECJ 编译失败")
+                    BuildLogger.info(blog, "stdout: $output")
+                    BuildLogger.info(blog, "stderr: $error")
                     throw RuntimeException("Java 编译失败，返回码: $success\n$error")
                 }
                 LogCatcher.i("ApkBuilder", "Java 编译成功")
+                BuildLogger.info(blog, "ECJ 编译成功")
             } catch (e: Exception) {
                 LogCatcher.e("ApkBuilder", "Java 编译异常", e)
                 throw RuntimeException("Java 编译失败: ${e.message}", e)
@@ -2469,6 +2602,7 @@ class ApkBuilder {
             try {
                 val dexOutputDir = File(workDir, "java_build_dex")
                 dexOutputDir.mkdirs()
+                BuildLogger.info(blog, "D8/R8 开始,输入 ${dexInputs.size} 个 jar")
 
                 val slim = BuildSlimmer.jarsToDex(
                     jars = dexInputs,

@@ -305,8 +305,15 @@ object LuaPayloadBuilder {
     /**
      * 单个字符串常量的最大长度。
      *
-     * class 文件里 `CONSTANT_Utf8_info.length` 是 u2,上限 65535。Base64 是
-     * 纯 ASCII,字符数即字节数;留出安全余量取 60000。
+     * class 文件里 `CONSTANT_Utf8_info.length` 是 u2,上限 **65535 字节**
+     * (注意是 UTF-8 字节数,不是字符数)。Base64 是纯 ASCII,字符数 == 字节数,
+     * 看似取 60000 就够。
+     *
+     * 但 ECJ 在写常量池时会做 modified-UTF-8 处理,并可能为长字面量建立
+     * 中间结构;实测 60000 的分块在 512MB 堆的进程内编译时容易触发 OOM 或
+     * 极长耗时(表现为构建卡在 Java 编译这一步、没有任何错误输出)。
+     * 取 24000 后单条常量只占上限的 37%,同时片段数增加对总量无影响
+     * (Base64 总长不变,只是切成更多字段)。
      */
-    private const val MAX_STRING_CHUNK = 60000
+    private const val MAX_STRING_CHUNK = 24000
 }
