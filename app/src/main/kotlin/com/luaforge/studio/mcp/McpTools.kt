@@ -768,14 +768,14 @@ object McpTools {
                 "analyze_imports" -> analyzeImports(context, args)
                 "list_widgets" -> listWidgets()
                 "list_project_libraries" -> listProjectLibraries(context, args)
-                "get_logs" -> getLogs(args)
+                "get_logs" -> getLogs(context, args)
                 "get_editor_logs" -> getEditorLogs(args)
                 "get_settings" -> getSettings()
                 "dump_screen" -> dumpScreen(args)
                 "capture_screen" -> captureScreen(context, args)
                 "check_screen" -> checkScreen(args)
-                "get_runtime_errors" -> getRuntimeErrors(args)
-                "clear_logs" -> clearLogs()
+                "get_runtime_errors" -> getRuntimeErrors(context, args)
+                "clear_logs" -> clearLogs(context)
                 "debugger_status" -> debuggerStatus(context, args)
                 "debugger_outputs" -> debuggerOutputs(context, args)
                 "debugger_clear" -> debuggerClear(context, args)
@@ -1871,8 +1871,10 @@ object McpTools {
         }
 
         if (capture.contains("errors") || capture.contains("log")) {
-            // 走 LogFileAccess 的解析:日志可能在外部目录,也可能回退到私有目录
-            val file = LogFileAccess.existingLogFile(context)
+            // 走 LogFileAccess 的解析:日志可能在外部目录,也可能回退到私有目录。
+            // 本函数没有 context 形参,用运行中的 activity 取;没有 activity 时
+            // 交给 LogFileAccess 在候选路径里自行挑选。
+            val file = LogFileAccess.existingLogFile(activity)
             if (file != null) {
                 val content = withContext(Dispatchers.IO) { readTailText(file, 512 * 1024) }
                 if (capture.contains("errors")) {
@@ -2053,7 +2055,7 @@ object McpTools {
         }
     }
 
-    private suspend fun getLogs(args: JSONObject): JSONObject {
+    private suspend fun getLogs(context: Context, args: JSONObject): JSONObject {
         val lines = args.optInt("lines", 200).coerceIn(1, 5000)
         val file = LogFileAccess.existingLogFile(context)
             ?: return errorResult("日志文件不存在(已检查外部与私有目录)")
@@ -2234,7 +2236,7 @@ object McpTools {
         }
     }
 
-    private suspend fun getRuntimeErrors(args: JSONObject): JSONObject {
+    private suspend fun getRuntimeErrors(context: Context, args: JSONObject): JSONObject {
         val lines = args.optInt("lines", 50).coerceIn(1, 2000)
         val file = LogFileAccess.existingLogFile(context)
             ?: return errorResult("日志文件不存在(已检查外部与私有目录)")
@@ -2259,7 +2261,7 @@ object McpTools {
         )
     }
 
-    private suspend fun clearLogs(): JSONObject = withContext(Dispatchers.IO) {
+    private suspend fun clearLogs(context: Context): JSONObject = withContext(Dispatchers.IO) {
         try {
             // 同时清空外部与私有两处,避免"清了外部、私有里还有旧内容"
             val targets = listOfNotNull(

@@ -381,7 +381,6 @@ object LogFileAccess {
             val file = candidateFiles().firstOrNull { it.exists() && it.length() > 0 }
                 ?: return ""
             var text = file.readText(Charsets.UTF_8)
-            var text = file.readText(Charsets.UTF_8)
             if (errorsOnly) {
                 text = text.lineSequence()
                     .filter { it.contains("[ERROR]") }
