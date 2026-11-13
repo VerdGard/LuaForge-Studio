@@ -1,5 +1,70 @@
 # 更新日志
 
+## 1.7.0
+
+- **构建产物命名规范化**:`名称_架构_构建类型.apk`
+  - 架构:`aut`(通用)/ `arm64-v8a` / `armeabi-v7a`
+  - 类型:`aut`(跟随项目)/ `debug` / `release`
+  - 同参数重复构建仍追加时间戳,不静默覆盖既有包
+- **新增两种打包方式**(与构建类型正交,构建对话框内选择)
+  - **普通加密**:脚本编译加密后作为独立文件保留(原有行为)
+  - **封装进 dex**:全部脚本合并为加密载荷,由构建期生成的 Java 类以字符串常量
+    承载,经 ECJ + D8 编入 `classes*.dex`;产物 `assets/` 中**不再有任何 `.lua`**
+  - **封装进 so**:载荷加密后追加到 `libluaforge_payload.so` 尾部(CRC32 校验),
+    运行时由该库自身从 ELF 尾部读回;产物中既无 `.lua` 也无独立数据文件
+  - 两种封装模式都在启动时把脚本还原到应用私有目录,再走既有的文件加载链,
+    因此 `require` / `loadlayout` / `settings.json` 等行为完全不变
+- **加密强度升级**
+  - 逐字节混淆由「固定 4 字节密钥 + 固定旋转」改为 **ChaCha20 密钥流**(20 轮)
+    + 位置相关的旋转量;密钥流按 64 字节块滚动、字符串段与指令段各自独立计数
+  - `ldump.c` / `lundump.c` / `decrypt.c` 统一 include 同一份 `lfprotect.h`,
+    读写两端由**同一份代码**保证互逆,不再靠人工维护两份实现
+  - 主密钥在 native 内二次派生并清零临时块,Java 侧全程接触不到密钥
+- **构建精简重构:支持真正裁剪 dex**
+  - 新增 `rewriteDexKeeping`:用 R8 重写 `libs/*.dex`,剔除与模板重复的**局部**类
+    (旧实现遇到局部重复只打警告,dex 实际一点没裁)
+  - R8 产出多个 dex 时保守放弃重写 —— 拆开后 `LuaDexLoader` 只会加载其中一个
+  - 载荷类加入 keep 白名单,避免精简把 dex 载荷裁空
+- **废除内置播放器及其控件**:移除 `ExoVideoView` / `SimpleVideoView` /
+  `MusicPlayerBar` / `ExoAudioPlayer`、`MediaFormats`,连同 Media3 依赖、
+  `BuiltinWidgets` 注册、布局助手条目、混淆 keep 规则与文档
+- **废除协同开发**:移除 `CollabClient` / `CollabManager` / `CollabRepo` /
+  `CollabServer` / `GitStore` 与协同页,以及 MCP 里的协同变更登记钩子
+- **废除设置中的「安全网络」与「日志」**
+  - 安全网络(网络请求拦截):移除 `NetworkApprovalManager`、core 的
+    `NetworkGate` / `NetworkInterceptor` 及其在 `Http` / `OkHttpUtil` /
+    `MavenDownloader` 的注入点
+  - 日志卡片与错误日志对话框移除,职责交给侧边栏「日志」页
+- **MCP 移入侧边栏,并新增「日志」页**
+  - 侧边栏顺序:项目 / 设置 / **MCP** / **日志** / 关于;MCP 条目名为「MCP」
+  - MCP 页与日志页**不带自己的 Scaffold/TopAppBar**,标题栏由主界面统一提供,
+    与设置、关于同一套外壳(早期版本会叠出两条标题栏)
+  - 日志页仿 [LogFox](https://github.com/F0x1d/LogFox):级别过滤(`>=` 语义)、
+    关键字与 tag 双路过滤、跟随最新 / 上滑自动暂停、暂停冻结视图、
+    展开异常栈、复制 / 分享 / 清空
+- **日志改为记录本程序的全部日志**(关键修复)
+  - 新增 `LogcatCollector`:以 `logcat --pid` 抓取**本进程全部** logcat 输出,
+    覆盖未埋点的代码路径(AndroidX、三方库、框架回调、`System.out`、未捕获异常)
+  - 三级降级:流式 logcat → `-d` 轮询 → 仅埋点,降级原因写入日志本身
+  - 修复日志**不刷新**:监听器统一在主线程回调并做去抖(Compose 状态只能在主线程改)
+  - 修复日志**启动即被清空**:改为追加 + 尾部截断,崩溃现场不再丢失
+  - 修复日志**写不进去**:外部路径不可写时自动回退到 `files/logs/`,
+    读取方在两条路径间取有内容的那个
+  - 同一条日志经埋点与 logcat 双路到达时按 1.5s 窗口去重,不会显示两遍
+  - 新增 MCP 工具 `get_editor_logs`(与日志页同源的结构化条目)
+- **移除全局工具 `UiUtil` / `ThemeUtil`**
+- **修复全局工具文档对话框的主题适配**
+  - 新增 `html/css/doc-theme.css` 主题层;预览页里硬编码的浅色全部改为 CSS 变量
+  - `MarkdownView` 按 `MaterialTheme.colorScheme` 注入配色并切换深色 hlsl token,
+    动态取色也能跟随;修掉 `loadFromAssets` 的 fd 泄漏与手工转义导致的文档空白
+- **新增全局工具 `FastIOUtil`**(C 语言实现的极速文件读写)
+  - 原生 `libfastio.so`:大文件 `mmap` + 一次 `memcpy` 读、`sendfile` 拷贝、
+    1 MiB 缓冲全量写(循环处理短写,不会静默截断)
+  - 提供 `readBytes` / `readText` / `readChunk` / `writeBytes` / `writeText` /
+    `writeBytesAtomic` / `copyFile` / `truncate` / `mkdirs` / `delete` 等
+  - 原生库不可用时自动退化为 Java 实现,接口与返回值不变
+
+
 ## 1.6.9
 
 - **新增:Lua 原生 Compose(内置桥,单一分发方式)**

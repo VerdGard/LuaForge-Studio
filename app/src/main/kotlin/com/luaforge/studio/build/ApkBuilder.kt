@@ -1060,6 +1060,19 @@ class ApkBuilder {
                         LogCatcher.i("ApkBuilder", "已删除 assets 中的 java 源文件目录")
                     }
                 } else {
+                    // dex 打包模式**依赖**这一步产物:载荷是作为 Java 类编进
+                    // dex 的,没有 android.jar 就编不出载荷类,打出来的 APK
+                    // 会既没有 .lua 也没有载荷,启动即失败。这里必须显式报错,
+                    // 不能像普通模式那样"跳过编译"了事。
+                    if (payloadForDex != null) {
+                        LogCatcher.e(
+                            "ApkBuilder",
+                            "dex 打包模式缺少 android.jar,无法生成载荷类",
+                            null
+                        )
+                        deleteDirectory(workDir)
+                        return null
+                    }
                     LogCatcher.w("ApkBuilder", "缺少 android.jar，跳过 Java 编译")
                 }
                 // ---------------------------------------------------------
@@ -1583,8 +1596,12 @@ class ApkBuilder {
             referencedModules: Set<String>,
             projectPath: String
         ) {
-            // 必须保留的文件集合
-            val mustKeepFiles = hashSetOf("libluajava.so")
+            // 必须保留的文件集合。
+            //
+            // libluaforge_payload.so 是 so 打包模式的**载荷容器**:它不会被任何
+            // 项目脚本 require,因此 isSoFileReferenced 永远判它"未引用"并把文件删掉
+            // —— 载荷随之消失,产物启动即找不到脚本。它必须无条件保留。
+            val mustKeepFiles = hashSetOf("libluajava.so", "libluaforge_payload.so")
 
             // 检查项目中是否使用了 LuaParserUtil，如果是则保留 libluaparse.so
             val projectDir = File(projectPath)

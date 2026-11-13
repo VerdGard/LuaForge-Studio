@@ -73,15 +73,55 @@ object LogCatcher {
      */
     @JvmStatic
     fun init(context: Context) {
-        android.util.Log.e("LogCatcher", "开始初始化日志系统...")
-        val repository = LogConfigRepository(context)
-        updateConfig(repository.getLogConfig())
+        // 让读取路径也能找到私有目录里的日志
+        LogFileAccess.attach(context)
+        // 日志开关不再由用户设置控制:日志页要"记录本程序所有日志",
+        // 而一个可被关掉的开关会让用户在关掉后再也拿不到任何现场
+        // (故障往往就发生在那之后)。保留字段只为兼容旧配置。
+        updateConfig(
+            LogConfigState(
+                isLogEnabled = true,
+                logFilePath = resolveLogFilePath(context),
+                isLoaded = true
+            )
+        )
 
-        // 清空日志文件内容（每次启动时）
-        clearLogFile()
+        // **不再清空日志文件**。
+        //
+        // 旧实现在每次启动时 truncate,结果:进程崩溃后重启,崩溃现场的日志
+        // 恰好被清掉 —— 最需要它的时刻什么都没有。现在改为追加 + 尾部截断
+        // (见 truncateIfNeeded),历史由用户主动清空。
+        i("LogCatcher", "日志系统初始化完成(追加模式,不清空历史)")
+    }
 
-        // 写入初始化日志
-        i("LogCatcher", "日志系统初始化完成，日志文件已清空并重新开始记录")
+    /**
+     * 选定日志文件路径。
+     *
+     * 历史写死在 `/storage/emulated/0/LuaForge-Studio/luaforge.log`。该路径在
+     * 用户尚未授予「所有文件访问权限」时**不可写**(Android 11+ 分存储),
+     * 于是所有日志静默丢失 —— 表现正是"日志页一直空"。
+     *
+     * 现在优先用应用私有目录(`filesDir/logs`),它一定可写、卸载即清、且不需要
+     * 任何权限;仅当外部目录确实可写时才继续沿用旧路径,保证与既有
+     * `luaforge.log` 的读取方(MCP `get_logs`、崩溃上报)保持兼容。
+     *
+     * @return 可写的日志文件绝对路径
+     */
+    private fun resolveLogFilePath(context: Context): String {
+        val legacy = File(LogFileAccess.LEGACY_LOG_FILE_PATH)
+        val legacyUsable = try {
+            val dir = legacy.parentFile
+            if (dir != null && !dir.exists()) dir.mkdirs()
+            dir != null && dir.exists() && dir.canWrite()
+        } catch (_: Throwable) {
+            false
+        }
+        if (legacyUsable) return legacy.absolutePath
+
+        // 回退到私有目录:一定可用
+        val fallback = LogFileAccess.privateLogFile(context)
+        fallback.parentFile?.mkdirs()
+        return fallback.absolutePath
     }
 
     /**
@@ -188,16 +228,14 @@ object LogCatcher {
         }
     }
 
-    private fun shouldLog(): Boolean {
-        val ready = isInitialized && logConfig.isLogEnabled
-        if (!ready) {
-            android.util.Log.w(
-                "LogCatcher",
-                "日志未就绪 - isInitialized: $isInitialized, isEnabled: ${logConfig.isLogEnabled}"
-            )
-        }
-        return ready
-    }
+    /**
+     * 是否应落盘。
+     *
+     * 只看是否完成初始化 —— 不再尊重 `isLogEnabled`。理由见 [init]:
+     * 日志是排障基础设施,不该提供"关掉"的开关;`isLogEnabled` 仅为兼容
+     * 旧配置字段而保留。
+     */
+    private fun shouldLog(): Boolean = isInitialized
 
     /**
      * 后台串行落盘线程。
@@ -279,8 +317,39 @@ object LogCatcher {
  */
 object LogFileAccess {
 
-    /** 与 LogCatcher / RuntimeLog 保持一致的日志路径。 */
-    const val LOG_FILE_PATH = "/storage/emulated/0/LuaForge-Studio/luaforge.log"
+    /** 传统日志路径(需要外部存储写权限)。 */
+    const val LEGACY_LOG_FILE_PATH = "/storage/emulated/0/LuaForge-Studio/luaforge.log"
+
+    /**
+     * 当前生效的日志路径。
+     *
+     * 保留为 `const` 会让"未授权时日志写不进去"这件事无从降级,所以这里
+     * 改成运行期解析,并把传统路径作为只读兼容入口。新代码请用
+     * [activeLogFile] / [readLog],不要直接拼路径。
+     */
+    @Deprecated("改用 activeLogFile(context)", ReplaceWith("activeLogFile(context)"))
+    const val LOG_FILE_PATH = LEGACY_LOG_FILE_PATH
+
+    /** 应用私有目录下的日志文件(一定可写,无需任何权限)。 */
+    fun privateLogFile(context: android.content.Context): File =
+        File(File(context.filesDir, "logs"), "luaforge.log")
+
+    /**
+     * 当前实际使用的日志文件。
+     *
+     * 解析顺序:外部路径可写 -> 用它;否则用私有目录。与 [LogCatcher] 的选择
+     * 保持一致,避免"写在一处、读在另一处"。
+     */
+    fun activeLogFile(context: android.content.Context): File {
+        val legacy = File(LEGACY_LOG_FILE_PATH)
+        val legacyUsable = try {
+            val dir = legacy.parentFile
+            dir != null && dir.exists() && dir.canWrite()
+        } catch (_: Throwable) {
+            false
+        }
+        return if (legacyUsable) legacy else privateLogFile(context)
+    }
 
     /**
      * 读取日志文本。
@@ -290,8 +359,9 @@ object LogFileAccess {
      */
     fun readLog(errorsOnly: Boolean = false, maxChars: Int = 200_000): String {
         return try {
-            val file = File(LOG_FILE_PATH)
-            if (!file.exists()) return ""
+            val file = candidateFiles().firstOrNull { it.exists() && it.length() > 0 }
+                ?: return ""
+            var text = file.readText(Charsets.UTF_8)
             var text = file.readText(Charsets.UTF_8)
             if (errorsOnly) {
                 text = text.lineSequence()
@@ -307,14 +377,44 @@ object LogFileAccess {
         }
     }
 
-    /** 清空日志文件内容(保留文件本身)。 */
-    fun clear(): Boolean {
-        return try {
-            val file = File(LOG_FILE_PATH)
-            if (file.exists()) file.writeText("", Charsets.UTF_8) else file.createNewFile()
-            true
+    /**
+     * 可能存放日志的文件列表(外部路径优先)。
+     *
+     * 读取方不该假定只有一处:用户可能在授权前用私有目录,授权后切到外部目录,
+     * 两个文件都可能有内容。读取时取第一个非空的。
+     */
+    private fun candidateFiles(): List<File> {
+        val out = mutableListOf(File(LEGACY_LOG_FILE_PATH))
+        try {
+            val ctx = currentAppContext
+            if (ctx != null) out.add(privateLogFile(ctx))
         } catch (_: Throwable) {
-            false
         }
+        return out
+    }
+
+    /** 由 [LogCatcher.init] 注入的应用 Context,供无参读取路径使用。 */
+    @Volatile
+    private var currentAppContext: android.content.Context? = null
+
+    /** 记录应用 Context(供读取旧路径之外的私有日志)。 */
+    internal fun attach(context: android.content.Context) {
+        currentAppContext = context.applicationContext
+    }
+
+    /** 清空所有候选日志文件(保留文件本身)。 */
+    fun clear(): Boolean {
+        var ok = false
+        for (file in candidateFiles()) {
+            try {
+                if (file.exists()) file.writeText("", Charsets.UTF_8) else {
+                    file.parentFile?.mkdirs()
+                    file.createNewFile()
+                }
+                ok = true
+            } catch (_: Throwable) {
+            }
+        }
+        return ok
     }
 }

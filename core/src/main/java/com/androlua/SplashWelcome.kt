@@ -58,11 +58,14 @@ class SplashWelcome : ComponentActivity() {
         luaMdDir = app.luaMdDir
         localDir = app.localDir
 
-        if (checkInfo()) {
-            checkAndStartUpdate()
-        } else {
-            startActivity()
-        }
+        // 无论版本是否变化都要走一次更新流程。
+        //
+        // `checkInfo()` 的返回值原本用来区分"升级了才需要解包 assets";
+        // 但 so / dex 模式下 main.lua 不在 assets 里,而可能被私有目录的清理
+        // (系统省空间、用户清除数据)抹掉 —— 只在升级时解包会让"项目不见了"。
+        // 解包本身覆盖写、幂等,重复执行没有副作用。
+        checkInfo()
+        checkAndStartUpdate()
     }
 
     private fun checkAndStartUpdate() {

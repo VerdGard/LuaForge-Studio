@@ -24,14 +24,28 @@ import java.util.Locale
  * 内存中维护定长环形缓冲,供 UI 与 MCP 直接消费;磁盘文本仍由原有通道负责,
  * 不改变 `luaforge.log` 的格式与外部契约。
  *
+ * ## 数据来源(三条,合并进同一个缓冲)
+ *
+ * 1. [LogCatcher] —— IDE 侧显式埋点(构建、MCP、设置等);
+ * 2. `RuntimeLog` —— core 侧 LuaActivity 的运行日志(经反射桥接);
+ * 3. **[LogcatCollector]** —— 本进程 logcat 全量抓取。
+ *
+ * 第 3 条是"记录本程序所有日志"的关键:前两条都是**被动埋点**,
+ * 没埋点的代码路径(AndroidX、三方库、框架回调、`System.out`)本来一条都进不来,
+ * 日志页因此经常看起来是空的。logcat 是所有 `Log.*` 输出的唯一汇聚点,
+ * 抓它才谈得上"全部"。
+ *
  * ## 边界
  *
- * - **只记录本编辑器自己的日志**:不读 logcat,不采集用户 APK 的运行日志
- *   (那属于调试控制台的职责,见 `console_logcat`);这正是"只记录本编辑器
- *   的日志"的要求。
+ * - 只采集**本进程**(`--pid`)的日志,不越权读其它应用 —— 这是合理的隐私边界,
+ *   也符合"记录本程序"的字面要求。
+ * - 用户 APK 运行时的日志属于调试控制台范畴,但它同样以本进程身份输出到
+ *   logcat,因此也会出现在这里(二者的 tag 不同,可过滤区分)。
  * - 缓冲有上限([MAX_ENTRIES]),超出后丢弃最旧的;UI 侧要长期留存请用导出。
- * - 全部方法线程安全:写入来自任意线程(含 native 回调后的 UI 线程),
- *   读取来自 Compose 重组与 MCP 的 IO 线程。
+ * - 全部方法线程安全:写入来自任意线程(含 native 回调、logcat 采集线程),
+ *   读取来自 Compose 重组与 MCP 的 IO 线程。监听器统一在主线程回调 ——
+ *   Compose 状态只能在主线程改,早期实现直接在写线程回调,导致日志页
+ *   在后台线程写入时**不刷新**。
  */
 object LogBuffer {
 
@@ -84,34 +98,80 @@ object LogBuffer {
     /** 每条新日志的监听器(日志页用它触发增量刷新)。 */
     private val listeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
 
+    /**
+     * 待执行的 UI 通知标记(去抖)。
+     *
+     * 必须声明在 [notifyListeners] 之前:Kotlin 对象属性按声明顺序初始化,
+     * 后置声明会让首次通知读到 null。
+     */
+    private val notifyPending = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** 主线程 Handler(懒建,避免每条日志都重新 new)。 */
+    private val mainHandler: android.os.Handler by lazy {
+        android.os.Handler(android.os.Looper.getMainLooper())
+    }
+
     private val TIME_FORMAT = object : ThreadLocal<SimpleDateFormat>() {
         override fun initialValue() = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
+    }
+
+    /**
+     * 去重窗口(毫秒)。
+     *
+     * 同一条日志可能经两条路进来:`LogCatcher` 直接调 [add],而它同时也会
+     * `android.util.Log.*`,后者被 [LogcatCollector] 从 logcat 读回来。
+     * 两条路的时间戳相差几毫秒,内容完全一致 —— 不去重就会每条日志显示两遍。
+     *
+     * 窗口取 1500ms:足够覆盖 logcat 的写入延迟(缓冲区刷新与采集线程调度),
+     * 又远小于"同一 tag 连续打相同内容"的真实间隔,不会误吞正常日志。
+     */
+    private const val DEDUP_WINDOW_MS = 1500L
+
+    /** 最近一次写入的 (tag|message|level) 与时间,用于去重。 */
+    private var lastDedupKey: String = ""
+    private var lastDedupAt: Long = 0L
+
+    /**
+     * 判断是否与最近一条重复。
+     *
+     * 只比对**最近一条**:重复日志总是相邻到达的,维护全量索引既没必要
+     * 也会让内存随日志量增长。
+     */
+    private fun isDuplicateLocked(level: Level, tag: String, message: String): Boolean {
+        val key = "$level\u0000$tag\u0000$message"
+        val now = System.currentTimeMillis()
+        val dup = key == lastDedupKey && (now - lastDedupAt) < DEDUP_WINDOW_MS
+        if (!dup) {
+            lastDedupKey = key
+            lastDedupAt = now
+        }
+        return dup
     }
 
     /** 追加一条日志。 */
     @JvmStatic
     fun add(level: Level, tag: String, message: String, throwable: Throwable? = null, source: String = "ide") {
         val entry = synchronized(lock) {
-            val e = Entry(
-                id = nextId++,
-                timestamp = System.currentTimeMillis(),
-                level = level,
-                tag = tag,
-                message = message,
-                throwable = throwable?.let { it.stackTraceToString() },
-                source = source
-            )
-            if (entries.size >= MAX_ENTRIES) entries.removeFirst()
-            entries.addLast(e)
-            e
-        }
-        // 监听器异常不能影响日志写入
-        listeners.forEach {
-            try {
-                it()
-            } catch (_: Throwable) {
+            // 去重判定必须在锁内:lastDedupKey/lastDedupAt 是共享可变状态,
+            // 放到锁外会让 logcat 线程与 IDE 线程同时判定为"不重复"而双写。
+            if (isDuplicateLocked(level, tag, message)) {
+                null
+            } else {
+                val e = Entry(
+                    id = nextId++,
+                    timestamp = System.currentTimeMillis(),
+                    level = level,
+                    tag = tag,
+                    message = message,
+                    throwable = throwable?.let { it.stackTraceToString() },
+                    source = source
+                )
+                if (entries.size >= MAX_ENTRIES) entries.removeFirst()
+                entries.addLast(e)
+                e
             }
-        }
+        } ?: return
+        notifyListeners()
         entry
     }
 
@@ -134,22 +194,63 @@ object LogBuffer {
     fun addFromRuntime(levelText: String, tag: String, message: String, timestamp: Long) {
         val level = Level.fromLabel(levelText)
         val entry = synchronized(lock) {
-            val e = Entry(
-                id = nextId++,
-                timestamp = timestamp,
-                level = level,
-                tag = tag,
-                message = message,
-                source = "runtime"
-            )
-            if (entries.size >= MAX_ENTRIES) entries.removeFirst()
-            entries.addLast(e)
-            e
+            // 与 add() 同样去重:RuntimeLog 也会调 android.util.Log,
+            // 那条又会经 logcat 采集回来。
+            if (isDuplicateLocked(level, tag, message)) {
+                null
+            } else {
+                val e = Entry(
+                    id = nextId++,
+                    timestamp = timestamp,
+                    level = level,
+                    tag = tag,
+                    message = message,
+                    source = "runtime"
+                )
+                if (entries.size >= MAX_ENTRIES) entries.removeFirst()
+                entries.addLast(e)
+                e
+            }
+        } ?: return
+        notifyListeners()
+    }
+
+    /**
+     * 通知所有观察者,统一切到主线程。
+     *
+     * Compose 的 `mutableStateOf` 只能在主线程改;日志写入却来自任意线程
+     * (logcat 采集线程、native 回调、IO 协程)。若直接在写线程回调,
+     * 观察者更新 `revision` 会因线程约束被丢弃或抛异常,表现就是
+     * "日志一直在写,页面一直不动"。
+     *
+     * 合并策略:用 [notifyPending] 做去抖 —— 日志密集写入时(如构建)每行都
+     * post 一次会让主线程被消息塞满,这里保证同一时刻最多挂一个待执行通知。
+     */
+    private fun notifyListeners() {
+        if (listeners.isEmpty()) return
+        if (!notifyPending.compareAndSet(false, true)) return
+
+        val postOk = try {
+            mainHandler.post {
+                notifyPending.set(false)
+                listeners.forEach {
+                    try {
+                        it()
+                    } catch (_: Throwable) {
+                    }
+                }
+            }
+        } catch (_: Throwable) {
+            false
         }
-        listeners.forEach {
-            try {
-                it()
-            } catch (_: Throwable) {
+        if (!postOk) {
+            // 主线程 Looper 不可用(单元测试等):同步回调兜底
+            notifyPending.set(false)
+            listeners.forEach {
+                try {
+                    it()
+                } catch (_: Throwable) {
+                }
             }
         }
     }
@@ -214,12 +315,7 @@ object LogBuffer {
     @JvmStatic
     fun clear() {
         synchronized(lock) { entries.clear() }
-        listeners.forEach {
-            try {
-                it()
-            } catch (_: Throwable) {
-            }
-        }
+        notifyListeners()
     }
 
     /** 注册刷新回调;返回注销函数。 */
@@ -264,9 +360,7 @@ object LogBuffer {
     @JvmOverloads
     fun backfillFromFile(maxLines: Int = 2000) {
         try {
-            val file = File(LogFileAccess.LOG_FILE_PATH)
-            if (!file.exists() || file.length() == 0L) return
-
+            // 走 readLog 的多路径解析:日志可能落在外部目录,也可能落在私有目录
             val text = LogFileAccess.readLog(maxChars = 512 * 1024)
             if (text.isBlank()) return
 
@@ -331,6 +425,44 @@ object LogBuffer {
     fun install(context: Context) {
         // 引导一次磁盘历史回填,让启动即可查看上次会话
         backfillFromFile()
+
+        // 启动本进程 logcat 全量采集 —— 这是"记录本程序所有日志"的来源。
+        // 放在回填之后:采集器自身的第一条诊断日志不应被历史覆盖顺序打乱。
+        LogcatCollector.start(context)
+
+        // 未捕获异常也进缓冲:否则崩溃前的上下文只剩 logcat 里的框架打印
+        installCrashHook()
+
         android.util.Log.i("LogBuffer", "日志缓冲已就绪(${size()} 条历史)")
+    }
+
+    /**
+     * 把未捕获异常也写入缓冲。
+     *
+     * 只做"旁路记录",不替换系统默认处理器 —— 崩溃上报由 CrashManager 负责,
+     * 两者职责分开,避免互相吞掉对方的信息。
+     */
+    private fun installCrashHook() {
+        val existing = Thread.getDefaultUncaughtExceptionHandler()
+        if (existing is BridgingHandler) return
+        Thread.setDefaultUncaughtExceptionHandler(BridgingHandler(existing))
+    }
+
+    /** 未捕获异常的记录转发器。 */
+    private class BridgingHandler(
+        private val delegate: Thread.UncaughtExceptionHandler?
+    ) : Thread.UncaughtExceptionHandler {
+        override fun uncaughtException(thread: Thread, throwable: Throwable) {
+            try {
+                addError(
+                    "Uncaught",
+                    "线程 ${thread.name} 未捕获异常: ${throwable.javaClass.name}",
+                    throwable
+                )
+            } catch (_: Throwable) {
+            }
+            // 交回原处理器(通常是系统默认或 CrashManager),保持崩溃行为不变
+            delegate?.uncaughtException(thread, throwable)
+        }
     }
 }

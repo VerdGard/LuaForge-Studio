@@ -93,7 +93,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.res.ResourcesCompat
@@ -2250,7 +2249,7 @@ fun DarkModeOption(
 }
 
 // ======================================================================
-// 设置页辅助组件(MCP 地址行与剪贴板)
+// 设置页辅助组件(剪贴板)
 // ======================================================================
 
 /** 复制文本到系统剪贴板;系统服务不可用时静默忽略。 */
@@ -2263,61 +2262,4 @@ private fun copyToClipboard(context: Context, label: String, text: String) {
     }
 }
 
-/**
- * MCP 服务地址行:等宽字体展示地址,尾部提供一键复制按钮。
- *
- * 回环地址(127.0.0.1 / ::1)与局域网地址用不同标签区分 —— 前者只能在本机
- * 访问(MCP 客户端跑同一台设备时用它),后者给同一网络下的其他设备用。
- * 不分清楚的话用户常拿局域网地址去配本机客户端,结果连不上。
- */
-@Composable
-fun EndpointRow(
-    address: String,
-    onCopy: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 12.dp, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            val isLoopback = address.contains("127.0.0.1") || address.contains("[::1]")
-            Text(
-                text = address,
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(vertical = 10.dp)
-            )
-            Text(
-                text = stringResource(
-                    if (isLoopback) R.string.settings_mcp_endpoint_local
-                    else R.string.settings_mcp_endpoint_lan
-                ),
-                style = MaterialTheme.typography.labelSmall,
-                color = if (isLoopback) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 6.dp)
-            )
-            IconButton(onClick = onCopy) {
-                Icon(
-                    imageVector = Icons.Filled.ContentCopy,
-                    contentDescription = stringResource(R.string.settings_mcp_copy_address),
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        }
-    }
-}
+

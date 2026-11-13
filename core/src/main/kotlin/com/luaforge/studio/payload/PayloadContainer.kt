@@ -157,7 +157,7 @@ object PayloadContainer {
     // ------------------------------------------------------------------
 
     /** dex 模式生成的类全名(与构建侧 LuaPayloadBuilder.DEX_PAYLOAD_CLASS 对应)。 */
-    private const val DEX_PAYLOAD_CLASS = "com.luaforge.studio.payload.SoPayloadData"
+    private const val DEX_PAYLOAD_CLASS = "com.luaforge.studio.payload.DexPayloadData"
 
     /** dex 模式字段名前缀。 */
     private const val DEX_PAYLOAD_FIELD = "d"

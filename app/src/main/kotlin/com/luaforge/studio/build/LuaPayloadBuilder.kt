@@ -214,9 +214,10 @@ object LuaPayloadBuilder {
      * - 载荷也不是独立的数据文件,`aapt`/`assets` 里查不到;
      * - 反编译 dex 才能拿到载荷,且载荷本身还是加密的。
      *
-     * 类名刻意不带 `luaforge` 前缀,避免被"按包名找载荷"的脚本直接定位。
+     * 类名不含 payload/lua 等字样,避免被"按名字找载荷"的脚本直接定位;
+     * 与 so 模式的容器类分开命名,便于在日志里区分两种模式。
      */
-    const val DEX_PAYLOAD_CLASS = "com/luaforge/studio/payload/SoPayloadData"
+    const val DEX_PAYLOAD_CLASS = "com/luaforge/studio/payload/DexPayloadData"
 
     /** 生成类里的字段名(同样不体现用途)。 */
     private const val DEX_PAYLOAD_FIELD = "d"

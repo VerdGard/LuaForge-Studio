@@ -149,7 +149,17 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 | `wait_for_text` | 轮询等待界面出现(或消失)指定文本,用于运行后确认界面就绪 | `text` **必填**、`absent`、`timeoutMs`(默认 10000)、`intervalMs`(默认 300) |
 | `get_runtime_errors` | 读取日志中的运行时错误 | `lines`(默认 50) |
 | `clear_logs` | 清空 `luaforge.log` | — |
-| `get_logs` | 读取应用日志末尾内容 | `lines`(默认 200) |
+| `get_logs` | 读取应用日志末尾内容(磁盘文本) | `lines`(默认 200) |
+| `get_editor_logs` | 读取**编辑器结构化日志**(与侧边栏「日志」页同源):级别 / tag / 正文 / 异常栈,可按级别与关键字过滤 | `level`、`tag`、`query`、`limit`(默认 200) |
+
+`get_editor_logs` 与 `get_logs` 的区别:
+
+- `get_logs` 读 `luaforge.log` 的**原始文本尾部**,调用方需自行切分与匹配级别;
+- `get_editor_logs` 读内存里的**结构化条目**,级别是枚举而非字符串,
+  可按 `>= level` 精确过滤(不会把正文里提到 ERROR 的 INFO 行误判为错误)。
+
+两者的数据都涵盖**本进程的全部日志**:IDE 埋点(`LogCatcher`)、core 运行时
+(`RuntimeLog`),以及经 logcat 采集到的三方库/框架输出。
 
 ### 调试浮窗(debugger.lua)
 
@@ -248,7 +258,9 @@ compile_file keepOutput=false   # 编译验证,成功后自动清理产物
 - 监听 `0.0.0.0`(所有网卡),因此回环地址与局域网地址都可访问;服务随应用进程存活,退出应用即停止
 - 回环地址始终可用;局域网地址仅在设备有非回环 IPv4 时出现
 - 勾选“需要访问令牌”后可限制访问来源
-- 日志文件:`/storage/emulated/0/LuaForge-Studio/luaforge.log`
+- 日志文件:`/storage/emulated/0/LuaForge-Studio/luaforge.log`;
+  该外部路径不可写时(未授予文件权限)自动回退到应用私有目录
+  `files/logs/luaforge.log`,读取方会自动在两者间取有内容的那个
 
 ## 7. 已知限制
 

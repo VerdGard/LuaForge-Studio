@@ -630,7 +630,8 @@
 <string name="code_editor_terminal">终端</string>
 
     <!-- MCP 服务 -->
-    <string name="settings_mcp">MCP 服务</string>
+    <string name="settings_mcp">MCP</string>
+    <string name="settings_mcp_service">MCP 服务</string>
     <string name="settings_mcp_enable">启用 MCP 服务</string>
     <string name="settings_mcp_enable_desc">开放编辑器能力(编写代码、调试运行、构建)给 MCP 客户端</string>
     <string name="settings_mcp_port">监听端口</string>

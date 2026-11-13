@@ -629,7 +629,8 @@
 <string name="code_editor_terminal">Terminal</string>
 
     <!-- MCP service -->
-    <string name="settings_mcp">MCP Service</string>
+    <string name="settings_mcp">MCP</string>
+    <string name="settings_mcp_service">MCP Service</string>
     <string name="settings_mcp_enable">Enable MCP Service</string>
     <string name="settings_mcp_enable_desc">Expose editor capabilities (write code, debug run, build) to MCP clients</string>
     <string name="settings_mcp_port">Listen Port</string>

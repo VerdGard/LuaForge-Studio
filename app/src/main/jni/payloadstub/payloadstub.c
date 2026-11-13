@@ -45,8 +45,12 @@
 #include "lfprotect.h"
 
 /* 尾部索引 */
+/* 魔数固定 6 字节,不含结尾 NUL —— 与构建侧
+ * LuaPayloadBuilder.PAYLOAD_MAGIC 的字节数严格一致。
+ * 早期写成 7(含 NUL)依赖 trailer 数组零初始化才碰巧匹配,
+ * 一旦索引字段布局变化就会静默失配。 */
 #define PAYLOAD_MAGIC       "LFPKPAY"
-#define PAYLOAD_MAGIC_LEN   7
+#define PAYLOAD_MAGIC_LEN   6
 #define PAYLOAD_TRAILER_LEN 32
 
 /* 载荷段专用 counter 基,与构建侧保持一致 */
