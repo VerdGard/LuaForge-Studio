@@ -341,6 +341,25 @@ object McpTools {
 
         tools.put(
             tool(
+                "list_build_logs",
+                "列出每次构建的独立日志文件(按秒命名),最新在前",
+                obj("limit" to intProp("最多返回条数,默认 20"))
+            )
+        )
+
+        tools.put(
+            tool(
+                "read_build_log",
+                "读取一次构建的完整过程日志(逐步耗时 + 失败处堆栈);不传 path 则读最近一次",
+                obj(
+                    "path" to strProp("日志文件名或绝对路径,缺省为最近一次构建"),
+                    "maxChars" to intProp("最多读取字符数,默认 200000")
+                )
+            )
+        )
+
+        tools.put(
+            tool(
                 "get_editor_logs",
                 "读取编辑器自身日志的结构化条目(与侧边栏「日志」页同源):" +
                     "可按级别/标签/关键字过滤,返回级别、tag、正文与异常栈",
@@ -770,6 +789,8 @@ object McpTools {
                 "list_project_libraries" -> listProjectLibraries(context, args)
                 "get_logs" -> getLogs(context, args)
                 "get_editor_logs" -> getEditorLogs(args)
+                "list_build_logs" -> listBuildLogs(context, args)
+                "read_build_log" -> readBuildLog(context, args)
                 "get_settings" -> getSettings()
                 "dump_screen" -> dumpScreen(args)
                 "capture_screen" -> captureScreen(context, args)
@@ -2083,6 +2104,89 @@ object McpTools {
      * 「日志」页同源的 [LogBuffer],已经是结构化字段,调用方不必再做行切分
      * 与 `[ERROR]` 子串匹配 —— 后者会把正文里提到 ERROR 的 INFO 行也判成错误。
      */
+    /** 构建日志目录(与 ApkBuilder 写入口同一处解析)。 */
+    private fun buildLogDir(context: Context): File =
+        com.luaforge.studio.build.BuildLogger.logDir(context)
+
+    /**
+     * 列出每次构建的独立日志。
+     *
+     * 构建日志按 `build_yyyy-MM-dd_HH-mm-ss.log` 命名,**文件名本身即时间**,
+     * 因此倒序文件名就是时间倒序 —— 不需要解析内容、也不依赖文件系统时间
+     * (某些 ROM 上 mtime 精度只有秒甚至更粗,同一秒的多次构建会乱序)。
+     */
+    private suspend fun listBuildLogs(context: Context, args: JSONObject): JSONObject =
+        withContext(Dispatchers.IO) {
+            val limit = args.optInt("limit", 20).coerceIn(1, 500)
+            val dir = buildLogDir(context)
+            if (!dir.isDirectory) {
+                return@withContext textResult(
+                    JSONObject().put("dir", dir.absolutePath)
+                        .put("count", 0).put("files", JSONArray()).toString(2)
+                )
+            }
+            val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".log") }
+                ?.sortedByDescending { it.name }
+                ?: emptyList()
+
+            val arr = JSONArray()
+            files.take(limit).forEach { f ->
+                arr.put(
+                    JSONObject()
+                        .put("name", f.name)
+                        .put("path", f.absolutePath)
+                        .put("size", f.length())
+                        .put("modified", f.lastModified())
+                )
+            }
+            textResult(
+                JSONObject()
+                    .put("dir", dir.absolutePath)
+                    .put("count", files.size)
+                    .put("files", arr)
+                    .toString(2)
+            )
+        }
+
+    /**
+     * 读取一次构建的过程日志。
+     *
+     * 未指定 path 时读最近一次 —— 这正是"构建刚失败、想立刻看堆栈"的主路径。
+     */
+    private suspend fun readBuildLog(context: Context, args: JSONObject): JSONObject =
+        withContext(Dispatchers.IO) {
+            val maxChars = args.optInt("maxChars", 200_000).coerceIn(1000, 4_000_000)
+            val dir = buildLogDir(context)
+            val raw = args.optString("path", "")
+            val file = if (raw.isBlank()) {
+                dir.listFiles { f -> f.isFile && f.name.endsWith(".log") }
+                    ?.maxByOrNull { it.name }
+            } else {
+                val direct = File(raw)
+                if (direct.isAbsolute) direct
+                else dir.listFiles { f -> f.name == raw }?.firstOrNull() ?: File(dir, raw)
+            }
+
+            if (file == null || !file.isFile) {
+                return@withContext errorResult("构建日志不存在(目录: ${dir.absolutePath})")
+            }
+            if (!isAllowed(context, file)) {
+                return@withContext errorResult("路径不在允许范围内: ${file.absolutePath}")
+            }
+
+            var text = file.readText(Charsets.UTF_8)
+            if (text.length > maxChars) {
+                text = "...(前部已省略)\n" + text.takeLast(maxChars)
+            }
+            textResult(
+                JSONObject()
+                    .put("path", file.absolutePath)
+                    .put("size", file.length())
+                    .put("content", text)
+                    .toString(2)
+            )
+        }
+
     private suspend fun getEditorLogs(args: JSONObject): JSONObject {
         val levelText = args.optString("level", "VERBOSE").uppercase(Locale.ROOT)
         val minLevel = runCatching { LogBuffer.Level.valueOf(levelText) }
@@ -2439,6 +2543,8 @@ object McpTools {
         roots.add(runCatching { File(LOG_FILE_PATH).parentFile?.canonicalPath }.getOrNull() ?: "/storage/emulated/0/LuaForge-Studio")
         // 日志回退到私有目录时,MCP 也要能清理它(否则 clear_logs 对其无效)
         roots.add(runCatching { File(context.filesDir, "logs").canonicalPath }.getOrNull() ?: "")
+        // 构建日志目录(可能在外部,也可能回退到私有)
+        roots.add(runCatching { buildLogDir(context).canonicalPath }.getOrNull() ?: "")
         roots.addAll(extraAllowedDirs)
         return roots.any { root ->
             val normalized = runCatching { File(root).canonicalPath }.getOrElse { root }.trimEnd('/')

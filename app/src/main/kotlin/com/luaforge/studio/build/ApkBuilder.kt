@@ -239,17 +239,43 @@ class ApkBuilder {
 
             var unsignedApkPath: String? = null
 
+            // 本次构建的独立日志(逐步 + 堆栈),与全局 luaforge.log 分开
+            val blog = BuildLogger.start(context, "$appName -> $outputPath")
+            BuildLogger.info(blog, "packageName=$packageName versionName=$versionName versionCode=$versionCode")
+            BuildLogger.info(blog, "minSdk=$minSdkVersion targetSdk=$targetSdkVersion isDebug=$isDebug")
+            BuildLogger.info(blog, "buildType=$buildType packageMode=$packageMode encryptLua=$encryptLua")
+            BuildLogger.info(
+                blog,
+                "mergeDex=$mergeDexEnabled abi=$abiTarget buildSlim=$buildSlimEnabled " +
+                    "skipCompile=${skipCompileFiles.size} mavenDeps=${mavenDependencies.size}"
+            )
+            BuildLogger.info(
+                blog,
+                "memory max=${Runtime.getRuntime().maxMemory() / 1024 / 1024}MB " +
+                    "used=${(Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) / 1024 / 1024}MB"
+            )
+            val buildStartNanos = System.nanoTime()
+
             try {
                 // 1. 确保输出目录存在
+                var stepNanos = BuildLogger.stepBegin(blog, "10 准备输出目录", outputPath)
                 val outputFile = File(outputPath)
                 val outputDir = outputFile.parentFile
                 outputDir?.takeIf { !it.exists() }?.mkdirs()
+                BuildLogger.stepEnd(blog, "10 准备输出目录", stepNanos)
 
                 // 2. 获取核心APK路径（从assets复制到缓存）
+                stepNanos = BuildLogger.stepBegin(blog, "20 提取 core.apk")
                 val coreApkPath = extractCoreApkToCache(context)
                 if (coreApkPath == null) {
+                    BuildLogger.stepFail(blog, "20 提取 core.apk", null, "extractCoreApkToCache 返回 null")
+                    BuildLogger.finish(blog)
                     return "error: 无法提取核心APK文件"
                 }
+                BuildLogger.stepEnd(
+                    blog, "20 提取 core.apk", stepNanos,
+                    "size=${File(coreApkPath).length()}B"
+                )
 
                 // 对权限进行预处理，自动补全系统权限前缀
                 val processedPermissions = permissions?.map { perm ->
@@ -261,6 +287,7 @@ class ApkBuilder {
                 }?.toTypedArray()
 
                 // 3. 修改AndroidManifest.xml
+                stepNanos = BuildLogger.stepBegin(blog, "30 修改 AndroidManifest.xml")
                 val tempApkPath = modifyAndroidManifest(
                     context,
                     coreApkPath,
@@ -277,17 +304,23 @@ class ApkBuilder {
                 )
 
                 if (tempApkPath == null) {
+                    BuildLogger.stepFail(blog, "30 修改 AndroidManifest.xml", null, "modifyAndroidManifest 返回 null")
+                    BuildLogger.finish(blog)
                     return "error: 修改AndroidManifest.xml失败"
                 }
+                BuildLogger.stepEnd(blog, "30 修改 AndroidManifest.xml", stepNanos)
 
                 // 4. 下载 Maven JAR 依赖
+                stepNanos = BuildLogger.stepBegin(blog, "40 处理 Maven 依赖", "count=${mavenDependencies.size}")
                 val mavenJars = processMavenJarDependencies(context, mavenDependencies)
+                BuildLogger.stepEnd(blog, "40 处理 Maven 依赖", stepNanos, "jars=${mavenJars.size}")
 
                 // 5. 生成未签名APK的临时路径
                 val unsignedApkFile = File(outputDir, "unsigned_${System.currentTimeMillis()}.apk")
                 unsignedApkPath = unsignedApkFile.absolutePath
 
                 // 6. 复制项目文件到临时APK（生成未签名APK）
+                stepNanos = BuildLogger.stepBegin(blog, "60 打入项目文件并生成未签名 APK")
                 unsignedApkPath = addProjectFilesToApk(
                     context,
                     tempApkPath,
@@ -305,14 +338,21 @@ class ApkBuilder {
                 )
 
                 if (unsignedApkPath == null) {
+                    BuildLogger.stepFail(blog, "60 打入项目文件并生成未签名 APK", null, "addProjectFilesToApk 返回 null")
+                    BuildLogger.finish(blog)
                     return "error: 添加项目文件到APK失败"
                 }
+                BuildLogger.stepEnd(
+                    blog, "60 打入项目文件并生成未签名 APK", stepNanos,
+                    "size=${File(unsignedApkPath!!).length()}B"
+                )
 
                 // 7. 清理临时文件
                 File(tempApkPath).delete()
                 File(coreApkPath).delete()
 
                 // 8. 对未签名APK进行签名
+                stepNanos = BuildLogger.stepBegin(blog, "80 zipalign + 签名")
                 val signedApkPath =
                     signApkWithDefaultKey(context, unsignedApkPath, outputPath, targetSdkVersion)
 
@@ -320,14 +360,33 @@ class ApkBuilder {
                 File(unsignedApkPath).delete()
 
                 if (signedApkPath == null) {
+                    BuildLogger.stepFail(blog, "80 zipalign + 签名", null, "signApkWithDefaultKey 返回 null")
+                    BuildLogger.finish(blog)
                     return "error: APK签名失败"
                 }
+                BuildLogger.stepEnd(
+                    blog, "80 zipalign + 签名", stepNanos,
+                    "size=${File(signedApkPath).length()}B"
+                )
 
                 LogCatcher.i("ApkBuilder", "APK构建并签名成功: $signedApkPath")
+                BuildLogger.info(
+                    blog,
+                    "构建成功: 总耗时 ${(System.nanoTime() - buildStartNanos) / 1_000_000}ms"
+                )
+                BuildLogger.info(blog, "产物: $signedApkPath")
+                BuildLogger.finish(blog)
                 return signedApkPath
 
             } catch (e: Exception) {
                 LogCatcher.e("ApkBuilder", "构建APK失败", e)
+                // 完整堆栈进构建日志:这是"定位到堆栈"的主要落点
+                BuildLogger.error(
+                    blog,
+                    "构建抛出异常,总耗时 ${(System.nanoTime() - buildStartNanos) / 1_000_000}ms",
+                    e
+                )
+                BuildLogger.finish(blog)
 
                 // 清理临时文件
                 unsignedApkPath?.let { File(it).delete() }
@@ -935,9 +994,12 @@ class ApkBuilder {
             minSdkVersion: Int = 21
         ): String? {
             val L = getSharedLuaState()
+            // 复用 bin() 开启的会话;独立调用(如 MCP)时 active 为 null,记录自动跳过
+            val blog = BuildLogger.active()
 
             try {
                 // 1. 创建临时工作目录
+                var stepNanos = BuildLogger.stepBegin(blog, "61 解压模板到工作目录")
                 val workDir = File(context.cacheDir, "apk_work_${System.currentTimeMillis()}")
                 if (!workDir.exists()) {
                     workDir.mkdirs()
@@ -945,6 +1007,7 @@ class ApkBuilder {
 
                 // 2. 解压临时APK
                 unzipFile(tempApkPath, workDir.absolutePath)
+                BuildLogger.stepEnd(blog, "61 解压模板到工作目录", stepNanos, "dir=$workDir")
 
                 // 2.5 收集模板自带类,供构建精简做重复类剔除
                 //     解压后的 workDir 根目录就是模板的 classes*.dex,直接读比再开一遍
@@ -968,7 +1031,12 @@ class ApkBuilder {
                 }
 
                 // 3. 递归分析项目文件和库文件，获取所有引用的模块
+                stepNanos = BuildLogger.stepBegin(blog, "63 分析脚本引用模块")
                 val referencedModules = recursivelyAnalyzeModules(projectPath, workDir)
+                BuildLogger.stepEnd(
+                    blog, "63 分析脚本引用模块", stepNanos,
+                    "modules=${referencedModules.size}"
+                )
                 LogCatcher.i(
                     "ApkBuilder",
                     "总共找到 ${referencedModules.size} 个引用的模块: $referencedModules"
@@ -994,6 +1062,7 @@ class ApkBuilder {
                 }
 
                 // 7. 复制项目文件到assets
+                stepNanos = BuildLogger.stepBegin(blog, "67 复制项目文件到 assets")
                 copyProjectToAssets(projectPath, assetsDir.absolutePath)
 
                 // 7.5 精简项目 libs/ 目录(开关关闭时零开销跳过)
@@ -1020,15 +1089,19 @@ class ApkBuilder {
                 applyBuildSettingsOverrides(assetsDir, buildType.debugOverride)
 
                 // 9. 加密项目文件(未加密版跳过,保持明文)
+                stepNanos = BuildLogger.stepBegin(blog, "69 编译加密脚本", "encrypt=$encryptLua")
                 if (encryptLua) {
                     encryptProjectFiles(L, assetsDir, skipCompileFiles)
+                    BuildLogger.stepEnd(blog, "69 编译加密脚本", stepNanos)
                 } else {
                     LogCatcher.i("ApkBuilder", "未加密版:跳过项目文件加密")
+                    BuildLogger.info(blog, "未加密版:跳过脚本加密")
                 }
 
                 // 9.1 按打包方式处理:dex / so 模式会把脚本从 assets 里"抽走",
                 //     产物中不再有独立的 .lua 文件。抽出的文件稍后统一处理,
                 //     必须在 Java 编译与 DEX 合并之前完成(decx 模式要先生成载荷类)。
+                stepNanos = BuildLogger.stepBegin(blog, "691 按打包方式处理脚本", "mode=$packageMode")
                 val payloadForDex: ByteArray? = when (packageMode) {
                     PackageMode.PLAIN_ENC -> {
                         LogCatcher.i("ApkBuilder", "普通加密模式:脚本以独立文件保留在 assets")
@@ -1039,6 +1112,7 @@ class ApkBuilder {
                         val payload = extractPayloadFromAssets(assetsDir, skipCompileFiles)
                         if (payload == null) {
                             LogCatcher.e("ApkBuilder", "dex 模式:没有可打包的脚本", null)
+                            BuildLogger.stepFail(blog, "691 按打包方式处理脚本", null, "dex 模式无脚本")
                             deleteDirectory(workDir)
                             return null
                         }
@@ -1049,19 +1123,26 @@ class ApkBuilder {
                         val payload = extractPayloadFromAssets(assetsDir, skipCompileFiles)
                         if (payload == null) {
                             LogCatcher.e("ApkBuilder", "so 模式:没有可打包的脚本", null)
+                            BuildLogger.stepFail(blog, "691 按打包方式处理脚本", null, "so 模式无脚本")
                             deleteDirectory(workDir)
                             return null
                         }
                         if (!embedPayloadIntoSo(workDir, payload)) {
                             LogCatcher.e("ApkBuilder", "so 模式:载荷嵌入原生库失败", null)
+                            BuildLogger.stepFail(blog, "691 按打包方式处理脚本", null, "嵌入 .so 失败")
                             deleteDirectory(workDir)
                             return null
                         }
                         null
                     }
                 }
+                BuildLogger.stepEnd(
+                    blog, "691 按打包方式处理脚本", stepNanos,
+                    "payload=${payloadForDex?.size ?: 0}B"
+                )
 
                 // ------------------ Java 编译与 DEX 生成 ------------------
+                stepNanos = BuildLogger.stepBegin(blog, "71 编译 Java 与生成 DEX")
                 val androidJarPath = extractAndroidJarToCache(context)
 
                 if (androidJarPath != null) {
@@ -1089,6 +1170,7 @@ class ApkBuilder {
                         minApi = minSdkVersion
                     )
 
+                    BuildLogger.stepEnd(blog, "71 编译 Java 与生成 DEX", stepNanos)
                     // 删除 assets 下的 java 源文件（避免打包进 APK）
                     val assetsJavaDir = File(assetsDir, "java")
                     if (assetsJavaDir.exists() && assetsJavaDir.isDirectory) {
@@ -1114,11 +1196,13 @@ class ApkBuilder {
                 // ---------------------------------------------------------
 
                 // 9.5 合并 libs/*.dex 至 APK 根 classes*.dex（构建选项关闭时跳过）
+                stepNanos = BuildLogger.stepBegin(blog, "75 合并 libs dex 到 APK 根", "mergeDex=$mergeDexEnabled")
                 if (mergeDexEnabled) {
                     mergeLibsDexToApkRoot(assetsDir, workDir)
                 } else {
                     LogCatcher.i("ApkBuilder", "构建选项已关闭合并 libs dex，保留 assets/libs/*.dex")
                 }
+                BuildLogger.stepEnd(blog, "75 合并 libs dex 到 APK 根", stepNanos)
 
                 // 10. 删除已存在的输出文件
                 val outputFile = File(outputPath)
@@ -1127,7 +1211,12 @@ class ApkBuilder {
                 }
 
                 // 11. 重新打包成最终APK
+                stepNanos = BuildLogger.stepBegin(blog, "77 压缩为最终 APK")
                 compressDirectoryToZip(workDir.absolutePath, outputPath)
+                BuildLogger.stepEnd(
+                    blog, "77 压缩为最终 APK", stepNanos,
+                    "size=${File(outputPath).length()}B"
+                )
 
                 // 12. 验证APK文件
                 if (!outputFile.exists()) {
@@ -1146,6 +1235,7 @@ class ApkBuilder {
 
             } catch (e: Exception) {
                 LogCatcher.e("ApkBuilder", "添加项目文件失败", e)
+                BuildLogger.error(blog, "打入项目文件时抛出异常", e)
                 return null
             }
         }

@@ -151,6 +151,19 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 | `clear_logs` | 清空 `luaforge.log` | — |
 | `get_logs` | 读取应用日志末尾内容(磁盘文本) | `lines`(默认 200) |
 | `get_editor_logs` | 读取**编辑器结构化日志**(与侧边栏「日志」页同源):级别 / tag / 正文 / 异常栈,可按级别与关键字过滤 | `level`、`tag`、`query`、`limit`(默认 200) |
+| `list_build_logs` | 列出每次构建的**独立过程日志**(按秒命名,最新在前) | `limit`(默认 20) |
+| `read_build_log` | 读取一次构建的完整过程日志:**逐步耗时 + 失败处堆栈**;不传 `path` 读最近一次 | `path`、`maxChars`(默认 200000) |
+
+`read_build_log` 是排查"构建失败"的首选工具:每次构建都会在
+`/storage/emulated/0/LuaForge-Studio/buildlogs/`(不可写时回退到
+`files/buildlogs/`)写一个 `build_yyyy-MM-dd_HH-mm-ss.log`,内含构建入参、
+环境、每一步的开始/结束/耗时,以及失败处的**调用位置与完整 Caused by 链**。
+典型用法:
+
+```text
+build_apk packageMode=dex
+read_build_log              # 失败后立刻读最近一次,直接看到卡在哪一步、堆栈在哪
+```
 
 `get_editor_logs` 与 `get_logs` 的区别:
 
