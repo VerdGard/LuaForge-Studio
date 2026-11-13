@@ -2,7 +2,6 @@ package com.luaforge.studio.build.maven
 
 import android.content.Context
 import com.luaforge.studio.utils.LogCatcher
-import com.luaforge.studio.utils.NetworkInterceptor
 import com.luaforge.studio.utils.NetworkProxy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -50,8 +49,6 @@ class MavenDownloader(private val context: Context) {
             synchronized(this) {
                 cachedClient?.let { if (cachedProxyRevision == revision) return it }
                 val builder = OkHttpClient.Builder()
-                    // 网络请求拦截:依赖下载也需用户确认
-                    .addInterceptor(NetworkInterceptor())
                     .connectTimeout(8, TimeUnit.SECONDS)
                     .readTimeout(10, TimeUnit.SECONDS)
                     .writeTimeout(10, TimeUnit.SECONDS)

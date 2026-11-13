@@ -22,8 +22,8 @@ import com.luaforge.studio.utils.ConsoleUtil
 import com.luaforge.studio.utils.JsonUtil
 import com.luaforge.studio.utils.LuaParserUtil
 import com.luaforge.studio.utils.FileUtil
+import com.luaforge.studio.utils.LogBuffer
 import com.luaforge.studio.utils.LogCatcher
-import com.luaforge.studio.collab.CollabManager
 import com.luaforge.studio.utils.ProjectFileIO
 import com.luaforge.studio.utils.ProjectUtil
 import com.luaforge.studio.widget.BuiltinWidgets
@@ -40,6 +40,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import android.util.Base64
 import java.io.File
+import java.util.Locale
 import java.util.zip.ZipFile
 import java.lang.reflect.Constructor
 import java.lang.reflect.InvocationTargetException
@@ -325,8 +326,22 @@ object McpTools {
         tools.put(
             tool(
                 "get_logs",
-                "读取应用调试日志(luaforge.log)",
+                "读取应用调试日志(luaforge.log 原始文本)",
                 obj("lines" to intProp("返回末尾行数,默认 200"))
+            )
+        )
+
+        tools.put(
+            tool(
+                "get_editor_logs",
+                "读取编辑器自身日志的结构化条目(与侧边栏「日志」页同源):" +
+                    "可按级别/标签/关键字过滤,返回级别、tag、正文与异常栈",
+                obj(
+                    "level" to strProp("最低级别 VERBOSE/DEBUG/INFO/WARN/ERROR,默认 VERBOSE"),
+                    "tag" to strProp("标签子串过滤"),
+                    "query" to strProp("正文或标签关键字过滤(忽略大小写)"),
+                    "limit" to intProp("最多返回条数,默认 200")
+                )
             )
         )
 
@@ -746,6 +761,7 @@ object McpTools {
                 "list_widgets" -> listWidgets()
                 "list_project_libraries" -> listProjectLibraries(context, args)
                 "get_logs" -> getLogs(args)
+                "get_editor_logs" -> getEditorLogs(args)
                 "get_settings" -> getSettings()
                 "dump_screen" -> dumpScreen(args)
                 "capture_screen" -> captureScreen(context, args)
@@ -1010,7 +1026,6 @@ object McpTools {
         // 否则编辑器仍持有旧内容,用户之后一保存就会把外部写入覆盖掉。
         val synced = syncEditorIfOpen(file.absolutePath)
         // 协同共享端:把本次写入登记为变更,连接端据此实时同步
-        recordCollabChange(context, file.absolutePath, deleted = false)
         val result = JSONObject()
             .put("path", file.absolutePath)
             .put("mode", mode)
@@ -1170,7 +1185,6 @@ object McpTools {
         }
         // 覆盖已有文件时同样要刷新编辑器,避免旧缓冲区回写覆盖
         val synced = syncEditorIfOpen(file.absolutePath)
-        recordCollabChange(context, file.absolutePath, deleted = false)
         return textResult(
             JSONObject()
                 .put("path", file.absolutePath)
@@ -1194,7 +1208,6 @@ object McpTools {
         }
         // 该文件若在编辑器中打开,需关闭标签;否则标签会指向已删除的文件
         val closed = closeEditorIfOpen(file.absolutePath)
-        recordCollabChange(context, file.absolutePath, deleted = true)
         return textResult(
             JSONObject()
                 .put("path", file.absolutePath)
@@ -1385,16 +1398,6 @@ object McpTools {
      * write_file / create_file 等外部写入之后必须调用,否则编辑器缓冲区仍是旧内容,
      * 用户随后保存会把外部写入覆盖掉。
      */
-    /**
-     * 若当前项目正作为协同「共享端」运行,登记一次文件变更,让连接端能实时拉取。
-     * 非共享状态或文件不在共享项目内时静默忽略。
-     */
-    private fun recordCollabChange(context: Context, absolutePath: String, deleted: Boolean) {
-        runCatching {
-            CollabManager.recordLocalChange(absolutePath, deleted)
-        }
-    }
-
     /**
      * 把磁盘上的最新内容同步到已打开的编辑器。
      *
@@ -2046,6 +2049,55 @@ object McpTools {
                 .put("path", LOG_FILE_PATH)
                 .put("lines", tail.size)
                 .put("content", tail.joinToString("\n"))
+                .toString()
+        )
+    }
+
+    /**
+     * 读取编辑器自身日志的结构化条目。
+     *
+     * 与 `get_logs`(读 `luaforge.log` 原始文本)互补:这里读的是侧边栏
+     * 「日志」页同源的 [LogBuffer],已经是结构化字段,调用方不必再做行切分
+     * 与 `[ERROR]` 子串匹配 —— 后者会把正文里提到 ERROR 的 INFO 行也判成错误。
+     */
+    private suspend fun getEditorLogs(args: JSONObject): JSONObject {
+        val levelText = args.optString("level", "VERBOSE").uppercase(Locale.ROOT)
+        val minLevel = runCatching { LogBuffer.Level.valueOf(levelText) }
+            .getOrDefault(LogBuffer.Level.VERBOSE)
+        val tag = args.optString("tag", "")
+        val query = args.optString("query", "")
+        val limit = args.optInt("limit", 200).coerceIn(1, 5000)
+
+        val matched = LogBuffer.query(
+            minLevel = minLevel,
+            tagFilter = tag,
+            query = query,
+            limit = limit
+        )
+
+        val items = JSONArray()
+        matched.forEach { e ->
+            items.put(
+                JSONObject()
+                    .put("id", e.id)
+                    .put("time", e.timeText)
+                    .put("timestamp", e.timestamp)
+                    .put("level", e.level.name)
+                    .put("tag", e.tag)
+                    .put("message", e.message)
+                    .put("source", e.source)
+                    .apply {
+                        if (!e.throwable.isNullOrBlank()) put("stack", e.throwable)
+                    }
+            )
+        }
+
+        return textResult(
+            JSONObject()
+                .put("total", LogBuffer.size())
+                .put("matched", matched.size)
+                .put("minLevel", minLevel.name)
+                .put("entries", items)
                 .toString()
         )
     }

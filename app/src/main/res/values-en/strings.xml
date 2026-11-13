@@ -69,6 +69,8 @@
 
     <!-- Content Descriptions -->
     <string name="cd_logo">Logo</string>
+    <string name="cd_back">Back</string>
+    <string name="logs_title">Logs</string>
     <string name="cd_menu">Open menu</string>
     <string name="cd_add">Add</string>
     <string name="cd_project_folder">Project folder</string>

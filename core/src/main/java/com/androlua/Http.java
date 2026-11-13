@@ -472,12 +472,6 @@ public class Http {
                     } catch (Exception ignored) {
                     }
                 }
-                if (!com.luaforge.studio.utils.NetworkGate.allow(
-                        mUrl, mMethod, mHeader, bodyPreview,
-                        conn.getRequestProperty("Content-Type"), "http")) {
-                    return new Object[]{-1, "网络请求已被用户拒绝: " + mUrl};
-                }
-
                 conn.connect();
 
                 //download

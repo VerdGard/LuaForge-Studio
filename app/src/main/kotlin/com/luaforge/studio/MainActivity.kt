@@ -63,15 +63,15 @@ import androidx.lifecycle.lifecycleScope
 import coil.compose.SubcomposeAsyncImage
 import com.luaforge.studio.ui.editor.persistence.EditorStateUtil
 import com.luaforge.studio.ui.about.AboutScreen
+import com.luaforge.studio.ui.logs.LogsScreen
+import com.luaforge.studio.ui.mcp.McpScreen
 import com.luaforge.studio.collab.CollabManager
 import com.luaforge.studio.mcp.McpManager
-import com.luaforge.studio.network.NetworkApprovalManager
 import com.luaforge.studio.session.SessionHooks
 import com.luaforge.studio.ui.components.FilePickerDialog
 import com.luaforge.studio.ui.components.SelectionMode
 import com.luaforge.studio.ui.components.Toast
 import com.luaforge.studio.ui.components.tvFocusHighlight
-import com.luaforge.studio.ui.collab.CollabScreen
 import com.luaforge.studio.ui.editor.CodeEditScreen
 import com.luaforge.studio.ui.project.NewProjectScreen
 import com.luaforge.studio.ui.settings.DarkMode
@@ -117,7 +117,10 @@ data class ProjectItem(
 enum class MainContentType {
     PROJECTS,
     SETTINGS,
-    COLLAB,
+    /** MCP 服务管理(原「设置 → MCP 服务」,移到侧边栏独立成页)。 */
+    MCP,
+    /** 编辑器自身日志查看(仿 LogFox 的分级/过滤/搜索)。 */
+    LOGS,
     ABOUT
 }
 
@@ -154,22 +157,6 @@ fun MainApp() {
         settings.mcpForegroundKeepAlive, settings.mcpPersistentNotification
     ) {
         McpManager.applySettings(settings)
-    }
-
-    // 网络拦截策略随设置同步(开关/允许列表/拒绝列表任一变化即时生效)
-    LaunchedEffect(Unit) {
-        NetworkApprovalManager.install()
-    }
-    LaunchedEffect(
-        settings.networkInterceptEnabled,
-        settings.networkAllowedHosts,
-        settings.networkBlockedHosts
-    ) {
-        NetworkApprovalManager.applyPolicy(
-            settings.networkInterceptEnabled,
-            settings.networkAllowedHosts,
-            settings.networkBlockedHosts
-        )
     }
 
     // 网络代理随设置同步:开关关闭或地址留空即直连。代理置入 NetworkProxy 后,
@@ -446,7 +433,8 @@ fun MainScreen(
         listOf(
             MainContentType.PROJECTS,
             MainContentType.SETTINGS,
-            MainContentType.COLLAB,
+            MainContentType.MCP,
+            MainContentType.LOGS,
             MainContentType.ABOUT
         )
 
@@ -746,35 +734,26 @@ fun MainScreen(
                         modifier = Modifier.padding(vertical = 4.dp)
                     )
 
-                    NavigationDrawerItem(
-                        label = {
-                            Text(stringResource(R.string.collab_title), fontWeight = FontWeight.Medium)
-                        },
-                        selected = currentContentType == MainContentType.COLLAB,
-                        onClick = {
-                            currentContentType = MainContentType.COLLAB
+                    DrawerNavItem(
+                        type = MainContentType.MCP,
+                        label = stringResource(R.string.settings_mcp),
+                        icon = Icons.Filled.Hub,
+                        current = currentContentType,
+                        onSelect = {
+                            currentContentType = it
                             scope.launch { drawerState.close() }
-                        },
-                        icon = {
-                            Icon(
-                                Icons.Filled.Share,
-                                contentDescription = stringResource(R.string.collab_title),
-                                tint = if (currentContentType == MainContentType.COLLAB)
-                                    MaterialTheme.colorScheme.primary
-                                else
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
-                        colors = NavigationDrawerItemDefaults.colors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                            unselectedContainerColor = Color.Transparent,
-                            selectedTextColor = MaterialTheme.colorScheme.primary,
-                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            selectedIconColor = MaterialTheme.colorScheme.primary,
-                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        ),
-                        shape = MaterialTheme.shapes.medium,
-                        modifier = Modifier.padding(vertical = 4.dp)
+                        }
+                    )
+
+                    DrawerNavItem(
+                        type = MainContentType.LOGS,
+                        label = stringResource(R.string.logs_title),
+                        icon = Icons.Filled.Article,
+                        current = currentContentType,
+                        onSelect = {
+                            currentContentType = it
+                            scope.launch { drawerState.close() }
+                        }
                     )
 
                     NavigationDrawerItem(
@@ -889,7 +868,8 @@ fun MainScreen(
                                 text = when (currentContentType) {
                                     MainContentType.PROJECTS -> stringResource(R.string.app_name)
                                     MainContentType.SETTINGS -> stringResource(R.string.settings)
-                                    MainContentType.COLLAB -> stringResource(R.string.collab_title)
+                                    MainContentType.MCP -> stringResource(R.string.settings_mcp)
+                                    MainContentType.LOGS -> stringResource(R.string.logs_title)
                                     MainContentType.ABOUT -> stringResource(R.string.about)
                                 },
                                 maxLines = 1,
@@ -983,7 +963,8 @@ fun MainScreen(
                                 }
                             }
 
-                            MainContentType.SETTINGS, MainContentType.COLLAB, MainContentType.ABOUT -> {
+                            MainContentType.SETTINGS, MainContentType.MCP,
+                            MainContentType.LOGS, MainContentType.ABOUT -> {
                             }
                         }
                     },
@@ -1016,7 +997,8 @@ fun MainScreen(
                         )
                     }
 
-                    MainContentType.SETTINGS, MainContentType.COLLAB, MainContentType.ABOUT -> {
+                    MainContentType.SETTINGS, MainContentType.MCP,
+                    MainContentType.LOGS, MainContentType.ABOUT -> {
                     }
                 }
             },
@@ -1116,11 +1098,9 @@ fun MainScreen(
                             )
                         }
 
-                        MainContentType.COLLAB -> {
-                            CollabScreen(
-                                onBack = {
-                                    shouldReturnToProjects = true
-                                },
+                        MainContentType.MCP -> {
+                            McpScreen(
+                                onBack = { shouldReturnToProjects = true },
                                 currentSettings = currentSettings,
                                 onSettingsChanged = { newSettings ->
                                     settingsManager.updateSettings(newSettings)
@@ -1128,6 +1108,10 @@ fun MainScreen(
                                 },
                                 toast = toast
                             )
+                        }
+
+                        MainContentType.LOGS -> {
+                            LogsScreen(onBack = { shouldReturnToProjects = true })
                         }
 
                         MainContentType.ABOUT -> {
@@ -1732,6 +1716,47 @@ class MainActivity : ComponentActivity() {
         window.decorView.requestLayout()
         window.decorView.invalidate()
     }
+}
+
+/**
+ * 侧边栏导航项。
+ *
+ * 抽屉里每一项的 `NavigationDrawerItemDefaults.colors(...)` 配置完全相同,
+ * 逐项复制还容易漏掉某个颜色槽(表现为选中态图标/文字不同色)。
+ * 统一到一处后,新增页面只需给 type/label/icon。
+ */
+@Composable
+private fun DrawerNavItem(
+    type: MainContentType,
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    current: MainContentType,
+    onSelect: (MainContentType) -> Unit
+) {
+    val selected = current == type
+    NavigationDrawerItem(
+        label = { Text(label, fontWeight = FontWeight.Medium) },
+        selected = selected,
+        onClick = { onSelect(type) },
+        icon = {
+            Icon(
+                icon,
+                contentDescription = label,
+                tint = if (selected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        },
+        colors = NavigationDrawerItemDefaults.colors(
+            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+            unselectedContainerColor = Color.Transparent,
+            selectedTextColor = MaterialTheme.colorScheme.primary,
+            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            selectedIconColor = MaterialTheme.colorScheme.primary,
+            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+        ),
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.padding(vertical = 4.dp)
+    )
 }
 
     override fun onDestroy() {

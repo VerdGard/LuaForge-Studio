@@ -103,9 +103,6 @@ private object PreferencesKeys {
     val MCP_BATTERY_EXEMPT = booleanPreferencesKey("mcp_battery_exempt")
 
     // 【新增】网络请求拦截设置
-    val NETWORK_INTERCEPT_ENABLED = booleanPreferencesKey("network_intercept_enabled")
-    val NETWORK_ALLOWED_HOSTS = stringPreferencesKey("network_allowed_hosts")
-    val NETWORK_BLOCKED_HOSTS = stringPreferencesKey("network_blocked_hosts")
 
     // 【新增】网络代理(默认留空 = 直连)
     val NETWORK_PROXY = stringPreferencesKey("network_proxy")
@@ -340,8 +337,6 @@ object SettingsManager {
         val mcpForegroundKeepAlive = preferences[PreferencesKeys.MCP_FOREGROUND_KEEPALIVE] ?: false
         val mcpPersistentNotification = preferences[PreferencesKeys.MCP_PERSISTENT_NOTIFICATION] ?: false
 
-        // 【新增】加载网络请求拦截设置
-        val networkInterceptEnabled = preferences[PreferencesKeys.NETWORK_INTERCEPT_ENABLED] ?: false
         // 网络代理:默认空串 + 开关关闭 = 直连,不做任何代理
         val networkProxy = preferences[PreferencesKeys.NETWORK_PROXY] ?: ""
         val networkProxyEnabled = preferences[PreferencesKeys.NETWORK_PROXY_ENABLED] ?: false
@@ -363,19 +358,6 @@ object SettingsManager {
         } catch (e: Exception) {
             emptyList()
         }
-        val networkAllowedHosts: Set<String> = try {
-            val type = object : TypeToken<Set<String>>() {}.type
-            Gson().fromJson(preferences[PreferencesKeys.NETWORK_ALLOWED_HOSTS] ?: "[]", type) ?: emptySet()
-        } catch (e: Exception) {
-            emptySet()
-        }
-        val networkBlockedHosts: Set<String> = try {
-            val type = object : TypeToken<Set<String>>() {}.type
-            Gson().fromJson(preferences[PreferencesKeys.NETWORK_BLOCKED_HOSTS] ?: "[]", type) ?: emptySet()
-        } catch (e: Exception) {
-            emptySet()
-        }
-
         // 【新增】加载防火墙设置
         val crossProjectWriteGuard = preferences[PreferencesKeys.CROSS_PROJECT_WRITE_GUARD] ?: true
         val selfGuard = preferences[PreferencesKeys.SELF_GUARD] ?: true
@@ -462,13 +444,10 @@ object SettingsManager {
                 mcpToken = mcpToken,                      // 【新增】
                 mcpForegroundKeepAlive = mcpForegroundKeepAlive,      // 【新增】
                 mcpPersistentNotification = mcpPersistentNotification, // 【新增】
-                networkInterceptEnabled = networkInterceptEnabled,  // 【新增】
                 networkProxy = networkProxy,                        // 【新增】网络代理
                 networkProxyEnabled = networkProxyEnabled,          // 【新增】代理开关
                 networkProxyDirect = networkProxyDirect,            // 【新增】强制直连规则
                 networkProxyOnly = networkProxyOnly,                // 【新增】只走代理规则
-                networkAllowedHosts = networkAllowedHosts,          // 【新增】
-                networkBlockedHosts = networkBlockedHosts,          // 【新增】
                 crossProjectWriteGuard = crossProjectWriteGuard,    // 【新增】
                 selfGuard = selfGuard,                              // 【新增】
                 crossWriteCounts = crossWriteCounts,                // 【新增】
@@ -558,9 +537,6 @@ object SettingsManager {
             preferences[PreferencesKeys.MCP_BATTERY_EXEMPT] = currentSettings.mcpBatteryExempt
 
             // 【新增】保存网络请求拦截设置
-            preferences[PreferencesKeys.NETWORK_INTERCEPT_ENABLED] = currentSettings.networkInterceptEnabled
-            preferences[PreferencesKeys.NETWORK_ALLOWED_HOSTS] = Gson().toJson(currentSettings.networkAllowedHosts)
-            preferences[PreferencesKeys.NETWORK_BLOCKED_HOSTS] = Gson().toJson(currentSettings.networkBlockedHosts)
             preferences[PreferencesKeys.NETWORK_PROXY] = currentSettings.networkProxy
             preferences[PreferencesKeys.NETWORK_PROXY_ENABLED] = currentSettings.networkProxyEnabled
             preferences[PreferencesKeys.NETWORK_PROXY_DIRECT] =
@@ -771,9 +747,6 @@ data class SettingsData(
     val mcpPort: Int = 9123,                         // 【新增】MCP 服务端口
     val mcpRequireToken: Boolean = false,            // 【新增】MCP 是否要求令牌
     val mcpToken: String = "",                       // 【新增】MCP 访问令牌
-    val networkInterceptEnabled: Boolean = false,    // 【新增】网络请求拦截开关(默认关闭)
-    val networkAllowedHosts: Set<String> = emptySet(), // 【新增】已允许的请求主机
-    val networkBlockedHosts: Set<String> = emptySet(), // 【新增】已拒绝的请求主机
     /**
      * 网络代理地址(设置 → 安全、网络与日志)。
      *

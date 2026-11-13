@@ -38,11 +38,11 @@ import com.luaforge.studio.ui.editor.persistence.EditorStateUtil
 import com.luaforge.studio.mcp.ActivityTracker
 import com.luaforge.studio.mcp.McpManager
 import com.luaforge.studio.session.SessionHooks
-import com.luaforge.studio.network.NetworkApprovalManager
 import com.luaforge.studio.ui.editor.viewmodel.CompletionDataManager
 import com.luaforge.studio.ui.settings.SettingsManager
 import com.luaforge.studio.ui.theme.AppThemeWithObserver
 import com.luaforge.studio.utils.IconManager
+import com.luaforge.studio.utils.LogBuffer
 import com.luaforge.studio.utils.LogCatcher
 import com.luaforge.studio.utils.NetworkProxy
 import com.luajava.LuaFunction
@@ -87,6 +87,9 @@ class SplashWelcome : ComponentActivity() {
             }
         }.start()
         LogCatcher.init(this)
+        // 日志页的结构化缓冲:回填一次磁盘历史,让启动即能看到上次会话。
+        // 必须在 LogCatcher.init 之后 —— init 会清空日志文件,先回填会把历史丢掉。
+        LogBuffer.install(this)
         // 追踪前台 Activity,供 MCP 运行时界面检查(dump_screen / check_screen)使用
         ActivityTracker.install(application)
 
@@ -115,19 +118,6 @@ class SplashWelcome : ComponentActivity() {
             McpManager.applySettings(SettingsManager.currentSettings)
         } catch (e: Exception) {
             LogCatcher.e("SplashWelcome", "启动 MCP 服务失败", e)
-        }
-
-        // 网络请求拦截:装配决策器并按已保存的设置同步策略(默认关闭时不拦截)
-        try {
-            val networkSettings = SettingsManager.currentSettings
-            NetworkApprovalManager.install()
-            NetworkApprovalManager.applyPolicy(
-                networkSettings.networkInterceptEnabled,
-                networkSettings.networkAllowedHosts,
-                networkSettings.networkBlockedHosts
-            )
-        } catch (e: Exception) {
-            LogCatcher.e("SplashWelcome", "初始化网络拦截失败", e)
         }
 
         // 网络代理:按已保存设置初始化(默认开关关闭 + 留空 = 直连,不产生任何代理行为)

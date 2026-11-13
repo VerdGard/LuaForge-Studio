@@ -130,6 +130,7 @@ object LogCatcher {
     @JvmStatic
     fun d(tag: String, message: String) {
         android.util.Log.d(tag, message)
+        LogBuffer.add(LogBuffer.Level.DEBUG, tag, message)
         if (shouldLog()) {
             writeToFile("DEBUG", tag, message)
         }
@@ -138,6 +139,7 @@ object LogCatcher {
     @JvmStatic
     fun i(tag: String, message: String) {
         android.util.Log.i(tag, message)
+        LogBuffer.add(LogBuffer.Level.INFO, tag, message)
         if (shouldLog()) {
             writeToFile("INFO", tag, message)
         }
@@ -146,6 +148,7 @@ object LogCatcher {
     @JvmStatic
     fun w(tag: String, message: String) {
         android.util.Log.w(tag, message)
+        LogBuffer.add(LogBuffer.Level.WARN, tag, message)
         if (shouldLog()) {
             writeToFile("WARN", tag, message)
         }
@@ -155,6 +158,9 @@ object LogCatcher {
     @JvmOverloads
     fun e(tag: String, message: String, exception: Exception? = null) {
         android.util.Log.e(tag, message, exception)
+        // 结构化缓冲始终记录:即使磁盘日志被用户关闭,日志页仍需可见,
+        // 否则「关掉落盘 = 完全看不到日志」,排查现场会毫无线索。
+        LogBuffer.addError(tag, message, exception)
         if (shouldLog()) {
             val exceptionInfo =
                 exception?.let { " - ${it.message}\n${it.stackTraceToString()}" } ?: ""
@@ -166,6 +172,7 @@ object LogCatcher {
     fun permission(tag: String, action: String, result: String) {
         val message = "权限操作: $action - $result"
         android.util.Log.i("$tag-Permission", message)
+        LogBuffer.add(LogBuffer.Level.INFO, "$tag-Permission", message)
         if (shouldLog()) {
             writeToFile("PERMISSION", tag, message)
         }
@@ -175,6 +182,7 @@ object LogCatcher {
     fun fileOperation(tag: String, operation: String, filePath: String, result: String) {
         val message = "文件操作: $operation - $filePath - $result"
         android.util.Log.i("$tag-File", message)
+        LogBuffer.add(LogBuffer.Level.INFO, "$tag-File", message)
         if (shouldLog()) {
             writeToFile("FILE", tag, message)
         }
