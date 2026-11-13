@@ -130,7 +130,12 @@ object LuaPayloadBuilder {
     /** 尾部索引长度,必须与 payloadstub.c 的 PAYLOAD_TRAILER_LEN 一致。 */
     private const val TRAILER_LEN = 32
 
-    /** 与 payloadstub.c 的 PAYLOAD_MAGIC 一致(7 字节,不含结尾 NUL)。 */
+    /**
+     * 与 payloadstub.c 的 PAYLOAD_MAGIC 一致:**6 字节**,不含结尾 NUL。
+     *
+     * 早期 C 侧写的是 `sizeof(PAYLOAD_MAGIC)`(=7,含 NUL),靠 trailer 数组
+     * 零初始化才碰巧与这里的 6 字节写入匹配;现在两端都显式按 6 处理。
+     */
     private val PAYLOAD_MAGIC = "LFPKPAY".toByteArray(Charsets.US_ASCII)
 
     /** 与 lfprotect.h 的 LF_PROTECT_VERSION 一致。 */
