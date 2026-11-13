@@ -32,19 +32,27 @@ enum class BuildType(
     /** 是否把 Lua/ALY 源码编译加密后打包;false 表示以明文打包。 */
     val encryptLua: Boolean,
     /** 是否覆盖打包内 `settings.json` 的 `debugmode`;null 表示沿用项目设置。 */
-    val debugOverride: Boolean?
+    val debugOverride: Boolean?,
+    /**
+     * 产物文件名中代表该构建类型的片段。
+     *
+     * 与 [AbiTarget.artifactTag] 一起构成 `名称_架构_类型.apk`。
+     * 统一用小写短横线风格,避免文件名里出现空格与大写歧义
+     * (`aut` 表示"跟随项目设置",不是某个具体类型)。
+     */
+    val artifactTag: String
 ) {
     /**
      * 跟随项目设置:是否加密取 settings.json 的 `encrypt`
      * (此枚举口的 encryptLua 对它不生效),调试模式沿用项目设置。
      */
-    PROJECT_DEFAULT(true, null),
+    PROJECT_DEFAULT(true, null, "aut"),
 
     /** Debug 版:调试模式开启。 */
-    DEBUG(true, true),
+    DEBUG(true, true, "debug"),
 
     /** Release 版:调试模式关闭。 */
-    RELEASE(true, false);
+    RELEASE(true, false, "release");
 
     companion object {
         /** 供构建对话框展示的可选类型。 */

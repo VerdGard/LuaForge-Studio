@@ -36,9 +36,8 @@ public class LuaFunctionRegistrar {
                     put("BitmapUtil", "com.luaforge.studio.utils.BitmapUtil");
                     put("GlideUtil", "com.luaforge.studio.utils.GlideUtil");
                     put("OkHttpUtil", "com.luaforge.studio.utils.OkHttpUtil");
-                    put("UiUtil", "com.luaforge.studio.utils.UiUtil");
+                    put("FastIOUtil", "com.luaforge.studio.utils.FastIOUtil");
                     put("RecyclerAdapterUtil", "com.luaforge.studio.utils.RecyclerAdapterUtil");
-                    put("ThemeUtil", "com.luaforge.studio.utils.ThemeUtil");
                 }
             };
 

@@ -199,10 +199,6 @@ wds = {
   },
   {
     "VideoView",
-    "ExoVideoView",
-    "SimpleVideoView",
-    "MusicPlayerBar",
-    "ExoAudioPlayer",
     "WebView",
     "AnalogClock",
     "PullingLayout"

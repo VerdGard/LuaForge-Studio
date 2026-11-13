@@ -185,3 +185,16 @@ add_and_optimize_library(xml)
 add_and_optimize_library(time)
 add_and_optimize_library(tcc)
 add_and_optimize_library(decrypt)
+
+# fastio 是纯 JNI 库(不导出 luaopen_fastio,由 Java 侧 loadLibrary 加载),
+# 因此不走 add_and_optimize_library() 的 Lua 模块约定,而是直接加入:
+# 那条路径会强制 -fvisibility=default 并尝试导出 luaopen_fastio,
+# 对该库是错误的方向(它需要隐藏内部符号,只保留 JNI 入口)。
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/fastio)
+    add_subdirectory(fastio)
+    target_compile_options(fastio PRIVATE
+            -ffunction-sections
+            -fdata-sections
+            -Wno-unused-parameter
+    )
+endif ()

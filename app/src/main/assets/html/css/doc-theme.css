@@ -1,0 +1,249 @@
+/*
+ * 文档预览的主题层。
+ *
+ * 背景:预览页装的 `github-markdown-light.min.css` 与 `github.min.css`(hljs)
+ * 都是**硬编码浅色**的成品主题,里面写死了 #24292f / #fff / #f6f8fa 这类色值,
+ * 因此在 App 切到深色主题后,文档对话框仍是白底黑字 —— 既刺眼,也与对话框
+ * 自身的 surface 容器色脱节。
+ *
+ * 这里不重写那两个文件(它们是上游产物,重写后无法再随上游更新),而是叠一层
+ * 覆盖:
+ *
+ *  1. 用 CSS 变量承载主题色,由 Kotlin 侧经 JavaScript 注入真实色值
+ *     (`--doc-*`),这样文档配色与 Compose 的 colorScheme 严格一致,
+ *     连动态取色(Android 12+)也能跟随;
+ *  2. `html.doc-dark` 时用 github-dark 的等效色覆盖正文、标题、引用、表格、
+ *     代码块;
+ *  3. hljs 的 token 色在深色下单独覆盖(浅色保持 github.min.css 原样)。
+ *
+ * 变量都有浅色兜底值,未注入(例如加载竞态)时页面依然可读。
+ */
+
+:root {
+    --doc-bg: #ffffff;
+    --doc-fg: #24292f;
+    --doc-muted: #57606a;
+    --doc-border: #d0d7de;
+    --doc-hr: #e1e4e8;
+    --doc-inline-code-bg: #fcebe3;
+    --doc-inline-code-fg: #9f3600;
+    --doc-pre-border: #f3f2f0;
+    --doc-table-head-border: #d0d7de;
+}
+
+/* ---------------- 深色主题 ---------------- */
+
+/* 深色:优先用 Kotlin 注入的 `--doc-dark-*`,未注入时回退到这里的 github-dark 等效值。
+   注入值来自 MaterialTheme.colorScheme,因此与对话框容器色严格一致;
+   而 `--doc-inline-code-*` 刻意不注入深色版本 —— 行内代码需要足够饱和的
+   底色才能与正文区分,直接用 Compose 的 secondaryContainer 在部分配色下
+   对比度不足。 */
+html.doc-dark {
+    --doc-bg: #0d1117;
+    --doc-fg: #e6edf3;
+    --doc-muted: #8b949e;
+    --doc-border: #30363d;
+    --doc-hr: #21262d;
+    --doc-inline-code-bg: #343942;
+    --doc-inline-code-fg: #ffa657;
+    --doc-pre-border: #30363d;
+    --doc-table-head-border: #30363d;
+}
+
+/* ---------------- 基础色接入变量 ---------------- */
+
+body {
+    background-color: var(--doc-bg) !important;
+    color: var(--doc-fg) !important;
+}
+
+.markdown-body {
+    background-color: var(--doc-bg) !important;
+    color: var(--doc-fg) !important;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+    color: var(--doc-fg) !important;
+    border-bottom-color: var(--doc-hr) !important;
+}
+
+.markdown-body p,
+.markdown-body li,
+.markdown-body dt,
+.markdown-body dd,
+.markdown-body td,
+.markdown-body th {
+    color: var(--doc-fg) !important;
+}
+
+.markdown-body a {
+    color: #0969da;
+}
+
+html.doc-dark .markdown-body a {
+    color: #58a6ff;
+}
+
+.markdown-body blockquote {
+    color: var(--doc-muted) !important;
+    border-left-color: var(--doc-border) !important;
+}
+
+.markdown-body hr {
+    background-color: var(--doc-hr) !important;
+}
+
+.markdown-body h1,
+.markdown-body h2 {
+    border-bottom: 1px solid var(--doc-hr) !important;
+}
+
+/* 表格:保留原布局规则,只换色 */
+.markdown-body table th,
+.markdown-body table td {
+    border-bottom-color: var(--doc-hr) !important;
+    color: var(--doc-fg) !important;
+}
+
+.markdown-body table th {
+    border-bottom: 2px solid var(--doc-table-head-border) !important;
+}
+
+.markdown-body code:not(pre code),
+.markdown-body tt:not(pre tt) {
+    background-color: var(--doc-inline-code-bg) !important;
+    color: var(--doc-inline-code-fg) !important;
+}
+
+/* 代码块容器 */
+.markdown-body pre {
+    border: 1px solid var(--doc-pre-border) !important;
+    background: transparent !important;
+}
+
+.markdown-body pre code.hljs {
+    background: transparent !important;
+    color: var(--doc-fg) !important;
+}
+
+/* 代码块右上角的语言标签与复制按钮 */
+.code-language {
+    color: var(--doc-muted) !important;
+}
+
+.copy-button {
+    background: var(--doc-bg) !important;
+    color: var(--doc-muted) !important;
+    border: 1px solid var(--doc-border) !important;
+}
+
+.copy-button:hover {
+    background: var(--doc-muted) !important;
+    color: var(--doc-bg) !important;
+}
+
+.copy-button.copied,
+.copy-button.copied:hover {
+    background: var(--doc-bg) !important;
+    color: var(--doc-muted) !important;
+    border-color: var(--doc-border) !important;
+}
+
+/* ---------------- 深色下的 hljs token 配色 ---------------- */
+
+html.doc-dark .hljs {
+    color: #e6edf3;
+    background: transparent;
+}
+
+html.doc-dark .hljs-doctag,
+html.doc-dark .hljs-keyword,
+html.doc-dark .hljs-meta .hljs-keyword,
+html.doc-dark .hljs-template-tag,
+html.doc-dark .hljs-template-variable,
+html.doc-dark .hljs-type,
+html.doc-dark .hljs-variable.language_ {
+    color: #ff7b72;
+}
+
+html.doc-dark .hljs-title,
+html.doc-dark .hljs-title.class_,
+html.doc-dark .hljs-title.class_.inherited__,
+html.doc-dark .hljs-title.function_ {
+    color: #d2a8ff;
+}
+
+html.doc-dark .hljs-attr,
+html.doc-dark .hljs-attribute,
+html.doc-dark .hljs-literal,
+html.doc-dark .hljs-meta,
+html.doc-dark .hljs-number,
+html.doc-dark .hljs-operator,
+html.doc-dark .hljs-variable,
+html.doc-dark .hljs-selector-attr,
+html.doc-dark .hljs-selector-class,
+html.doc-dark .hljs-selector-id {
+    color: #79c0ff;
+}
+
+html.doc-dark .hljs-regexp,
+html.doc-dark .hljs-string,
+html.doc-dark .hljs-meta .hljs-string {
+    color: #a5d6ff;
+}
+
+html.doc-dark .hljs-built_in,
+html.doc-dark .hljs-symbol {
+    color: #ffa657;
+}
+
+html.doc-dark .hljs-comment,
+html.doc-dark .hljs-code,
+html.doc-dark .hljs-formula {
+    color: #8b949e;
+}
+
+html.doc-dark .hljs-name,
+html.doc-dark .hljs-quote,
+html.doc-dark .hljs-selector-tag,
+html.doc-dark .hljs-selector-pseudo {
+    color: #7ee787;
+}
+
+html.doc-dark .hljs-subst {
+    color: #e6edf3;
+}
+
+html.doc-dark .hljs-section {
+    color: #1f6feb;
+    font-weight: bold;
+}
+
+html.doc-dark .hljs-bullet {
+    color: #f2cc60;
+}
+
+html.doc-dark .hljs-emphasis {
+    color: #e6edf3;
+    font-style: italic;
+}
+
+html.doc-dark .hljs-strong {
+    color: #e6edf3;
+    font-weight: bold;
+}
+
+html.doc-dark .hljs-addition {
+    color: #aff5b4;
+    background-color: #033a16;
+}
+
+html.doc-dark .hljs-deletion {
+    color: #ffdcd7;
+    background-color: #67060c;
+}

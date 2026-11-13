@@ -685,7 +685,7 @@ object McpTools {
                 obj(
                     "name" to strProp(
                         "文档名,如 SKILL.md / MCP.md / NETWORK.md / WidgetsCatalog.md / " +
-                            "RuntimeAPI.md / ExoVideoView.md;省略则返回文档目录"
+                            "RuntimeAPI.md / WidgetsCatalog.md;省略则返回文档目录"
                     ),
                     "startLine" to intProp("起始行号,1 起算;省略则从第 1 行"),
                     "endLine" to intProp("结束行号,含该行;省略则到文档末尾"),
@@ -3925,15 +3925,10 @@ object McpTools {
         "Compose.md" to "在 Lua 里写 Compose:compose/state/remember 与组件属性速查",
         "RuntimeAPI.md" to "全局对象与内置工具类(避免手写已有能力)",
         "MaterialTextField.md" to "输入框控件",
-        "ExoVideoView.md" to "视频播放器(自带控制器)",
-        "SimpleVideoView.md" to "视频播放器(自定义控制条)",
-        "ExoAudioPlayer.md" to "纯音频播放器",
-        "MusicPlayerBar.md" to "一体化音乐播放条",
         "BitmapUtil.md" to "位图工具",
         "GlideUtil.md" to "图片加载工具",
         "OkHttpUtil.md" to "网络请求工具",
-        "UiUtil.md" to "UI 工具",
-        "ThemeUtil.md" to "主题工具",
+        "FastIOUtil.md" to "C 语言实现的快速文件读写工具",
         "RecyclerAdapterUtil.md" to "列表适配器工具"
     )
 

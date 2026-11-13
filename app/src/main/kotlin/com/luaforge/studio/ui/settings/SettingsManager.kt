@@ -170,9 +170,12 @@ enum class ToastPosition {
  * - [UNIVERSAL] 通用版:同时包含 armeabi-v7a 与 arm64-v8a,兼容所有设备(体积最大)
  * - [ARM64]     arm64-v8a(64 位):只保留 arm64-v8a
  * - [ARM32]     armeabi-v7a(32 位):只保留 armeabi-v7a
+ *
+ * [artifactTag] 是该架构在产物文件名中的片段,与 `构建类型` 一起构成
+ * `名称_架构_类型.apk`;通用版写作 `aut`(自动适配设备 ABI)。
  */
-enum class AbiTarget {
-    UNIVERSAL, ARM64, ARM32
+enum class AbiTarget(val artifactTag: String) {
+    UNIVERSAL("aut"), ARM64("arm64-v8a"), ARM32("armeabi-v7a")
 }
 
 object SettingsManager {

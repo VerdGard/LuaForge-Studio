@@ -278,15 +278,26 @@ val mavenDependencies = try {
             externalStorageDir.mkdirs()
         }
 
-        // 使用应用名称作为APK文件名，清理非法字符
-        val cleanAppName = appName.replace("[\\\\W]".toRegex(), "_") // 只替换非单词字符，保留Unicode字母
-        val baseApkName = "${cleanAppName}.apk"
+        // 产物命名:`名称_架构_构建类型.apk`
+        //
+        // 旧实现只写 `名称.apk`,再靠时间戳区分多次构建 —— 同一项目的
+        // arm64 版与 32 位版、debug 与 release 版混在一个目录里无法凭文件名辨别,
+        // 装错包排查成本很高。现在把两个正交维度直接写进文件名:
+        //   架构    universal -> aut,arm64-v8a -> arm64-v8a,armeabi-v7a -> armeabi-v7a
+        //   类型    PROJECT_DEFAULT -> aut,DEBUG -> debug,RELEASE -> release
+        // 名称本身只替换文件名非法字符(保留 Unicode 字母,中文项目名不丢)。
+        val cleanAppName = appName.replace("[\\\\W]".toRegex(), "_")
+        val baseApkName = "${cleanAppName}_${abiTarget.artifactTag}_${buildType.artifactTag}.apk"
         val apkFile = File(externalStorageDir, baseApkName)
 
-        // 如果文件已存在，添加时间戳
+        // 重名不覆盖:同名产物仍可能存在(例如同参数连续构建),此时追加时间戳后缀,
+        // 保持「先构建的包不会被悄悄替换」这一既有行为。
         val finalApkFile = if (apkFile.exists()) {
-            val timestamp = System.currentTimeMillis()
-            File(externalStorageDir, "${cleanAppName}_${timestamp}.apk")
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            File(
+                externalStorageDir,
+                "${cleanAppName}_${abiTarget.artifactTag}_${buildType.artifactTag}_$timestamp.apk"
+            )
         } else {
             apkFile
         }

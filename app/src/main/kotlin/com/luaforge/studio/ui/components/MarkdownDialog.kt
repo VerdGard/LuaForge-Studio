@@ -25,6 +25,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -169,22 +171,45 @@ private fun MarkdownViewContent(
     mdFileName: String,
     modifier: Modifier = Modifier
 ) {
-    LocalContext.current
+    val context = LocalContext.current
+
+    // 预览页的 markdown/hljs 主题是硬编码浅色的上游产物,必须把当前
+    // MaterialTheme 的配色喂进去,否则深色模式下会是一张白色文档盖在
+    // 深色对话框上。这里直接取 colorScheme,连 Android 12 动态取色也能跟随。
+    val colorScheme = MaterialTheme.colorScheme
+    val palette = remember(colorScheme) {
+        MarkdownView.DocPalette(
+            background = colorScheme.surfaceContainer.toArgb(),
+            foreground = colorScheme.onSurface.toArgb(),
+            muted = colorScheme.onSurfaceVariant.toArgb(),
+            border = colorScheme.outlineVariant.toArgb(),
+            hr = colorScheme.outlineVariant.copy(alpha = 0.6f).toArgb(),
+            inlineCodeBg = colorScheme.secondaryContainer.toArgb(),
+            inlineCodeFg = colorScheme.onSecondaryContainer.toArgb(),
+            preBorder = colorScheme.outlineVariant.toArgb(),
+            tableHeadBorder = colorScheme.outline.toArgb()
+        )
+    }
+    val isDark = colorScheme.surface.luminance() < 0.5f
 
     AndroidView(
-        factory = { context ->
-            createMarkdownView(context, mdFileName)
-        },
+        factory = { ctx -> createMarkdownView(ctx, mdFileName, isDark, palette) },
         modifier = modifier,
         update = { markdownView ->
-            // 如果文件名变化，重新加载
+            // 主题或文件名变化时都要同步:主题切换后 WebView 不会自动重绘
+            markdownView.applyTheme(isDark, palette)
             markdownView.loadFromAssets("doc/$mdFileName")
         }
     )
 }
 
 @SuppressLint("SetJavaScriptEnabled")
-private fun createMarkdownView(context: android.content.Context, mdFileName: String): MarkdownView {
+private fun createMarkdownView(
+    context: android.content.Context,
+    mdFileName: String,
+    isDark: Boolean,
+    palette: MarkdownView.DocPalette
+): MarkdownView {
     return MarkdownView(context).apply {
         // 设置布局参数
         layoutParams = android.view.ViewGroup.LayoutParams(
@@ -195,11 +220,14 @@ private fun createMarkdownView(context: android.content.Context, mdFileName: Str
         // 设置点击链接在外部浏览器中打开
         isOpenUrlInBrowser = true
 
-        // 设置背景色
-        setBackgroundColor(0x00000000) // 透明背景
+        // 透明背景:底色由页面自身的 CSS 变量控制,与对话框容器色一致
+        setBackgroundColor(0x00000000)
 
         // 启用硬件加速
         setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+
+        // 先给主题,再加载内容;onPageFinished 里还会补一次,避免竞态
+        applyTheme(isDark, palette)
 
         // 加载Markdown文件
         try {

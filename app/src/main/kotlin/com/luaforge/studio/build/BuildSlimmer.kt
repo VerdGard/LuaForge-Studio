@@ -70,13 +70,6 @@ object BuildSlimmer {
         "com.luaforge.studio.core.**",
         "com.luaforge.studio.utils.**",
         "com.luaforge.studio.widget.**",
-        // Media3 通过 Class.forName 发现 HLS/DASH/SS/RTSP/RTMP 实现
-        "androidx.media3.exoplayer.hls.**",
-        "androidx.media3.exoplayer.dash.**",
-        "androidx.media3.exoplayer.smoothstreaming.**",
-        "androidx.media3.exoplayer.rtsp.**",
-        "androidx.media3.datasource.rtmp.**",
-        "io.antmedia.**",
         // 反射创建 View 时按类名查找,布局 XML/table 里的控件名同样是字符串
         "androidx.appcompat.widget.**",
         "com.google.android.material.**",
