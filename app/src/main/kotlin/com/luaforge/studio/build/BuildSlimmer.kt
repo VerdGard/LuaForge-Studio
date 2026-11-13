@@ -70,6 +70,9 @@ object BuildSlimmer {
         "com.luaforge.studio.core.**",
         "com.luaforge.studio.utils.**",
         "com.luaforge.studio.widget.**",
+        // dex 打包模式的载荷类:运行时经 Class.forName + getField("dN") 反射读取,
+        // 静态可达性分析完全看不见它 —— 一旦被裁,APK 启动即失败
+        "com.luaforge.studio.payload.**",
         // 反射创建 View 时按类名查找,布局 XML/table 里的控件名同样是字符串
         "androidx.appcompat.widget.**",
         "com.google.android.material.**",
@@ -227,9 +230,12 @@ object BuildSlimmer {
      */
     fun slimProjectLibs(
         libsDir: File,
-        templateClasses: Set<String>
+        templateClasses: Set<String>,
+        /** 供 R8 重写 dex 时作为 library 输入;为 null 时跳过 dex 重写(只做整体丢弃)。 */
+        androidJar: String? = null
     ): Result {
         if (!libsDir.isDirectory || templateClasses.isEmpty()) return Result(shrunk = false)
+        val androidJarForSlim = androidJar
 
         val duplicates = ArrayList<String>()
         var prunedJars = 0
@@ -288,12 +294,30 @@ object BuildSlimmer {
                             droppedDex++
                             LogCatcher.i(TAG, "libs/${f.name} 全部类已在模板中,已移除")
                         }
-                    } else if (dupCount > 0) {
-                        // 只报告不处理:安全优先
-                        LogCatcher.w(
+                        continue
+                    }
+                    if (dupCount == 0) continue
+
+                    // 局部重复:真正重写这个 dex。
+                    //
+                    // 旧实现到此只打一条警告("dex 无法安全剔除局部类"),
+                    // 于是"构建精简"对 dex 实际什么也没做 —— 这正是重构要解决的
+                    // 核心问题。dex 本身确实不适合手写重排,但仓库里已经有
+                    // R8:它能读 dex、按 keep 规则裁剪、再输出 dex,我们只需要
+                    // 把"要保留的类"显式 keep 住。
+                    val keepSet = classes.filterNot { templateClasses.contains(it) }.toSet()
+                    val rewritten = try {
+                        rewriteDexKeeping(f, keepSet, androidJarForSlim)
+                    } catch (e: Exception) {
+                        LogCatcher.w(TAG, "重写 libs dex 失败,原样保留: ${f.name} (${e.message})")
+                        false
+                    }
+                    if (rewritten) {
+                        duplicates.addAll(classes.filter { templateClasses.contains(it) })
+                        prunedJars++
+                        LogCatcher.i(
                             TAG,
-                            "libs/${f.name}: 有 $dupCount/${classes.size} 个类与模板重复," +
-                                "但 dex 无法安全剔除局部类,保留原文件"
+                            "libs/${f.name}: 剔除 ${dupCount}/${classes.size} 个重复类(重写 dex)"
                         )
                     }
                 }
@@ -597,6 +621,132 @@ object BuildSlimmer {
                     out.closeEntry()
                 }
             }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // dex 重写(构建精简的核心能力)
+    // ------------------------------------------------------------------
+
+    /**
+     * 用 R8 重写一个 dex,只保留 [keepClasses] 中的类。
+     *
+     * ## 为什么 dex 不能"手工删类"
+     *
+     * dex 是自索引的紧凑二进制:string_ids / type_ids / proto_ids / method_ids /
+     * field_ids / class_defs 全部用**序号**互相引用,删掉一个类就要把所有
+     * 引用它的序号重排 —— 任何遗漏都会让 ART 在加载时抛 `DexFormatError`。
+     * 因此"剔除局部重复类"必须交给完整的 dex 读写器,R8 正是这样一个读写器
+     * (它可以把 dex 当输入,输出新的 dex)。
+     *
+     * ## keep 规则怎么写
+     *
+     * 用**白名单**语义:把要保留的类逐个 `-keep class X { *; }`,
+     * 再 `--release` 让其余判定为不可达而删除。成员全保留(`{ *; }`)是刻意的 ——
+     * 只保类名而裁成员会让 Lua 侧经 luajava 反射调用的方法消失,那类问题
+     * 只在运行时才暴露,代价远大于多留几个方法。
+     *
+     * @return true 表示已用裁剪结果替换原文件
+     */
+    private fun rewriteDexKeeping(
+        dexFile: File,
+        keepClasses: Set<String>,
+        androidJar: String?
+    ): Boolean {
+        if (keepClasses.isEmpty()) return false
+        if (androidJar == null || !File(androidJar).isFile) {
+            LogCatcher.w(TAG, "缺少 android.jar,跳过 dex 重写: ${dexFile.name}")
+            return false
+        }
+
+        val workDir = File(dexFile.parentFile, "${dexFile.nameWithoutExtension}.slim_work")
+        workDir.deleteRecursively()
+        workDir.mkdirs()
+        val outDir = File(workDir, "out")
+        outDir.mkdirs()
+        val keepFile = File(workDir, "keep.pro")
+
+        return try {
+            keepFile.writeText(
+                buildString {
+                    appendLine("# 由 BuildSlimmer 为 dex 重写生成")
+                    appendLine("-dontobfuscate")
+                    // 不做任何代码优化:dex 重写的目的是"删类",不是"改代码"。
+                    // 开优化会把方法内联/类合并,既改变体积判定,也增加行为风险。
+                    appendLine("-dontoptimize")
+                    appendLine("-dontwarn **")
+                    appendLine()
+                    appendLine("# 必须类白名单(与 jarsToDex 共用同一份)")
+                    MUST_KEEP_PACKAGES.forEach { appendLine("-keep class $it { *; }") }
+                    appendLine()
+                    appendLine("# 本 dex 中需要保留的类(去掉与模板重复的部分)")
+                    keepClasses.sorted().forEach {
+                        // 描述符 Lfoo/Bar; -> 点号形式
+                        val dotted = it.trim().removePrefix("L").removeSuffix(";").replace('/', '.')
+                        appendLine("-keep class $dotted { *; }")
+                    }
+                },
+                Charsets.UTF_8
+            )
+
+            val args = mutableListOf<String>()
+            args.add("--release")
+            args.add("--lib")
+            args.add(androidJar)
+            args.add("--output")
+            args.add(outDir.absolutePath)
+            args.add("--pg-conf")
+            args.add(keepFile.absolutePath)
+            args.add("--min-api")
+            args.add("21")
+            args.add(dexFile.absolutePath)
+
+            LogCatcher.i(TAG, "R8 重写 dex: ${dexFile.name}, 保留 ${keepClasses.size} 个类")
+            R8.main(args.toTypedArray())
+
+            // R8 输出可能拆成多个 dex(classes.dex / classes2.dex)。
+            // 这里只能接受单文件结果:多个 dex 无法塞回 libs/ 的单个文件名。
+            val produced = outDir.listFiles { _, name -> name.endsWith(".dex") } ?: emptyArray()
+            when {
+                produced.isEmpty() -> {
+                    LogCatcher.w(TAG, "R8 未产出 dex: ${dexFile.name}")
+                    false
+                }
+
+                produced.size > 1 -> {
+                    // 多个 dex 说明保留的类超过单 dex 上限,或者 R8 拆分策略保守。
+                    // 安全起见放弃重写:拆开会让 LuaDexLoader 只加载其中一个。
+                    LogCatcher.w(
+                        TAG,
+                        "R8 产出 ${produced.size} 个 dex,无法合并回单文件,放弃重写: ${dexFile.name}"
+                    )
+                    false
+                }
+
+                else -> {
+                    val result = produced[0]
+                    // 原子替换:先写同目录临时文件再 rename,避免中途失败留下半截 dex
+                    val tmp = File(dexFile.parentFile, "${dexFile.name}.slim.tmp")
+                    result.copyTo(tmp, overwrite = true)
+                    if (dexFile.delete() && tmp.renameTo(dexFile)) {
+                        LogCatcher.i(
+                            TAG,
+                            "dex 重写完成: ${dexFile.name} " +
+                                "(${result.length()} 字节,原 ${dexFile.length()} 字节)"
+                        )
+                        true
+                    } else {
+                        tmp.delete()
+                        LogCatcher.w(TAG, "dex 替换失败,保留原文件: ${dexFile.name}")
+                        false
+                    }
+                }
+            }
+        } catch (t: Throwable) {
+            LogCatcher.w(TAG, "R8 重写 dex 失败,保留原文件: ${dexFile.name} (${t.message})")
+            false
+        } finally {
+            workDir.deleteRecursively()
         }
     }
 

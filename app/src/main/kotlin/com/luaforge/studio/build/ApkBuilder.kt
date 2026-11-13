@@ -60,6 +60,49 @@ enum class BuildType(
     }
 }
 
+/**
+ * Lua 源码的打包方式。
+ *
+ * 与 [BuildType] 正交:BuildType 决定"加密与否 / 调试开关",本枚举决定
+ * "加密后的字节码以什么形态进入 APK"。
+ *
+ * - [PLAIN_ENC]  —— 传统形态:每个 `.lua`/`.aly` 编译成字节码后仍以**独立文件**
+ *   留在 `assets/` 里(文件名不变)。运行期直接按路径加载。
+ * - [DEX]        —— 全部字节码打成一份载荷,以 **Java 资源**形式嵌进
+ *   `classes*.dex` 的附加数据,产物 `assets/` 里没有任何 `.lua`。
+ *   运行期由 `LuaDexLoader` 从 dex 里读回并解包。
+ * - [SO]         —— 全部字节码打成一份载荷,加密后**追加到
+ *   `libluaforge_payload.so` 尾部**,产物里既无 `.lua` 也无独立数据文件。
+ *   运行期由 `PayloadContainer` 从自身 `.so` 尾部读回并解包。
+ *
+ * 三种方式的运行时目标一致:启动时把项目还原到应用私有目录,再走既有的
+ * 文件加载链 —— 差别只在"载荷藏在哪里"。
+ */
+enum class PackageMode(
+    /** 产物文件名中的片段,便于一眼看出打包方式。 */
+    val artifactTag: String,
+    /** 是否需要把项目源码编译成字节码(三种模式都要,明文模式只是不合并)。 */
+    val encrypts: Boolean
+) {
+    /** 普通加密:字节码保持为独立文件。 */
+    PLAIN_ENC("enc", true),
+
+    /** 封装进 dex:字节码合并为单一载荷嵌入 classes*.dex。 */
+    DEX("dex", true),
+
+    /** 封装进 so:字节码合并为单一载荷追加到 libluaforge_payload.so。 */
+    SO("so", true);
+
+    companion object {
+        /** 供构建对话框展示的可选模式。 */
+        val selectable: List<PackageMode> = listOf(PLAIN_ENC, DEX, SO)
+
+        /** 从持久化名解析,非法值回退 [PLAIN_ENC]。 */
+        fun fromName(name: String?): PackageMode =
+            entries.firstOrNull { it.name == name } ?: PLAIN_ENC
+    }
+}
+
 class ApkBuilder {
 
     companion object {
@@ -148,7 +191,13 @@ class ApkBuilder {
              * 必须放在参数表末尾 —— 调用方(EditorFunctions)是位置传参,插在中间会错位。
              * 默认 false,关闭时构建行为与旧版一致。
              */
-            buildSlimEnabled: Boolean = false
+            buildSlimEnabled: Boolean = false,
+            /**
+             * Lua 源码的打包方式(普通加密 / 封装进 dex / 封装进 so)。
+             *
+             * 同样是追加参数,理由与 buildSlimEnabled 相同。
+             */
+            packageMode: PackageMode = PackageMode.PLAIN_ENC
         ): String {
             LogCatcher.i("ApkBuilder", "开始构建APK")
             LogCatcher.i("ApkBuilder", "项目路径: $projectPath")
@@ -172,6 +221,7 @@ class ApkBuilder {
             LogCatcher.i("ApkBuilder", "是否加密 Lua/ALY 源码: $encryptLua")
             LogCatcher.i("ApkBuilder", "跳过编译(不加密)文件数: ${skipCompileFiles.size}")
             LogCatcher.i("ApkBuilder", "构建精简: ${if (buildSlimEnabled) "开启" else "关闭"}")
+            LogCatcher.i("ApkBuilder", "打包方式: $packageMode")
 
             var unsignedApkPath: String? = null
 
@@ -235,7 +285,8 @@ class ApkBuilder {
                     mergeDexEnabled,
                     abiTarget,
                     skipCompileFiles,
-                    buildSlimEnabled
+                    buildSlimEnabled,
+                    packageMode
                 )
 
                 if (unsignedApkPath == null) {
@@ -849,7 +900,8 @@ class ApkBuilder {
             mergeDexEnabled: Boolean = true,
             abiTarget: AbiTarget = AbiTarget.UNIVERSAL,
             skipCompileFiles: List<String> = emptyList(),
-            buildSlimEnabled: Boolean = false
+            buildSlimEnabled: Boolean = false,
+            packageMode: PackageMode = PackageMode.PLAIN_ENC
         ): String? {
             val L = getSharedLuaState()
 
@@ -915,7 +967,17 @@ class ApkBuilder {
 
                 // 7.5 精简项目 libs/ 目录(开关关闭时零开销跳过)
                 if (buildSlimEnabled) {
-                    val slimLibs = BuildSlimmer.slimProjectLibs(File(assetsDir, "libs"), templateClasses)
+                    // dex 重写需要 android.jar 作为 library 输入。这里提前取一次
+                    // (后面 Java 编译还会用同一份缓存,不会重复解压)。
+                    val slimAndroidJar = extractAndroidJarToCache(context)
+                    if (slimAndroidJar == null) {
+                        LogCatcher.w("ApkBuilder", "缺少 android.jar,libs dex 只能整体丢弃、无法局部裁剪")
+                    }
+                    val slimLibs = BuildSlimmer.slimProjectLibs(
+                        File(assetsDir, "libs"),
+                        templateClasses,
+                        slimAndroidJar
+                    )
                     LogCatcher.i(
                         "ApkBuilder",
                         "项目 libs 精简完成: 生效=${slimLibs.shrunk}, 剔除重复类=${slimLibs.duplicateClasses.size}"
@@ -930,6 +992,41 @@ class ApkBuilder {
                     encryptProjectFiles(L, assetsDir, skipCompileFiles)
                 } else {
                     LogCatcher.i("ApkBuilder", "未加密版:跳过项目文件加密")
+                }
+
+                // 9.1 按打包方式处理:dex / so 模式会把脚本从 assets 里"抽走",
+                //     产物中不再有独立的 .lua 文件。抽出的文件稍后统一处理,
+                //     必须在 Java 编译与 DEX 合并之前完成(decx 模式要先生成载荷类)。
+                val payloadForDex: ByteArray? = when (packageMode) {
+                    PackageMode.PLAIN_ENC -> {
+                        LogCatcher.i("ApkBuilder", "普通加密模式:脚本以独立文件保留在 assets")
+                        null
+                    }
+
+                    PackageMode.DEX -> {
+                        val payload = extractPayloadFromAssets(assetsDir, skipCompileFiles)
+                        if (payload == null) {
+                            LogCatcher.e("ApkBuilder", "dex 模式:没有可打包的脚本", null)
+                            deleteDirectory(workDir)
+                            return null
+                        }
+                        payload
+                    }
+
+                    PackageMode.SO -> {
+                        val payload = extractPayloadFromAssets(assetsDir, skipCompileFiles)
+                        if (payload == null) {
+                            LogCatcher.e("ApkBuilder", "so 模式:没有可打包的脚本", null)
+                            deleteDirectory(workDir)
+                            return null
+                        }
+                        if (!embedPayloadIntoSo(workDir, payload)) {
+                            LogCatcher.e("ApkBuilder", "so 模式:载荷嵌入原生库失败", null)
+                            deleteDirectory(workDir)
+                            return null
+                        }
+                        null
+                    }
                 }
 
                 // ------------------ Java 编译与 DEX 生成 ------------------
@@ -954,7 +1051,8 @@ class ApkBuilder {
                         androidJarPath,
                         mavenJars,
                         templateClasses = templateClasses,
-                        buildSlimEnabled = buildSlimEnabled
+                        buildSlimEnabled = buildSlimEnabled,
+                        dexPayload = payloadForDex
                     )
 
                     // 删除 assets 下的 java 源文件（避免打包进 APK）
@@ -1003,6 +1101,83 @@ class ApkBuilder {
                 LogCatcher.e("ApkBuilder", "添加项目文件失败", e)
                 return null
             }
+        }
+
+        // ------------------------------------------------------------------
+        // 打包模式:载荷抽取与嵌入
+        // ------------------------------------------------------------------
+
+        /**
+         * 把已加密编译的项目脚本从 `assets` 里抽出来打成单一载荷。
+         *
+         * 抽取后**删除源文件** —— 这正是 dex / so 模式"产物里不再有 lua 文件"
+         * 的实现点。`settings.json`、图标等非脚本文件保持原位,因为运行时与
+         * 签名流程都还要用它们。
+         *
+         * @return 载荷字节;没有可抽取脚本时返回 null
+         */
+        private fun extractPayloadFromAssets(
+            assetsDir: File,
+            skipCompileFiles: List<String>
+        ): ByteArray? {
+            val payload = LuaPayloadBuilder.build(assetsDir, skipCompileFiles.toSet())
+                ?: return null
+
+            var removed = 0
+            assetsDir.walkBottomUp()
+                .filter { it.isFile && it.name.endsWith(".lua", ignoreCase = true) }
+                .forEach { file ->
+                    val rel = file.relativeTo(assetsDir).path.replace('\\', '/')
+                    if (skipCompileFiles.contains(rel)) return@forEach
+                    if (file.delete()) removed++
+                }
+
+            LogCatcher.i(
+                "ApkBuilder",
+                "已从 assets 抽取脚本: ${removed} 个文件 -> 载荷 ${payload.size} 字节"
+            )
+            return payload
+        }
+
+        /**
+         * 把载荷追加进 `libluaforge_payload.so`(so 打包模式)。
+         *
+         * 目标 `.so` 由 CMake 编进 `core.apk` 模板,解压后位于
+         * `lib/<abi>/libluaforge_payload.so`。多架构时要**每个 ABI 各追加一份**
+         * —— 设备只会加载其中一个,其它 ABI 的那份是给别的设备用的。
+         *
+         * @return 是否至少成功嵌入了一个 ABI 的库
+         */
+        private fun embedPayloadIntoSo(workDir: File, payload: ByteArray): Boolean {
+            val seed = java.util.Random(System.currentTimeMillis()).nextInt()
+
+            val soFiles = workDir.walkTopDown()
+                .filter {
+                    it.isFile && it.name == "libluaforge_payload.so"
+                }
+                .toList()
+
+            if (soFiles.isEmpty()) {
+                LogCatcher.e(
+                    "ApkBuilder",
+                    "模板里没有 libluaforge_payload.so,无法使用 so 打包模式",
+                    null
+                )
+                return false
+            }
+
+            var ok = 0
+            for (so in soFiles) {
+                val rel = so.relativeTo(workDir).path
+                if (LuaPayloadBuilder.appendPayloadToSo(so, payload, seed)) {
+                    ok++
+                    LogCatcher.i("ApkBuilder", "载荷已嵌入: $rel")
+                } else {
+                    LogCatcher.w("ApkBuilder", "载荷嵌入失败: $rel")
+                }
+            }
+            LogCatcher.i("ApkBuilder", "so 打包模式: ${ok}/${soFiles.size} 个 ABI 已嵌入载荷")
+            return ok > 0
         }
 
         // 加密core.apk中的库文件
@@ -2002,7 +2177,12 @@ class ApkBuilder {
             androidJarPath: String,
             mavenJars: List<File> = emptyList(),
             templateClasses: Set<String> = emptySet(),
-            buildSlimEnabled: Boolean = false
+            buildSlimEnabled: Boolean = false,
+            /**
+             * dex 打包模式的载荷。非 null 时会额外生成一个承载载荷常量的
+             * Java 源文件一起编译,结果 dex 里就带上了脚本(产物无 .lua 文件)。
+             */
+            dexPayload: ByteArray? = null
         ) {
             // 1. 检查 java 目录
             val javaDir = File(projectPath, "java")
@@ -2015,22 +2195,52 @@ class ApkBuilder {
                 androidJarPath
             }
             
-            // 3. 如果没有 Java 源文件，只处理 Maven JAR 转 DEX（已在前面处理，这里跳过）
-            if (!hasJavaSource) {
-                LogCatcher.i("ApkBuilder", "项目中没有 java 目录或 Java 文件，跳过 Java 编译")
-                return
-            }
-
-            // 4. 收集所有 Java 文件
+            // 3. 收集所有 Java 文件
             val javaFiles = mutableListOf<File>()
-            javaDir.walk().forEach { file ->
-                if (file.isFile && file.name.endsWith(".java", ignoreCase = true)) {
-                    javaFiles.add(file)
+            if (hasJavaSource) {
+                javaDir.walk().forEach { file ->
+                    if (file.isFile && file.name.endsWith(".java", ignoreCase = true)) {
+                        javaFiles.add(file)
+                    }
                 }
             }
-            
+
+            // 3.5 dex 打包模式:生成一个承载载荷字符串常量的 Java 源文件一起编译。
+            //     这样脚本就是 dex 里的常量数据,产物 assets 里不再有 .lua。
+            //     载荷类必须先于"没有 java 源文件就 return"的判断生成 ——
+            //     否则纯 Lua 项目(没有 java/ 目录)在 dex 模式下会什么都不编译。
+            if (dexPayload != null && dexPayload.isNotEmpty()) {
+                val generatedDir = File(workDir, "payload_src")
+                generatedDir.deleteRecursively()
+                val pkgDir = File(
+                    generatedDir,
+                    LuaPayloadBuilder.DEX_PAYLOAD_CLASS.substringBeforeLast('/')
+                )
+                pkgDir.mkdirs()
+                val srcFile = File(
+                    pkgDir,
+                    LuaPayloadBuilder.DEX_PAYLOAD_CLASS.substringAfterLast('/') + ".java"
+                )
+                // 载荷在写进 dex 之前必须加密:dex 里的字符串常量是
+                // 最容易被 `strings` 直接读出来的位置,明文等于没打包。
+                val encrypted = PayloadCrypto.encrypt(
+                    dexPayload,
+                    LuaPayloadBuilder.DEX_PAYLOAD_SEED,
+                    LuaPayloadBuilder.DEX_PAYLOAD_SEGMENT
+                )
+                srcFile.writeText(
+                    LuaPayloadBuilder.buildDexSource(encrypted),
+                    Charsets.UTF_8
+                )
+                javaFiles.add(srcFile)
+                LogCatcher.i(
+                    "ApkBuilder",
+                    "dex 打包模式:已生成载荷类源文件(${dexPayload.size} 字节载荷)"
+                )
+            }
+
             if (javaFiles.isEmpty()) {
-                LogCatcher.i("ApkBuilder", "java 目录下没有 Java 文件，跳过编译")
+                LogCatcher.i("ApkBuilder", "没有可编译的 Java 文件，跳过 Java 编译")
                 return
             }
 

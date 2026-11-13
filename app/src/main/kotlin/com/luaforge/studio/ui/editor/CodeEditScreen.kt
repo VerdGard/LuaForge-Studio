@@ -50,6 +50,7 @@ import com.androlua.LuaActivity
 import com.luaforge.studio.ProjectItem
 import com.luaforge.studio.R
 import com.luaforge.studio.build.BuildType
+import com.luaforge.studio.build.PackageMode
 import com.luaforge.studio.files.FileTree
 import com.luaforge.studio.ui.analyse.AnalyseScreen
 import com.luaforge.studio.ui.attribute.AttributeScreen
@@ -304,14 +305,14 @@ fun CodeEditScreen(
         }
     }
 
-    // 执行构建;构建类型由对话框选择后传入
-    val runBuild: (BuildType) -> Unit = { buildType ->
+    // 执行构建;构建类型与打包方式由对话框选择后传入
+    val runBuild: (BuildType, PackageMode) -> Unit = { buildType, packageMode ->
         scope.launch {
             viewModel.saveAllFilesSilently()
             isBuilding = true
             val result = try {
                 this.async<String>(Dispatchers.IO) {
-                    buildProject(context, projectPath, buildType)
+                    buildProject(context, projectPath, buildType, packageMode = packageMode)
                 }.await()
             } catch (e: Exception) {
                 LogCatcher.e("CodeEditScreen", "构建协程异常", e)
@@ -675,9 +676,9 @@ fun CodeEditScreen(
                             BuildTypeDialog(
                                 showBuildTypeDialog = showBuildTypeDialog,
                                 onDismiss = { showBuildTypeDialog = false },
-                                onConfirm = { buildType ->
+                                onConfirm = { buildType, packageMode ->
                                     showBuildTypeDialog = false
-                                    runBuild(buildType)
+                                    runBuild(buildType, packageMode)
                                 }
                             )
 

@@ -718,6 +718,13 @@
     <string name="code_editor_build_type_release">Release 版</string>
     <string name="code_editor_build_type_release_desc">关闭调试模式</string>
     <string name="code_editor_build_type_default_desc">按项目属性中的加密与调试设置构建</string>
+    <string name="code_editor_package_mode">打包方式</string>
+    <string name="code_editor_package_mode_enc">普通加密</string>
+    <string name="code_editor_package_mode_enc_desc">脚本编译加密后作为独立文件保留</string>
+    <string name="code_editor_package_mode_dex">封装进 dex</string>
+    <string name="code_editor_package_mode_dex_desc">脚本并入 dex,产物中无 lua 文件</string>
+    <string name="code_editor_package_mode_so">封装进 so</string>
+    <string name="code_editor_package_mode_so_desc">脚本藏进原生库尾部,产物中无 lua 文件</string>
     <string name="settings_build_abi">构件设置</string>
     <string name="settings_build_abi_desc">选择打包时保留的 CPU 架构</string>
     <string name="settings_abi_universal">通用版</string>

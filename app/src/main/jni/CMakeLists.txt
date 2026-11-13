@@ -198,3 +198,14 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/fastio)
             -Wno-unused-parameter
     )
 endif ()
+
+# payloadstub 同理:纯 JNI 库,导出 Java_com_luaforge_studio_payload_* 而非
+# luaopen_xxx,产物是 so 打包模式用的载荷容器(libluaforge_payload.so)。
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/payloadstub)
+    add_subdirectory(payloadstub)
+    target_compile_options(luaforge_payload PRIVATE
+            -ffunction-sections
+            -fdata-sections
+            -Wno-unused-parameter
+    )
+endif ()

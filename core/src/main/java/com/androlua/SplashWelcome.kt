@@ -12,6 +12,7 @@ import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.core.view.WindowCompat
+import com.luaforge.studio.payload.PayloadContainer
 import com.luajava.LuaFunction
 import com.luajava.LuaStateFactory
 import java.io.File
@@ -145,10 +146,37 @@ class SplashWelcome : ComponentActivity() {
         }
 
         try {
+            // so / dex 打包模式:项目脚本被打成单一载荷藏在原生库尾部或
+            // 额外 dex 的字符串常量里,先解出来再走常规解包。
+            // 必须放在 unApk 之前 —— 载荷里的文件要占住 localDir,
+            // 后续 unApk("assets") 不会再产出 .lua(产物里本来就没有)。
+            unpackPayloadIfPresent()
+
             unApk("assets", localDir)
             unApk("lua", luaMdDir)
         } catch (e: IOException) {
             sendMsg()
+        }
+    }
+
+    /**
+     * 若本 APK 以 so / dex 模式打包,把内嵌载荷解包到私有目录。
+     *
+     * 失败不阻断启动:未携带载荷的普通模式这里是空操作;携带了却解包失败时,
+     * 记录日志并继续 —— 让上层按"文件不存在"给出明确错误,比在这里抛出
+     * 异常导致白屏更利于排查。
+     */
+    private fun unpackPayloadIfPresent() {
+        try {
+            if (!PayloadContainer.hasAnyPayload()) return
+            val count = if (PayloadContainer.hasPayload()) {
+                PayloadContainer.unpack(java.io.File(localDir))
+            } else {
+                PayloadContainer.unpackFromDex(java.io.File(localDir))
+            }
+            Log.i("SplashWelcome", "载荷解包完成,共 $count 个文件 -> $localDir")
+        } catch (t: Throwable) {
+            Log.e("SplashWelcome", "载荷解包失败: ${t.message}", t)
         }
     }
 

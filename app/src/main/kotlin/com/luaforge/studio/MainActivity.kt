@@ -65,7 +65,6 @@ import com.luaforge.studio.ui.editor.persistence.EditorStateUtil
 import com.luaforge.studio.ui.about.AboutScreen
 import com.luaforge.studio.ui.logs.LogsScreen
 import com.luaforge.studio.ui.mcp.McpScreen
-import com.luaforge.studio.collab.CollabManager
 import com.luaforge.studio.mcp.McpManager
 import com.luaforge.studio.session.SessionHooks
 import com.luaforge.studio.ui.components.FilePickerDialog
@@ -141,11 +140,6 @@ fun MainApp() {
 
     val settings = SettingsManager.currentSettings
     val toastPosition = settings.toastPosition
-
-    // 协同管理器初始化(不在启动时自动连/开,由协同页手动触发)
-    LaunchedEffect(Unit) {
-        CollabManager.initialize(context)
-    }
 
     // MCP 服务随设置变化同步启停(端口/令牌变化会自动重启)
     LaunchedEffect(Unit) {
@@ -1716,6 +1710,12 @@ class MainActivity : ComponentActivity() {
         window.decorView.requestLayout()
         window.decorView.invalidate()
     }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        com.luaforge.studio.ui.editor.viewmodel.CompletionDataManager.clear()
+        System.gc()
+    }
 }
 
 /**
@@ -1757,11 +1757,4 @@ private fun DrawerNavItem(
         shape = MaterialTheme.shapes.medium,
         modifier = Modifier.padding(vertical = 4.dp)
     )
-}
-
-    override fun onDestroy() {
-        super.onDestroy()
-        com.luaforge.studio.ui.editor.viewmodel.CompletionDataManager.clear()
-        System.gc()
-    }
 }

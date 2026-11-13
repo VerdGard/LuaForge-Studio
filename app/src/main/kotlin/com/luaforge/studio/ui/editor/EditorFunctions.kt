@@ -10,6 +10,7 @@ import androidx.core.content.FileProvider
 import com.luaforge.studio.R
 import com.luaforge.studio.build.ApkBuilder
 import com.luaforge.studio.build.BuildType
+import com.luaforge.studio.build.PackageMode
 import com.luaforge.studio.ui.settings.AbiTarget
 import com.luaforge.studio.ui.settings.SettingsManager
 import com.luaforge.studio.ui.editor.viewmodel.EditorViewModel
@@ -136,7 +137,8 @@ suspend fun buildProject(
     context: Context,
     projectPath: String,
     buildType: BuildType = BuildType.PROJECT_DEFAULT,
-    abiTarget: AbiTarget = SettingsManager.currentSettings.abiTarget
+    abiTarget: AbiTarget = SettingsManager.currentSettings.abiTarget,
+    packageMode: PackageMode = PackageMode.PLAIN_ENC
 ): String =
     withContext(Dispatchers.IO) {
         LogCatcher.i("CodeEditScreen", "开始构建项目，路径: $projectPath")
@@ -287,7 +289,7 @@ val mavenDependencies = try {
         //   类型    PROJECT_DEFAULT -> aut,DEBUG -> debug,RELEASE -> release
         // 名称本身只替换文件名非法字符(保留 Unicode 字母,中文项目名不丢)。
         val cleanAppName = appName.replace("[\\\\W]".toRegex(), "_")
-        val baseApkName = "${cleanAppName}_${abiTarget.artifactTag}_${buildType.artifactTag}.apk"
+        val baseApkName = "${cleanAppName}_${abiTarget.artifactTag}_${buildType.artifactTag}_${packageMode.artifactTag}.apk"
         val apkFile = File(externalStorageDir, baseApkName)
 
         // 重名不覆盖:同名产物仍可能存在(例如同参数连续构建),此时追加时间戳后缀,
@@ -296,7 +298,7 @@ val mavenDependencies = try {
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
             File(
                 externalStorageDir,
-                "${cleanAppName}_${abiTarget.artifactTag}_${buildType.artifactTag}_$timestamp.apk"
+                "${cleanAppName}_${abiTarget.artifactTag}_${buildType.artifactTag}_${packageMode.artifactTag}_$timestamp.apk"
             )
         } else {
             apkFile
@@ -343,7 +345,8 @@ val mavenDependencies = try {
                 mergeDexEnabled,             // settings.json 的 mergeDex
                 abiTarget,                   // 打包目标架构(通用/arm64-v8a/armeabi-v7a)
                 skipCompileFiles,            // 跳过编译(不加密)的文件
-                buildSlimEnabled             // 构建精简(全局设置,默认关闭)
+                buildSlimEnabled,            // 构建精简(全局设置,默认关闭)
+                packageMode                  // 打包方式(普通加密 / dex / so)
             )
 
             // 构建后再次检查内存

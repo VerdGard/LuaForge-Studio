@@ -3,14 +3,19 @@ package com.luaforge.studio.ui.editor
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material3.Icon
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
@@ -22,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import com.luaforge.studio.build.BuildType
+import com.luaforge.studio.build.PackageMode
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
@@ -86,20 +92,27 @@ fun InstallApkDialog(
 fun BuildTypeDialog(
     showBuildTypeDialog: Boolean,
     onDismiss: () -> Unit,
-    onConfirm: (BuildType) -> Unit,
+    onConfirm: (BuildType, PackageMode) -> Unit,
     modifier: Modifier = Modifier
 ) {
     if (!showBuildTypeDialog) return
 
     // 默认跟随项目属性中的加密/调试设置
     var selected by remember { mutableStateOf(BuildType.PROJECT_DEFAULT) }
+    // 打包方式与构建类型正交:默认保持传统的"独立文件"形态,避免老用户
+    // 升级后产物形态无预警地变化。
+    var selectedMode by remember { mutableStateOf(PackageMode.PLAIN_ENC) }
 
     AlertDialog(
         modifier = modifier,
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.code_editor_build_dialog_title)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // 两个维度的选项加起来可能超出屏幕,必须可滚动
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Text(
                     text = stringResource(R.string.code_editor_build_type),
                     style = MaterialTheme.typography.labelLarge,
@@ -112,10 +125,24 @@ fun BuildTypeDialog(
                         onSelect = { selected = type }
                     )
                 }
+
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.code_editor_package_mode),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                PackageMode.selectable.forEach { mode ->
+                    PackageModeOption(
+                        mode = mode,
+                        selected = selectedMode == mode,
+                        onSelect = { selectedMode = mode }
+                    )
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(selected) }) {
+            TextButton(onClick = { onConfirm(selected, selectedMode) }) {
                 Text(stringResource(R.string.code_editor_build_start))
             }
         },
@@ -125,6 +152,92 @@ fun BuildTypeDialog(
             }
         }
     )
+}
+
+/** 打包方式单选项。 */
+@Composable
+private fun PackageModeOption(
+    mode: PackageMode,
+    selected: Boolean,
+    onSelect: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onSelect),
+        shape = MaterialTheme.shapes.medium,
+        color = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        },
+        border = if (selected) {
+            BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            null
+        }
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            RadioButton(selected = selected, onClick = onSelect)
+
+            Icon(
+                imageVector = packageModeIcon(mode),
+                contentDescription = null,
+                tint = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.size(20.dp)
+            )
+
+            Column(
+                modifier = Modifier.padding(start = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = packageModeLabel(mode),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = packageModeDescription(mode),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/** 打包方式标题。 */
+@Composable
+private fun packageModeLabel(mode: PackageMode): String = when (mode) {
+    PackageMode.PLAIN_ENC -> stringResource(R.string.code_editor_package_mode_enc)
+    PackageMode.DEX -> stringResource(R.string.code_editor_package_mode_dex)
+    PackageMode.SO -> stringResource(R.string.code_editor_package_mode_so)
+}
+
+/** 打包方式说明。 */
+@Composable
+private fun packageModeDescription(mode: PackageMode): String = when (mode) {
+    PackageMode.PLAIN_ENC -> stringResource(R.string.code_editor_package_mode_enc_desc)
+    PackageMode.DEX -> stringResource(R.string.code_editor_package_mode_dex_desc)
+    PackageMode.SO -> stringResource(R.string.code_editor_package_mode_so_desc)
+}
+
+/** 打包方式图标。 */
+private fun packageModeIcon(mode: PackageMode): ImageVector = when (mode) {
+    PackageMode.PLAIN_ENC -> Icons.Filled.Lock
+    PackageMode.DEX -> Icons.Filled.Android
+    PackageMode.SO -> Icons.Filled.Memory
 }
 
 /** 构建类型单选项。 */

@@ -17,25 +17,8 @@
 #include "lobject.h"
 #include "lstate.h"
 #include "lundump.h"
-
-/* ============ 保护配置（编译时确定） ============ */
-#ifndef LUA_PROTECT_KEY
-#define LUA_PROTECT_KEY 0x5A5A5A5A
-#endif
-
-#ifndef LUA_PROTECT_FLAGS
-#define LUA_PROTECT_FLAGS 0x01  /* 默认启用基础保护 */
-#endif
-
-/* 简单混淆函数 - 内联实现，无性能影响 */
-static lu_byte protect_byte(lu_byte b, int idx) {
-    lu_byte key = (LUA_PROTECT_KEY >> (8 * (idx % 4))) & 0xFF;
-    /* 简单XOR + 移位混淆 */
-    b ^= key;
-    b = (b << 3) | (b >> 5);  /* 循环左移3位 */
-    b ^= (idx & 0xFF);
-    return b;
-}
+/* 混淆算法与 lundump.c 共享同一实现,对称性由编译器保证 */
+#include "lfprotect.h"
 
 typedef struct {
     lua_State *L;
@@ -43,7 +26,23 @@ typedef struct {
     void *data;
     int strip;
     int status;
+    /* 混淆用的密钥流。每段(字符串常量 / 指令段)各自从 block 0 起算,
+     * 保证与读端的段内独立计数一致。 */
+    uint8_t master_key[32];
+    uint8_t keystream[64];
 } DumpState;
+
+/* 为某一段准备密钥流:段序号进入 counter,使同一 chunk 内不同段互不重复。 */
+static void lf_prepare_keystream(DumpState *D, uint32_t segment) {
+    lf_chacha20_block(D->master_key, segment, D->keystream);
+}
+
+/* 清零密钥流,避免残留上一段的内容(仅减少内存 dump 暴露面)。 */
+static void lf_wipe_keystream(DumpState *D) {
+    volatile uint8_t *p = D->keystream;
+    int i;
+    for (i = 0; i < 64; i++) p[i] = 0;
+}
 
 #define dumpVector(D, v, n)    dumpBlock(D,v,(n)*sizeof((v)[0]))
 #define dumpLiteral(D, s)    dumpBlock(D,s,sizeof(s) - sizeof(char))
@@ -98,12 +97,16 @@ static void dumpString(DumpState *D, const TString *s) {
 
         dumpSize(D, size + 1);
 
-        /* 逐字节保护并写入，避免内存分配 */
+        /* 逐字节保护并写入,避免为整串分配临时缓冲。
+         * 段内计数从 0 起,与 lundump.c 的 loadStringN 保持一致。 */
         if (LUA_PROTECT_FLAGS & 0x01) {
-            for (size_t i = 0; i < size; i++) {
-                protected_char = protect_byte(str[i], i);
+            size_t i;
+            lf_prepare_keystream(D, 0x1000u);  /* 字符串段专用 counter 基 */
+            for (i = 0; i < size; i++) {
+                protected_char = (char) lf_protect_byte((uint8_t) str[i], i, D->keystream);
                 dumpBlock(D, &protected_char, 1);
             }
+            lf_wipe_keystream(D);
         } else {
             dumpBlock(D, str, size);
         }
@@ -116,15 +119,18 @@ static void dumpCode(DumpState *D, const Proto *f) {
     dumpInt(D, orig_size);
 
     if ((LUA_PROTECT_FLAGS & 0x02) && orig_size > 0) {
-        /* 逐指令保护并写入 */
+        /* 逐字节保护指令段;同样从段内 0 起算 */
         lu_byte protected_byte;
         const lu_byte *code_bytes = (const lu_byte *) f->code;
         size_t total_bytes = orig_size * sizeof(Instruction);
+        size_t i;
 
-        for (size_t i = 0; i < total_bytes; i++) {
-            protected_byte = protect_byte(code_bytes[i], i);
+        lf_prepare_keystream(D, 0x2000u);  /* 指令段专用 counter 基 */
+        for (i = 0; i < total_bytes; i++) {
+            protected_byte = lf_protect_byte(code_bytes[i], i, D->keystream);
             dumpBlock(D, &protected_byte, 1);
         }
+        lf_wipe_keystream(D);
     } else {
         dumpBlock(D, f->code, orig_size * sizeof(Instruction));
     }
@@ -239,6 +245,9 @@ int luaU_dump(lua_State *L, const Proto *f, lua_Writer w, void *data,
     D.data = data;
     D.strip = strip;
     D.status = 0;
+    /* 主密钥在 native 内派生,Java 侧全程接触不到 */
+    lf_master_key(D.master_key);
+    memset(D.keystream, 0, sizeof(D.keystream));
     dumpHeader(&D);
     dumpByte(&D, f->sizeupvalues);
     dumpFunction(&D, f, NULL);

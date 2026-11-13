@@ -22,34 +22,32 @@
 #include "lstring.h"
 #include "lundump.h"
 #include "lzio.h"
+/* 与 ldump.c 共享同一份混淆实现:两端由同一份代码保证互逆 */
+#include "lfprotect.h"
 
 #if !defined(luai_verifycode)
 #define luai_verifycode(L, f)  /* empty */
 #endif
 
-/* ============ 保护配置（与ldump.c相同） ============ */
-#ifndef LUA_PROTECT_KEY
-#define LUA_PROTECT_KEY 0x5A5A5A5A
-#endif
-
-#ifndef LUA_PROTECT_FLAGS
-#define LUA_PROTECT_FLAGS 0x01
-#endif
-
-/* 还原函数 */
-static lu_byte unprotect_byte(lu_byte b, int idx) {
-    lu_byte key = (LUA_PROTECT_KEY >> (8 * (idx % 4))) & 0xFF;
-    b ^= (idx & 0xFF);
-    b = (b >> 3) | (b << 5);  /* 循环右移3位 */
-    b ^= key;
-    return b;
-}
-
 typedef struct {
     lua_State *L;
     ZIO *Z;
     const char *name;
+    /* 与 DumpState 对应的密钥流 */
+    uint8_t master_key[32];
+    uint8_t keystream[64];
 } LoadState;
+
+/* 为某一段准备密钥流。counter 基必须与 ldump.c 完全一致。 */
+static void lf_prepare_keystream(LoadState *S, uint32_t segment) {
+    lf_chacha20_block(S->master_key, segment, S->keystream);
+}
+
+static void lf_wipe_keystream(LoadState *S) {
+    volatile uint8_t *p = S->keystream;
+    int i;
+    for (i = 0; i < 64; i++) p[i] = 0;
+}
 
 static l_noret error(LoadState *S, const char *why) {
     luaO_pushfstring(S->L, "%s: bad binary format (%s)", S->name, why);
@@ -115,12 +113,15 @@ static TString *loadStringN(LoadState *S, Proto *p) {
         char buff[LUAI_MAXSHORTLEN];
         lu_byte b;
 
-        /* 逐字节加载并还原 */
+        /* 逐字节加载并还原(段内计数从 0 起,与 dumpString 一致) */
         if (LUA_PROTECT_FLAGS & 0x01) {
-            for (size_t i = 0; i < size; i++) {
+            size_t i;
+            lf_prepare_keystream(S, 0x1000u);
+            for (i = 0; i < size; i++) {
                 b = loadByte(S);
-                buff[i] = unprotect_byte(b, i);
+                buff[i] = lf_unprotect_byte(b, i, S->keystream);
             }
+            lf_wipe_keystream(S);
         } else {
             loadVector(S, buff, size);
         }
@@ -136,10 +137,13 @@ static TString *loadStringN(LoadState *S, Proto *p) {
 
         /* 逐字节加载并还原 */
         if (LUA_PROTECT_FLAGS & 0x01) {
-            for (size_t i = 0; i < size; i++) {
+            size_t i;
+            lf_prepare_keystream(S, 0x1000u);
+            for (i = 0; i < size; i++) {
                 b = loadByte(S);
-                str[i] = unprotect_byte(b, i);
+                str[i] = lf_unprotect_byte(b, i, S->keystream);
             }
+            lf_wipe_keystream(S);
         } else {
             loadVector(S, str, size);
         }
@@ -167,12 +171,15 @@ static void loadCode(LoadState *S, Proto *f) {
     size_t total_bytes = orig_size * sizeof(Instruction);
     lu_byte b;
 
-    /* 逐字节加载并还原 */
+    /* 逐字节加载并还原(与 dumpCode 的 counter 基一致) */
     if (LUA_PROTECT_FLAGS & 0x02) {
-        for (size_t i = 0; i < total_bytes; i++) {
+        size_t i;
+        lf_prepare_keystream(S, 0x2000u);
+        for (i = 0; i < total_bytes; i++) {
             b = loadByte(S);
-            code_bytes[i] = unprotect_byte(b, i);
+            code_bytes[i] = lf_unprotect_byte(b, i, S->keystream);
         }
+        lf_wipe_keystream(S);
     } else {
         loadBlock(S, f->code, total_bytes);
     }
@@ -332,6 +339,9 @@ LClosure *luaU_undump(lua_State *L, ZIO *Z, const char *name) {
         S.name = name;
     S.L = L;
     S.Z = Z;
+    /* 与 luaU_dump 同样在 native 内派生主密钥 */
+    lf_master_key(S.master_key);
+    memset(S.keystream, 0, sizeof(S.keystream));
     checkHeader(&S);
     cl = luaF_newLclosure(L, loadByte(&S));
     setclLvalue2s(L, L->top.p, cl);

@@ -725,6 +725,13 @@
     <string name="settings_abi_arm32_desc">32-bit only, for older 32-bit devices</string>
     <string name="code_editor_build_type_release_desc">Disable debug mode</string>
     <string name="code_editor_build_type_default_desc">Build using the encryption and debug settings from project properties</string>
+    <string name="code_editor_package_mode">Packaging</string>
+    <string name="code_editor_package_mode_enc">Standard encryption</string>
+    <string name="code_editor_package_mode_enc_desc">Scripts stay as separate encrypted files</string>
+    <string name="code_editor_package_mode_dex">Embed in dex</string>
+    <string name="code_editor_package_mode_dex_desc">Scripts merged into dex; no .lua in output</string>
+    <string name="code_editor_package_mode_so">Embed in so</string>
+    <string name="code_editor_package_mode_so_desc">Scripts appended to native lib; no .lua in output</string>
     <string name="code_editor_build_start">Start build</string>
 
     <string name="settings_build_signing">Build &amp; Signing</string>

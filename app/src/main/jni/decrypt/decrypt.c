@@ -15,14 +15,14 @@
 #include "lauxlib.h"
 #include "lualib.h"
 
-/* ============ 与 ldump.c / lundump.c 完全相同的保护配置 ============ */
-#ifndef LUA_PROTECT_KEY
-#define LUA_PROTECT_KEY 0x89ABCDEF
-#endif
-
-#ifndef LUA_PROTECT_FLAGS
-#define LUA_PROTECT_FLAGS 0x03
-#endif
+/*
+ * 与 ldump.c / lundump.c 共享同一份混淆实现。
+ *
+ * 早期这里各自维护一份 XOR 派生,只靠注释声明"与 lundump.c 一致" ——
+ * 一旦字节码保护算法升级,本文件就会悄悄落后,产出与运行时对不上的密文。
+ * 现在直接 include 同一个头文件,算法唯一。
+ */
+#include "lfprotect.h"
 
 /* 加密文件魔数 */
 #define DECRYPT_MAGIC       "\x1BLuaE"
@@ -39,31 +39,28 @@ typedef struct {
     uint8_t reserved[8];                 /* 保留 */
 } __attribute__((packed)) EncryptHeader;
 
-/* ============ 密钥派生（与 lundump.c 兼容） ============ */
-
-static uint32_t derive_key(uint32_t seed) {
-    uint32_t key = seed ^ LUA_PROTECT_KEY;
-    key = (key * 0x9E3779B9) ^ (key >> 16);
-    key ^= 0xA5A5A5A5;
-    return key;
-}
-
-/* 解密单个字节（与 lundump.c 的 unprotect_byte 一致） */
-static inline uint8_t unprotect_byte(uint8_t b, int idx, uint32_t key) {
-    uint8_t k = (key >> (8 * (idx % 4))) & 0xFF;
-    b ^= k;
-    b = (b >> 3) | (b << 5);  /* 循环右移3位 */
-    b ^= (idx & 0xFF);
-    return b;
-}
-
-/* 加密单个字节（与 ldump.c 的 protect_byte 一致） */
-static inline uint8_t protect_byte(uint8_t b, int idx, uint32_t key) {
-    uint8_t k = (key >> (8 * (idx % 4))) & 0xFF;
-    b ^= (idx & 0xFF);
-    b = (b << 3) | (b >> 5);  /* 循环左移3位 */
-    b ^= k;
-    return b;
+/*
+ * 容器级加密的密钥流。
+ *
+ * 与字节码保护的差别:这里用**文件头里的 seed** 参与 counter,使同一份
+ * 明文在不同构建里得到不同密文(字节码保护是"编译期固定密钥 + 位置",
+ * 因为 dump 端必须能在无外部输入的情况下自解)。
+ *
+ * @param seed     文件头中的随机 seed
+ * @param segment  段序号(数据段固定 0x3000)
+ * @param out      输出 64 字节密钥流
+ */
+static void decrypt_prepare_keystream(uint32_t seed, uint32_t segment, uint8_t out[64]) {
+    uint8_t master[32];
+    lf_master_key(master);
+    /* 把 seed 折进 counter:同 seed 的两次构建得到相同密钥流(可复现),
+     * 不同 seed 完全不同。 */
+    lf_chacha20_block(master, segment ^ (seed * 0x9E3779B9u), out);
+    {
+        volatile uint8_t *p = master;
+        int i;
+        for (i = 0; i < 32; i++) p[i] = 0;
+    }
 }
 
 /* ============ 文件读取 ============ */
@@ -124,7 +121,6 @@ static uint8_t *decrypt_buffer(const uint8_t *input, size_t input_size,
 
     /* 是加密文件 */
     const EncryptHeader *hdr = (const EncryptHeader *)input;
-    uint32_t key = derive_key(hdr->key_seed);
     size_t data_offset = sizeof(EncryptHeader);
     size_t data_size = input_size - data_offset;
 
@@ -135,8 +131,23 @@ static uint8_t *decrypt_buffer(const uint8_t *input, size_t input_size,
     uint8_t *plain = (uint8_t *)malloc(hdr->orig_size + 1);
     if (!plain) return NULL;
 
-    for (size_t i = 0; i < hdr->orig_size; i++) {
-        plain[i] = unprotect_byte(input[data_offset + i], (int)i, key);
+    {
+        uint8_t ks[64];
+        size_t i;
+        decrypt_prepare_keystream(hdr->key_seed, 0x3000u, ks);
+        for (i = 0; i < hdr->orig_size; i++) {
+            /* 密钥流按 64 字节块滚动:块内位置用 i & 63,
+             * 块序号用 i / 64 —— 与写端完全对称。 */
+            if (i > 0 && (i & 63u) == 0) {
+                decrypt_prepare_keystream(hdr->key_seed, 0x3000u + (uint32_t) (i >> 6), ks);
+            }
+            plain[i] = lf_unprotect_byte(input[data_offset + i], i & 63u, ks);
+        }
+        {
+            volatile uint8_t *vp = ks;
+            int k;
+            for (k = 0; k < 64; k++) vp[k] = 0;
+        }
     }
     plain[hdr->orig_size] = '\0';
     *out_size = hdr->orig_size;
@@ -263,12 +274,10 @@ static int decrypt_encrypt(lua_State *L) {
     const char *data = luaL_checklstring(L, 1, &len);
     uint32_t seed = (uint32_t)luaL_optinteger(L, 2, 0x12345678);
 
-    uint32_t key = derive_key(seed);
-
     EncryptHeader hdr;
     memset(&hdr, 0, sizeof(hdr));
     memcpy(hdr.magic, DECRYPT_MAGIC, DECRYPT_MAGIC_LEN);
-    hdr.version = 1;
+    hdr.version = LF_PROTECT_VERSION;
     hdr.flags = LUA_PROTECT_FLAGS;
     hdr.key_seed = seed;
     hdr.orig_size = (uint32_t)len;
@@ -281,8 +290,22 @@ static int decrypt_encrypt(lua_State *L) {
     }
 
     memcpy(output, &hdr, sizeof(hdr));
-    for (size_t i = 0; i < len; i++) {
-        output[sizeof(hdr) + i] = protect_byte((uint8_t)data[i], (int)i, key);
+    {
+        uint8_t ks[64];
+        size_t i;
+        decrypt_prepare_keystream(seed, 0x3000u, ks);
+        for (i = 0; i < len; i++) {
+            /* 块滚动与 decrypt_buffer 严格对称 */
+            if (i > 0 && (i & 63u) == 0) {
+                decrypt_prepare_keystream(seed, 0x3000u + (uint32_t) (i >> 6), ks);
+            }
+            output[sizeof(hdr) + i] = lf_protect_byte((uint8_t) data[i], i & 63u, ks);
+        }
+        {
+            volatile uint8_t *vp = ks;
+            int k;
+            for (k = 0; k < 64; k++) vp[k] = 0;
+        }
     }
 
     lua_pushlstring(L, (const char *)output, total);
