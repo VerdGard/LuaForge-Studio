@@ -56,7 +56,7 @@ import kotlinx.coroutines.withContext
 /**
  * 设置页的「崩溃记录」区域。
  *
- * 数据来自 [CrashRecorder] 落盘的 `/storage/emulated/0/LuaForge-Studio/crash/*.log`
+ * 数据来自 [CrashRecorder] 落盘的 `/storage/emulated/0/LuaForge-Studio/crash/` 下 `crash_` 开头的 .log
  * (外部不可写时为私有 `filesDir/crash/`)。列表**每行一条崩溃**,时间精确到秒;
  * 点开才是完整正文(含异常类型、线程、设备与应用版本、完整堆栈、cause 链)。
  *
