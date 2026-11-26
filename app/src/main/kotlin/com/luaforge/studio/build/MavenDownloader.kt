@@ -30,8 +30,8 @@ class MavenDownloader(private val context: Context) {
     /**
      * 依赖下载用的 OkHttp 客户端。
      *
-     * 单一实例、进程内复用连接池。构建参数固定,因此只需 lazy 一次的语义;
-     * 这里保留显式 getter 只是为了在同步块里给出清晰的构造点。
+     * 单一实例、进程内复用连接池。构建参数固定,`by lazy` 正好表达"只初始化一次"。
+     * 早期版本会按代理配置版本重建 client,代理功能移除后这层判断已无意义。
      */
     private val okHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()

@@ -27,6 +27,10 @@ object OkHttpUtil {
      *
      * lazy 的语义正合适:构造参数固定,整个进程复用一份连接池即可。
      * 早期版本按"代理版本号"重建 client,代理功能移除后这层判断没有意义。
+     *
+     * 注意**不要**再包一个 `fun getClient()`:Kotlin 属性 `client` 会自动生成
+     * `getClient()`,与同名函数 JVM 签名相同,编译期直接报
+     * "Platform declaration clash"。直接引用 `client` 即可。
      */
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -35,8 +39,6 @@ object OkHttpUtil {
             .writeTimeout(30, TimeUnit.SECONDS)
             .build()
     }
-
-    private fun getClient(): OkHttpClient = client
 
     // ========== GET请求 ==========
 
@@ -131,7 +133,7 @@ object OkHttpUtil {
                 .applyCommonHeaders(cookie, null, headers)
                 .build()
 
-            getClient().newCall(request).execute().use { response ->
+            client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val file = File(savePath)
                     file.parentFile?.mkdirs()
@@ -166,7 +168,7 @@ object OkHttpUtil {
     private fun execute(request: Request, charset: String?): HttpResponse {
         return try {
             // use{} 及时关闭响应体,避免连接泄漏
-            getClient().newCall(request).execute().use { response ->
+            client.newCall(request).execute().use { response ->
                 val content = readBody(response, charset)
                 buildResponse(response, content)
             }

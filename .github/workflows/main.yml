@@ -23,6 +23,22 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
+    # 工程在 app/build.gradle.kts 与 core-apk/build.gradle.kts 里把 CMake 版本
+    # 固定为 3.31.6,而 runner 镜像自带的 CMake 版本随镜像更新而变
+    # (ubuntu-24.04 预装过 3.31.6,ubuntu-26.04 起不再预装),于是同一份代码
+    # 会在新镜像上以 "[CXX1300] CMake '3.31.6' was not found" 失败。
+    # 这里显式从 SDK 安装,让构建不再依赖镜像预装内容。
+    - name: Install CMake 3.31.6
+      run: |
+        SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+        if [ ! -x "$SDKMANAGER" ]; then
+          SDKMANAGER=$(ls -1 "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n 1)
+        fi
+        echo "sdkmanager: $SDKMANAGER"
+        yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+        "$SDKMANAGER" --install "cmake;3.31.6"
+        "$SDKMANAGER" --list_installed | grep -i cmake || true
+
     - name: Decode keystore
       run: echo "${{ secrets.SIGNING_KEY_BASE64 }}" | base64 -d > ${{ runner.temp }}/star.jks
 
