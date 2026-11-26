@@ -71,14 +71,33 @@
   - 运行时由 `LuaActivity.onCreate` 读取:只申请**仍未授予**的**运行时**权限
     (按 `protectionLevel == dangerous` 判定,不硬编码名单),已全授予时不做空调用
   - 申请结果仍走既有的 `onRequestPermissionsResult` 回调,脚本可自行接管
-- **文档重写**
-  - `SKILL.md` 与开发文档按"每个 Lua 函数怎么用"的粒度重写,补充参数、
-    返回值、易错点与可运行示例
-  - 新增 `doc/LuaDraw.md`:`LuaDrawable` 的 `draw(canvas, paint, self)` 回调语义
-    (首次三参 / 返回函数后一参)、原生 `canvas` 模块(`require "canvas"`)逐函数
-    参考与参数类型陷阱、`Paint`/`Path`/`RectF` 配方,以及 5 个完整示例
-  - `NETWORK.md` 重写为"网络权限 + 两条 Lua 网络通道",删去已移除的代理与拦截章节
-  - 移除文档中关于已删除功能(日志页、协同、播放器控件、网络拦截、代理、防火墙)的描述
+- **文档重写(逐函数级)**
+  - `SKILL.md` 由 691 行扩写至 1386 行,补齐"每个 API 怎么用":
+    - §1.2 语法扩展改为**逐条源码核对**,修正了原先写错的 `defer`(实为
+      调用一个不存在的全局 `defer`,运行即报 nil)、`global`(其实是保留字,
+      可用)、`let`(有词法无解析)与 `obj?.m()`(解析器直接 syntaxerror);
+      并补上三元、`$`/`@` 缩写、`||`/`&&`/`!` 等此前漏记的项
+    - §1.6 全局函数从"签名表"扩成**逐个说明 + 可复制示例**(`dump`/`each`/`enum`/
+      `printstack`/`compile`/`task`/`thread`/`timer`/`loadlayout`/`loadbitmap`/`loadmenu`),
+      并标明 `getids()` 是死代码
+    - §1.7 修正 `luajava.override` 的语义:它返回**已实例化的对象**而非 Class,
+      方法表决定拦截范围
+    - §1.9 `Http` 补全方法一览、失败回调只有两参、multipart 文件上传、全局默认头
+    - §1.10 新增 `cjson`/`lfs`/`zlib`/`regex`/`crypt`/`md5`/`base64`/`time`/`zip`
+      的最小可运行示例,并逐条按源码纠正参数形态(如 `zip.add` 需
+      `(name, "string", content)`、`time.elapsed(start)` 必须传参、
+      `crypt.sha1` 与 `md5.sum` 返回**二进制**而非十六进制)
+  - 新增 `doc/LuaDraw.md`:`LuaDrawable` 的 `draw(canvas, paint, self)` 首参语义
+    (首次三参 / 返回函数后仅一参)、`getBounds()` 使用条件、原生 `canvas` 模块
+    (`require "canvas"`)逐函数参数表与"方法不带 self"陷阱,并明确 `canvas.get`
+    会污染共享元表而**不可用**;含 `Paint`/`Path`/`RectF` 配方与完整示例
+  - `RuntimeAPI.md` 由 301 行扩至 482 行:补 Activity 跳转/取参/结果/路径/共享数据/
+    菜单/服务/广播的完整用法,并标注 `getArg` 下标 0 起及其边界判断缺陷
+  - `NETWORK.md` 重写为"网络权限(含自动申请)+ 两条 Lua 网络通道",
+    删去已移除的代理与拦截章节
+  - `README.md` 的「Lua 扩展语法」章节按 `llex.c`/`lparser.c`/`lcode.c` 重写:
+    区分"可用 / 不可用",给出每项的实现行号,并列出明确不支持的写法
+  - MCP 的 `read_dev_doc` 清单登记 `LuaDraw.md`,便于外部工具发现
 
 ## 1.6.9
 
@@ -513,64 +532,80 @@
 
 # Lua 扩展语法
 
-## 1. 概述
+> 本章内容逐条对照 `app/src/main/jni/lua/{llex.c,lparser.c,lcode.c}` 核实。
+> **解析器支持 ≠ 推荐使用**:仓库内 `.lua` / `.aly` 实际只用了 `try/catch`
+> (`assets/layouthelper/main.lua`)。给业务代码写逻辑时优先用标准 Lua 写法
+> (`if/elseif`、`pcall`、`local`),扩展语法只在确有收益时才用。
 
-本文档基于 Lua 5.5 的深度魔改版本，全面支持现代编程语言的语法特性。主要特性包括：
+## 1. 运行时基线
 
-- 增强型语法结构：支持 try-catch-finally 异常处理、switch-case 多分支、defer 延迟执行、when 条件分支、continue 跳转。
-- 现代化操作符：三元运算符、复合赋值、可选链、空值合并、管道运算符。
-- 函数式编程增强：Lambda 表达式（匿名函数）简洁语法。
-- 完整的特性组合：所有扩展语法可以无缝嵌套使用。
+`lua.h` 的版本宏**不自洽**:`LUA_VERSION_MAJOR/MINOR/RELEASE` 写着 `5/5/0`,但
+`LUA_VERSION_NUM` 是 `504`。代码结构与 API(`lua_newuserdatauv`、`lua_resetthread`)
+都是 **Lua 5.4 系列**,在其上做了本仓库的语法扩展。写文档或注释时不要断言"Lua 5.5"。
+
+预编译块签名被改为 `LuaForge-Studio\n`(`lua.h:33`)——**标准 `luac` 的产物与它不兼容**,
+不要外部编译后塞进来。
 
 ---
 
 ## 2. 词法扩展
 
-### 2.1 新增操作符
+### 2.1 运算符与符号
 
-| 符号 | 等价于/描述 | 说明 |
-|------|------------|------|
-| `? :` | if-else 三元 | 条件运算符 `(cond) ? true_expr : false_expr` |
-| `?.` | 安全访问 | 可选链操作符，避免 nil 报错 |
-| `??` | 空值合并 | 左侧为 nil 时返回右侧值 |
-| `|>` | 管道操作符 | 将值传入函数 `value |> func` |
-| `!` | `not` | 逻辑非 |
-| `!=` | `~=` | 不等于 |
-| `&&` | `and` | 逻辑与 |
-| `||` | `or` | 逻辑或 |
-| `$` | `local` | 局部变量声明缩写 |
-| `@` | `::` | 标签声明（用于 goto） |
+下表全部由 `llex.c` 的词法分支实现(`case '!': ...` 一带,约 690–745 行):
+
+| 符号 | 词法结果 | 说明 |
+|------|----------|------|
+| `!` | `TK_NOT` | 等价 `not` |
+| `!=` | `TK_NE` | 等价 `~=` |
+| `&&` | `TK_AND` | 等价 `and` |
+| `\|\|` | `TK_OR` | 等价 `or` |
+| `?` | `TK_QUESTION` | 三元运算符起始(见 §3.1) |
+| `?.` | `TK_OPTDOT` | 可选访问(见 §3.2) |
+| `??` | `TK_NULLCOAL` | 空值合并(见 §3.3) |
+| `\|>` | `TK_PIPE` | 管道(见 §3.4) |
+| `$` | `TK_LOCAL` | **`local` 的缩写**,注意不是"声明新变量"而是纯替换 |
+| `@` | `TK_DBCOLON` | **`::` 的缩写**(标签) |
+| `\` | `TK_LAMBDA` | Lambda 起始符(见 §3.5) |
+
+> `let` 只出现在词法表 `luaX_tokens` 里,**解析器没有任何分支处理 `TK_LET`** ——
+> 写了会直接语法错误。不要用。
+>
+> `global` 是**真正的保留字**(`RESERVED` 枚举成员,不在 `LUA_COMPAT_GLOBAL` 条件内),
+> 可用 `global x` / `global <const> y` / `global *` / `global function f() end`
+> 显式声明全局(`lparser.c:2582` `globalstat`)。仓库内无使用案例。
 
 ### 2.2 复合赋值
 
-支持完整的 C 风格复合赋值操作符：
+12 个,全部在 `lparser.c:1835` 的分支里实现:
 
-| 操作符 | 示例 | 等价于 |
-|--------|------|--------|
-| `+=` | `a += 5` | `a = a + 5` |
-| `-=` | `a -= 3` | `a = a - 3` |
-| `*=` | `a *= 2` | `a = a * 2` |
-| `/=` | `a /= 4` | `a = a / 4` |
-| `//=` | `a //= 2` | `a = a // 2` |
-| `%=` | `a %= 3` | `a = a % 3` |
-| `^=` | `a ^= 2` | `a = a ^ 2` |
-| `..=` | `s ..= "x"` | `s = s .. "x"` |
-| `&=` | `bits &= mask` | `bits = bits & mask` |
-| `|=` | `flags |= 0x01` | `flags = flags | 0x01` |
-| `<<=` | `a <<= 2` | `a = a << 2` |
-| `>>=` | `a >>= 1` | `a = a >> 1` |
+| 操作符 | 等价于 |
+|--------|--------|
+| `+=` | `a = a + b` |
+| `-=` | `a = a - b` |
+| `*=` | `a = a * b` |
+| `/=` | `a = a / b` |
+| `//=` | `a = a // b` |
+| `%=` | `a = a % b` |
+| `^=` | `a = a ^ b` |
+| `..=` | `a = a .. b` |
+| `&=` | `a = a & b` |
+| `\|=` | `a = a \| b` |
+| `<<=` | `a = a << b` |
+| `>>=` | `a = a >> b` |
 
-**示例代码：**
+**没有** `&&=` 与 `||=`(词法里 `&&` 直接归为 `TK_AND`,没有对应的赋值形态)。
+
 ```lua
-$ counter = 10
-counter += 5      -- 15
-counter *= 2      -- 30
+local counter = 10
+counter += 5        -- 15
+counter *= 2        -- 30
 
-$ message = "Hello"
-message ..= " World"  -- "Hello World"
+local message = "Hello"
+message ..= " World"    -- "Hello World"
 
-$ flags = 0b1100
-flags &= 0b1010   -- 0b1000
+local flags = 0xC
+flags &= 0xA        -- 0x8
 ```
 
 ---
@@ -579,580 +614,295 @@ flags &= 0b1010   -- 0b1000
 
 ### 3.1 三元运算符
 
-简洁的条件表达式，支持嵌套使用。
+**语法**:`cond ? a : b`,实现见 `lparser.c:1535`(`subexpr` 尾部,`limit < 1` 时生效)。
 
-**语法格式：**
 ```lua
-(condition) ? true_expression : false_expression
+local age = 18
+local status = (age >= 18) ? "adult" : "minor"     -- adult
+
+-- 可嵌套:内层会先结合
+local score = 85
+local grade = score >= 90 ? "A" : score >= 80 ? "B" : "C"   -- B
 ```
 
-**示例代码：**
-```lua
-$ age = 18
-$ status = (age >= 18) ? "adult" : "minor"
-print(status)  -- adult
-
--- 嵌套使用
-$ score = 85
-$ grade = score >= 90 ? "A" : score >= 80 ? "B" : "C"
-print(grade)  -- B
-```
-
----
+`cond` 为真取 `a`,否则取 `b`。**短路语义**:只有被选中的分支会被求值。
 
 ### 3.2 可选链
 
-安全访问嵌套对象属性，避免因中间值为 nil 而抛出错误。
+**语法**:`obj?.field`、`obj?.[key]`,实现见 `lparser.c:1306`。
 
-**语法格式：**
 ```lua
-obj?.field          -- 安全访问字段
-obj?.[index]        -- 安全访问数组元素
-obj?.method?()      -- 安全调用方法
-```
-
-**示例代码：**
-```lua
-$ user = {
-  profile = {
-    name = "Alice",
-    settings = { theme = "dark" }
-  }
-}
+local user = { profile = { name = "Alice" } }
 
 print(user?.profile?.name)          -- Alice
-print(user?.profile?.address?.city) -- nil（不会报错）
-print(user?.nonexist?.field)        -- nil
+print(user?.profile?.address?.city) -- nil,不会报错
 
--- 与空值合并结合使用
-$ city = user?.profile?.address?.city ?? "unknown"
-print(city)  -- unknown
+local city = user?.profile?.address?.city ?? "unknown"   -- unknown
 ```
 
----
+⚠️ **`obj?.method()` 可选调用未实现**:解析器在 `?.` 后遇到 `(` 会直接抛
+`optional call not implemented yet`(`lparser.c:1313`)。要安全调用请自己判空:
+
+```lua
+if user?.callback then user.callback() end
+```
 
 ### 3.3 空值合并
 
-当左侧值为 nil 时返回右侧值，否则返回左侧值。
+**语法**:`a ?? b`。左值为 `nil` 时取右值,否则取左值。
 
-**语法格式：**
 ```lua
-value ?? default_value
+local name = nil
+local display = name ?? "Anonymous"   -- "Anonymous"
+
+local count = 0
+local result = count ?? 100           -- 0(0 不是 nil)
+
+local a, b, c = nil, nil, 42
+local value = a ?? b ?? c ?? 0        -- 42
 ```
 
-**示例代码：**
+与 Lua 的 `or` 的区别:**`??` 只对 `nil` 生效**,`false` 与 `0` 不会被跳过。
+
+### 3.4 管道运算符
+
+**语法**:`value |> f`,结果等价于 `f(value)`。实现见 `lcode.c:1942` `luaK_pipe`。
+
 ```lua
-$ name = nil
-$ display = name ?? "Anonymous"  -- "Anonymous"
+local double = function(x) return x * 2 end
+local add1   = function(x) return x + 1 end
+local square = function(x) return x * x end
 
-$ count = 0
-$ result = count ?? 100          -- 0（0 不是 nil）
-
-$ a = nil; $ b = nil; $ c = 42
-$ value = a ?? b ?? c ?? 0       -- 42
+local result = 5 |> double |> add1 |> square    -- ((5*2)+1)^2 = 121
 ```
 
----
+### 3.5 Lambda 表达式
 
-### 3.4 Lambda 表达式
+**语法**:`\params -> expr`、`\params -> do ... end`、`\params => expr`、`\params => do ... end`。
 
-简洁的匿名函数定义语法，支持多种写法。
+参数列表的括号**可省**(`lambda_parlist`,`lparser.c:1104`)。用 `->` 或 `=>` 都行,
+两者的区别只在书写偏好 —— 两者都同时支持表达式体与 `do ... end` 块体
+(`lambda_body`,`lparser.c:1139`)。
 
-**语法格式：**
 ```lua
-\参数列表 -> 表达式                 -- 单表达式自动返回
-\参数列表 => 语句块                 -- 多语句需显式 return
-lambda 参数列表 -> 表达式           -- 完整写法
-```
+local add = \x, y -> x + y
+print(add(3, 5))          -- 8
 
-**示例代码：**
-```lua
--- 基础用法
-$ add = \x, y -> x + y
-print(add(3, 5))  -- 8
+local square = \x -> x * x
+print(square(4))          -- 16
 
-$ square = \x -> x * x
-print(square(4))  -- 16
-
--- 多语句块
-$ complex = \x, y -> do
-  $ temp = x + y
+-- 块体
+local complex = \x, y -> do
+  local temp = x + y
   return temp * 2
 end
+print(complex(1, 2))      -- 6
 
 -- 闭包
-$ factor = 3
-$ multiplier = \x -> x * factor
-print(multiplier(5))  -- 15
+local factor = 3
+local mul = \x -> x * factor
+print(mul(5))             -- 15
 
--- 高阶函数
-$ make_adder = \n -> \x -> x + n
-$ add5 = make_adder(5)
-print(add5(10))  -- 15
+-- 嵌套
+local makeAdder = \n -> \x -> x + n
+print(makeAdder(5)(10))   -- 15
+```
 
--- 与管道结合
-$ numbers = {1, 2, 3, 4, 5}
-$ doubled = map(numbers, \x -> x * 2)
+### 3.6 管道 + Lambda 组合
+
+```lua
+local numbers = { 1, 2, 3, 4, 5 }
+local total = 0
+for _, v in ipairs(numbers) do total += v end
+print(total |> \s -> s * 2)     -- 30
 ```
 
 ---
 
-### 3.5 管道运算符
+## 4. 语句扩展
 
-将值从左到右传递通过一系列函数，提高代码可读性。
+### 4.1 Try-Catch-Finally
 
-**语法格式：**
-```lua
-value |> function1 |> function2 |> function3
+**语法**(`trystat`,`lparser.c:2735`):
+
+```
+try <block> [catch [(] [name] [)] <block>] [finally <block>] end
 ```
 
-**示例代码：**
-```lua
-$ double = \x -> x * 2
-$ add1 = \x -> x + 1
-$ square = \x -> x * x
+`catch` 的括号与错误变量名**都可省略**:`catch e` / `catch(e)` / `catch()` / 裸 `catch` 四种写法都接受。
 
-$ result = 5 |> double |> add1 |> square
-print(result)  -- ((5*2)+1)^2 = 121
-
--- 与三元结合
-$ value = (x > 0) ? x : 0 |> double |> add1
-
--- 与可选链结合
-$ user = { score = 80 }
-$ level = user?.score |> \s -> s >= 60 ? "pass" : "fail"
-```
-
----
-
-### 3.6 Try-Catch-Finally
-
-完整的异常处理机制，支持错误捕获和资源清理。
-
-**语法格式：**
 ```lua
 try
-  -- 可能抛出错误的代码
-  error("something wrong")
-catch (error_variable)
-  -- 错误处理代码
+  local file = io.open("data.txt", "r")
+  print(file:read("*a"))
+  file:close()
+catch err
+  print("读取失败: " .. tostring(err))
 finally
-  -- 无论是否出错都会执行的清理代码
+  print("清理完成")
 end
 ```
 
-**示例代码：**
-```lua
--- 基础用法
-try
-  $ file = io.open("data.txt", "r")
-  $ content = file:read("*a")
-  print(content)
-catch (err)
-  print("Error reading file:", err)
-finally
-  if file then file:close() end
-end
+#### 硬限制(编译期直接报错,不是静默出错)
 
--- 嵌套使用
-try
-  print("Outer try")
+`try` 体被编译成**独立闭包**,因此:
+
+| 写法 | 报错信息 |
+|------|----------|
+| 带值 `return x` | 提示先把值赋给局部变量,出了 `try` 再返回 |
+| `break` / `continue` 跳出 `try` | 提示把整个循环放进 `try` 内 |
+| `...` | 提示 `try` 体是独立闭包,看不到外层 vararg |
+
+裸 `return`(无值)可以写,等价于提前结束 `try` 体。
+
+```lua
+-- 正确:先存结果,出了 try 再返回
+local function load(text)
+  local data, ok
   try
-    error("inner error")
-  catch (e)
-    print("Inner catch:", e)
-    error("rethrown")
-  finally
-    print("Inner finally")
+    data = text:sub(1, 3)
+    ok = true
+  catch e
+    ok = false
+    data = ""
   end
-catch (e)
-  print("Outer catch:", e)
-finally
-  print("Outer finally")
-end
-
--- 与 return 结合
-function test()
-  try
-    return "from try"
-  catch (e)
-    return "from catch"
-  finally
-    print("finally runs before return")
-  end
+  if ok then return data end
+  return ""
 end
 ```
 
----
+### 4.2 Switch-Case
 
-### 3.7 Switch-Case 语句
+**语法**(`switchstat`,`lparser.c:2368`):
 
-多分支选择结构，支持多值匹配。
-
-**语法格式：**
-```lua
-switch expression do
-  case value1 then
-    -- 代码块
-  case value2, value3 then
-    -- 多值匹配
-  default
-    -- 默认分支
-end
+```
+switch <expr> [do|then|:|{] case <v1>[, <v2>...] [do|then|:] <block> ... [default <block>] end
 ```
 
-**示例代码：**
+分隔符 `do` / `then` / `:` / `{` 都能用。
+
 ```lua
-$ command = "start"
+local command = "start"
 
 switch command do
-  case "start", "run" then
+  case "start", "run" do
     print("Starting...")
-    -- 执行启动逻辑
-  case "stop", "halt" then
+  case "stop", "halt" do
     print("Stopping...")
-  case "restart" then
+  case "restart" do
     print("Restarting...")
   default
-    print("Unknown command:", command)
-end
-
--- 数值匹配
-$ score = 85
-switch math.floor(score / 10) do
-  case 9, 10 then
-    print("Grade A")
-  case 8 then
-    print("Grade B")
-  case 7 then
-    print("Grade C")
-  default
-    print("Grade D")
+    print("Unknown command: " .. command)
 end
 ```
 
----
+### 4.3 When-Case
 
-### 3.8 Defer 语句
+`when` 是"链式 if-elseif"的写法(`whenstat`,`lparser.c:2264`):
 
-延迟执行，在作用域结束时自动运行，常用于资源释放。
-
-**语法格式：**
 ```lua
-defer statement end
-```
+local score = 85
 
-**示例代码：**
-```lua
-function processFile(filename)
-  $ file = io.open(filename, "r")
-  defer file:close() end
-  
-  -- 无论发生什么，file:close() 都会在函数退出前执行
-  $ data = file:read("*a")
-  if #data == 0 then
-    return nil  -- defer 仍会执行
-  end
-  return process(data)
-end
-
--- 多个 defer 按后进先出顺序执行
-function test()
-  defer print("first") end
-  defer print("second") end
-  defer print("third") end
-  print("body")
-end
--- 输出顺序: body, third, second, first
-
--- 在块中使用
-do
-  $ resource = acquire()
-  defer release(resource) end
-  -- 使用资源
-end  -- 退出块时自动释放
-```
-
----
-
-### 3.9 When 语句
-
-简洁的条件分支，类似多路 if-elseif。
-
-**语法格式：**
-```lua
-when condition1 then
-  -- 代码块
-case condition2 then
-  -- 代码块
+when score >= 90 then
+  print("A")
+case score >= 80 then
+  print("B")           -- 命中这条
 else
-  -- 默认分支
+  print("C")
 end
 ```
 
-**示例代码：**
+与 `switch` 的区别:`when` 的分支是**布尔条件**,`switch` 的分支是**值匹配**。
+
+### 4.4 Continue
+
+`continue` 是 `break` 的同族关键字,跳过本次循环剩余部分。可用于 `while` / `for` / `repeat`
+(`lparser.c:2160`、`2224`、`2335` 都有对应分支)。
+
 ```lua
-$ temperature = 25
-
-when temperature > 30 then
-  print("Hot")
-case temperature > 20 then
-  print("Warm")
-case temperature > 10 then
-  print("Cool")
-else
-  print("Cold")
-end
-
--- 与逻辑操作符结合
-$ age = 25
-$ hasLicense = true
-
-when age >= 18 && hasLicense then
-  print("Can drive")
-case age >= 18 && !hasLicense then
-  print("Need license")
-else
-  print("Too young")
-end
-```
-
----
-
-### 3.10 Continue 语句
-
-跳过当前循环迭代，进入下一次循环。
-
-**语法格式：**
-```lua
-continue  -- 在 for, while, repeat 循环中使用
-```
-
-**示例代码：**
-```lua
--- for 循环
 for i = 1, 10 do
-  if i % 2 == 0 then
-    continue  -- 跳过偶数
-  end
-  print("odd:", i)  -- 输出 1,3,5,7,9
-end
-
--- while 循环
-$ i = 0
-while i < 10 do
-  i = i + 1
-  if i == 5 then
-    continue  -- 跳过 5
-  end
-  print(i)  -- 输出 1,2,3,4,6,7,8,9,10
-end
-
--- repeat 循环
-$ j = 0
-repeat
-  j = j + 1
-  if j == 3 then
-    continue
-  end
-  print(j)  -- 输出 1,2,4,5
-until j >= 5
-
--- 嵌套循环
-for i = 1, 3 do
-  for j = 1, 3 do
-    if j == 2 then
-      continue  -- 只跳过内层循环的当前迭代
-    end
-    print(i, j)
-  end
+  if i % 2 == 0 then continue end
+  print(i)          -- 1 3 5 7 9
 end
 ```
 
----
+### 4.5 Defer(⚠️ 不可用)
 
-### 3.11 局部声明缩写
+`deferstat`(`lparser.c:2905`)的实现是把块编译成闭包,然后生成一条
+**立即调用全局函数 `defer(closure)`** 的指令:
 
-使用 `$` 快速声明局部变量。
-
-**语法格式：**
-```lua
-$ variable = value
-$ var1, var2 = value1, value2
+```c
+singlevaraux(fs, luaS_newliteral(ls->L, "defer"), &defer_func, 1);  /* 取全局 defer */
+...
+luaK_codeABC(fs, OP_CALL, base, 2, 1);   /* 立即 defer(closure) */
 ```
 
-**示例代码：**
-```lua
-$ name = "Lua"
-$ x, y = 10, 20
-$ result = x + y
+但**运行时没有任何地方定义这个全局 `defer`**:`core/src/main/resources/lua/*.lua`
+与 `LuaActivity.initLua()` 都没注册它,全仓库也没有一处使用 `defer` 的 `.lua`。
 
--- 与三元结合
-$ max = (x > y) ? x : y
+因此:
 
--- 在块中使用
-do
-  $ temp = calculate()
-  print(temp)
-end
--- temp 在这里不可访问
-```
+- 写了 `defer ... end` 能**编译通过**;
+- 运行到该语句时抛 `attempt to call a nil value (global 'defer')`;
+- 即便补上 `defer` 函数,按当前代码生成方式它也只会**立即执行**,而非"离开作用域时执行"。
 
----
-
-### 3.12 标签与 Goto
-
-使用 `@` 声明标签，支持 goto 跳转。
-
-**语法格式：**
-```lua
-@label@  -- 标签声明
-goto label
-```
-
-**示例代码：**
-```lua
--- 循环模拟
-$ count = 1
-@start@
-print("count:", count)
-count = count + 1
-if count <= 3 then
-  goto start
-end
-
--- 错误处理
-$ success, err = pcall(function()
-  if some_condition then
-    goto error_handler
-  end
-  -- 正常逻辑
-  return
-  @error_handler@
-  print("Error occurred")
-end)
-```
-
----
-
-## 4. 特性组合使用
-
-所有扩展语法可以无缝组合，实现简洁而强大的代码。
-
-### 4.1 综合示例
+**结论:不要用 `defer`。** 需要清理逻辑就显式调用,或用 `try/finally`:
 
 ```lua
--- 复杂数据处理管道
-$ processUserData = \data -> do
+local function writeFile(path, text)
+  local f = assert(io.open(path, "w"))
   try
-    $ result = data?.users
-      ?.[0]
-      ?.profile
-      ?.name ?? "anonymous"
-      |> upper
-      |> \name -> name .. " (" .. (data?.version ?? 1) .. ")"
-    
-    $ counter = 0
-    counter += (result != "anonymous") ? 10 : 0
-    
-    when counter > 5 then
-      print("High priority user")
-    case counter > 0 then
-      print("Normal user")
-    else
-      print("Anonymous user")
-    end
-    
-    return result
-  catch (e)
-    return "error: " .. e
+    f:write(text)
   finally
-    print("Processing completed")
+    f:close()
   end
-end
-
--- 资源管理
-function safeFileOperation(filename, operation)
-  $ file = io.open(filename, "r")
-  if !file then
-    return nil, "Cannot open file"
-  end
-  defer file:close() end
-  
-  $ content = file:read("*a")
-  $ result = content 
-    |> operation 
-    |> \r -> r ?? "no result"
-  
-  return result
-end
-
--- 状态机
-$ state = "initial"
-while true do
-  when state == "initial" then
-    print("Initializing...")
-    state = "running"
-  case state == "running" then
-    print("Running...")
-    state = (counter++ > 10) ? "finished" : "running"
-  case state == "finished" then
-    print("Finished")
-    break
-  else
-    print("Unknown state:", state)
-    break
-  end
-end
-
--- 错误处理与清理
-try
-  $ conn = createConnection()
-  defer conn:close() end
-  
-  $ data = conn:query("SELECT * FROM users")
-  $ processed = data 
-    |> filter(\u -> u.age > 18)
-    |> map(\u -> {
-      name = u.name |> upper,
-      adult = true
-    })
-  
-  switch #processed do
-    case 0 then
-      print("No adult users")
-    case 1 then
-      print("One adult user:", processed[1].name)
-    default
-      print("Multiple adult users:", #processed)
-  end
-catch (err)
-  print("Database error:", err)
-finally
-  print("Database operation completed")
 end
 ```
 
 ---
 
-## 5. 完整特性列表
+## 5. 完整特性一览
 
-| 特性类别 | 具体特性 | 语法示例 |
-|----------|----------|----------|
-| 条件表达式 | 三元运算符 | `(a>b) ? a : b` |
-| | 空值合并 | `value ?? default` |
-| | 可选链 | `obj?.field?.[index]` |
-| 赋值操作 | 复合赋值 | `+= -= *= /= //= %= ^= ..= &= |= <<= >>=` |
-| 逻辑操作 | 逻辑非 | `!condition` |
-| | 不等于 | `a != b` |
-| | 逻辑与 | `a && b` |
-| | 逻辑或 | `a || b` |
-| 函数式编程 | Lambda | `\x,y -> x+y` |
-| | 管道 | `value |> func1 |> func2` |
-| 异常处理 | Try-Catch-Finally | `try ... catch(e) ... finally ... end` |
-| 控制流 | Switch-Case | `switch x do case v: ... default ... end` |
-| | When | `when c1 then ... case c2 then ... else ... end` |
-| | Continue | `continue` |
-| 资源管理 | Defer | `defer cleanup() end` |
-| 语法糖 | 局部声明 | `$ var = value` |
-| | 标签 | `@label@` |
+| 类别 | 特性 | 写法 | 实现处 |
+|------|------|------|--------|
+| 词法 | 逻辑非 / 不等于 | `!x` / `a != b` | `llex.c:700` |
+| 词法 | 逻辑与 / 或 | `a && b` / `a \|\| b` | `llex.c:710,727` |
+| 词法 | local 缩写 | `$ x = 1` | `llex.c:804` |
+| 词法 | 标签缩写 | `@label@` | `llex.c:808` |
+| 表达式 | 三元 | `c ? a : b` | `lparser.c:1535` |
+| 表达式 | 可选字段 / 索引 | `o?.f` / `o?.[k]` | `lparser.c:1306` |
+| 表达式 | 空值合并 | `a ?? b` | `llex.c:718` |
+| 表达式 | 管道 | `v \|> f` | `lcode.c:1942` |
+| 表达式 | Lambda | `\x,y -> x+y` | `lparser.c:1139` |
+| 赋值 | 复合赋值 12 种 | `+= -= *= /= //= %= ^= ..= &= \|= <<= >>=` | `lparser.c:1835` |
+| 语句 | try / catch / finally | 见 §4.1 | `lparser.c:2735` |
+| 语句 | defer | **不可用**,见 §4.5 | `lparser.c:2905` |
+| 语句 | switch / case / default | 见 §4.2 | `lparser.c:2368` |
+| 语句 | when / case / else | 见 §4.3 | `lparser.c:2264` |
+| 语句 | continue | 见 §4.4 | `lparser.c:2160` |
+| 语句 | global 声明 | `global x` / `global <const> y` / `global *` | `lparser.c:2582` |
+| 语句 | const 局部 | `const x = 1`(不可再有 `local`) | `lparser.c:3006` |
+
+### 明确不支持(写了会报错,别用)
+
+| 写法 | 现状 |
+|------|------|
+| `let x = 1` | 词法表有 `let`,但解析器无 `TK_LET` 分支 → 语法错误 |
+| `defer ... end` | 能编译,但运行时调用不存在的全局 `defer` → 报 `attempt to call a nil value` |
+| `obj?.method()` | `lparser.c:1313` 直接 `syntaxerror("optional call not implemented yet")` |
+| `a &&= b` / `a \|\|= b` | 词法无此 token |
+| `\x,y ->` 带 `...` 之外的隐式参数 | 无 `_` 占位参数等约定 |
+
+---
+
+## 6. 事实来源
+
+- 保留字与符号表:`app/src/main/jni/lua/llex.h`(`enum RESERVED`)、`llex.c:44`(`luaX_tokens`)、
+  `llex.c:690-745`(符号分支)、`llex.c:800-815`(`$` / `@` / `\`)
+- 三元、可选链、`??`、`|>`:`app/src/main/jni/lua/lparser.c`(`subexpr` 1535、`TK_OPTDOT` 1306)、
+  `lcode.c:1942`(`luaK_pipe`)
+- Lambda:`lparser.c:1104`(`lambda_parlist`)、`lparser.c:1139`(`lambda_body`)
+- try / defer / switch / when / continue:`lparser.c` 2735 / 2905 / 2368 / 2264 / 2160
+- 复合赋值:`lparser.c:1835`、`2670`
+- `global`:`lparser.c:2499`(`getglobalattribute`)、`2582`(`globalstat`)、`2610`(`globalstatfunc`)
+- 运行时版本与预编译签名:`app/src/main/jni/lua/lua.h:19-33`

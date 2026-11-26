@@ -82,20 +82,46 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过内�
 
 ### 1.2 相对标准 Lua 的语法扩展
 
-这些**不是高亮关键字,而是 C 解析器真实实现的语法**(`app/src/main/jni/lua/lparser.c`):
+这些**不是高亮关键字,而是 C 解析器真实实现的语法**。下表行号可直接跳转核对。
 
-| 语法 | 形式 | 实现处 |
-|---|---|---|
-| `try/catch/finally` | `try ... catch(e) ... finally ... end`;括号与变量名均可省略 | `lparser.c:3013` `trystat` |
-| `defer` | `defer <block> end` | `lparser.c:3017` `deferstat` |
-| `switch/case/default` | `switch v do case 1 do ... end default ... end end` | `lparser.c:2927` `switchstat` |
-| `when/case/else` | `when cond then ... case cond then ... else ... end` | `lparser.c:2250` `whenstat` |
-| `continue` | 同 `break` 用法 | `lparser.c:3000` |
-| `lambda` | `lambda(a,b) -> expr`、`lambda() => expr`、`lambda() -> do ... end` | `lparser.c:1378` `lambda_body` |
-| 可选访问 `?.` | `obj?.field`、`obj?.[k]` | `lparser.c:1306` |
-| 空合并 `??` | `a ?? b` | `lparser.c:1452` |
-| 管道 `\|>` | `x \|> f` | `lparser.c:1454` |
-| 复合赋值 | `+= -= *= /= %= ^= ..= &= \|= <<= >>= //=`(**无** `&&=`/`\|\|=`) | `lparser.c:1661+` |
+#### 表达式层
+
+| 语法 | 形式 | 实现处 | 状态 |
+|---|---|---|---|
+| 三元 | `cond ? a : b` | `lparser.c:1535` | 可用,短路求值 |
+| 可选访问 | `obj?.field`、`obj?.[k]` | `lparser.c:1307` | 可用 |
+| 可选调用 | `obj?.m()` | `lparser.c:1313` | **不可用**,直接 `syntaxerror` |
+| 空值合并 | `a ?? b` | `lparser.c:1461` | 可用,只对 `nil` 生效 |
+| 管道 | `x \|> f` | `lparser.c:1463` / `lcode.c:1942` | 可用 |
+| Lambda | `\x, y -> x + y` | `lparser.c:1140` | 可用,括号可省 |
+| 复合赋值 | `+= -= *= /= //= %= ^= ..= &= \|= <<= >>=` | `lparser.c:1835` | 可用,**无** `&&=` / `\|\|=` |
+| 逻辑符号 | `!` `!=` `&&` `\|\|` | `llex.c:700-730` | 可用,分别等价 `not` `~=` `and` `or` |
+| 关键字缩写 | `$` → `local`、`@` → `::` | `llex.c:804,808` | 可用,纯词法替换 |
+
+#### 语句层
+
+| 语法 | 形式 | 实现处 | 状态 |
+|---|---|---|---|
+| try/catch/finally | `try ... catch(e) ... finally ... end` | `lparser.c:2735` | 可用;括号与变量名可省 |
+| switch/case/default | `switch v do case 1 do ... end default ... end end` | `lparser.c:2368` | 可用;分隔符可为 `do`/`then`/`:`/`{` |
+| when/case/else | `when cond then ... case cond then ... else ... end` | `lparser.c:2264` | 可用,分支是布尔条件 |
+| continue | 同 `break` 用法 | `lparser.c:2160` | 可用 |
+| const | `const x = 1` | `lparser.c:3006` | 可用,等价 `<const>` 局部 |
+| global | `global x` / `global <const> y` / `global *` / `global function f()` | `lparser.c:2582` | 可用(`global` 是保留字) |
+| defer | `defer <block> end` | `lparser.c:2905` | **不可用**,见下 |
+
+#### ⚠️ `defer` 不可用
+
+`deferstat` 把块编译成闭包后,生成的是一条**立即调用全局函数 `defer(closure)`**
+的指令(`lparser.c:2931` 的 `singlevaraux(..., "defer", ...)` 与紧接着的 `OP_CALL`),
+而运行时**从未注册这个全局 `defer`**:
+
+- `core/src/main/resources/lua/*.lua` 里没有;
+- `LuaActivity.initLua()` 也没注册;
+- 全仓库没有一处 `.lua` 使用 `defer`。
+
+所以 `defer ... end` 能编译,运行时抛 `attempt to call a nil value (global 'defer')`。
+**不要用**,需要清理就走 `try/finally`。
 
 #### `try` 的硬限制(编译期直接报错)
 
@@ -108,7 +134,6 @@ description: "编写与调试 LuaForge-Studio 的 Lua/.aly 项目,并通过内�
 | `...` | 闭包看不到外层 vararg | 先把 vararg 收进 table |
 
 裸 `return`(无值)可以写,等价于提前结束 `try` 体。
-
 `catch e` 与 `catch(e)` 等价;裸 `catch` 后紧跟语句时解析器会自行判断那个词是不是
 错误变量(`catch print("x")` 中 `print` 不会被当变量名)。
 
@@ -129,10 +154,13 @@ if ok then
 end
 ```
 
-**使用建议**:除 `try/catch` 外,这些扩展在仓库 `.lua/.aly` 里**没有使用案例**,
-属于"解析器支持但生态未用"。给用户写业务代码时优先用标准写法
-(`if/elseif`、`pcall`、`local`)。`let` 出现在词法表里但解析器无实现;
-`global` 受宏开关控制且该宏**未在本仓库启用** —— 两者都不要用。
+#### 使用建议
+
+仓库内 `.lua/.aly` **实际只用了 `try/catch`**(`assets/layouthelper/main.lua:197,214`)。
+其余扩展属于"解析器支持但生态未用"。给用户写业务代码时优先用标准写法
+(`if/elseif`、`pcall`、`local`)—— 可读性、工具链兼容性都更好,也不会踩到上面那些边界。
+
+`let` 虽然在词法表 `luaX_tokens` 里,**解析器没有任何分支处理 `TK_LET`**,写了直接语法错误 —— 不要用。
 
 ### 1.3 项目结构与 settings.json
 
@@ -336,7 +364,7 @@ end
 | `orientation` / `visibility` / `layerType` / `layout_weight` | 布局 |
 | `layout_collapseMode` / `layout_scrollFlags` / `layout_anchor` / `layout_behavior` | Coordinator 系 |
 | `padding*` / `minWidth` / `minHeight` | 尺寸 |
-| `onCreate` | 控件创建后立刻回调(参数为 view) |
+| `onCreate` | 控件创建后立刻回调:`value(view, layoutParams)` |
 
 #### `id` 即全局变量
 
@@ -368,8 +396,11 @@ ids.title.setText("也改过了")
 
 | 文件 | 用途 | 差异 |
 |---|---|---|
-| `core/src/main/resources/lua/loadlayout.lua` | **运行时**(项目实际使用) | 基准实现 |
-| `app/src/main/assets/layouthelper/loadlayout2.lua` | 布局助手 | 支持 `pagesWithTitle`、三方控件白名单等扩展 |
+| `core/src/main/resources/lua/loadlayout.lua` | **运行时**(项目实际使用,1226 行) | 基准实现 |
+| `app/src/main/assets/layouthelper/loadlayout2.lua` | 布局助手(1265 行) | 额外支持三方控件白名单(`_G.THIRD_PARTY_WIDGET_SUPPORT`)、布局助手的拖拽选中态等 |
+
+两者对 `pages` / `pagesWithTitle` / 事件字符串 / `id` 的语义**完全一致**,
+写项目代码以运行时那份为准。
 
 语法一致;写项目代码以运行时那份为准。
 
@@ -397,25 +428,117 @@ ids.title.setText("也改过了")
 
 `require "import"` 之后:
 
+- `require` 加载 `import.lua` 时会**在模块体内直接执行 `env_import(_G)`**
+  (`import.lua:494`),把全部工具函数与 `import` 本身写进 `_G` —— 所以只要
+  `require "import"` 一次就生效,不需要接收返回值。
 - `import "android.widget.Button"`、`import "android.view.*"`(支持通配);
   依次尝试 `''`、`java.lang.`、`java.util.`、`com.androlua.` 前缀。
 - 未 import 的类名也能按需解析(`_G` 上的元表 `globalMT`)。
 - 注入的工具函数(全部挂在 `_G` 与 `import` 环境):
 
-| 函数 | 签名 | 说明 |
-|---|---|---|
-| `dump(o)` | `(any) -> String` | 递归打印任意 Lua/Java 值,循环引用会折叠成路径 |
-| `each(o)` | `(java.lang.Iterable) -> iterator` | `for v in each(list) do` |
-| `enum(e)` | `(java.util.Enumeration) -> iterator` | `for v in enum(enumeration) do` |
-| `printstack()` | `() -> nil` | 打印当前调用栈(含 upvalue) |
-| `compile(name)` | `(String) -> nil` | 把 dex/jar 加进类加载器 |
-| `task(src, callback)` | `(fnOrPath, fn?) -> LuaAsyncTask` | 子线程执行,`callback` 在主线程 |
-| `thread(src, ...)` | `(fnOrPath, ...) -> LuaThread` | 立即在子线程跑 |
-| `timer(f, delay, period, ...)` | `-> LuaTimer` | `period == 0` 只跑一次 |
-| `loadlayout` / `loadbitmap` / `loadmenu` | — | 布局 / 位图 / 菜单 |
+#### 逐个说明(含参数、返回与坑)
 
-> ⚠️ `getids()` 是死代码(读 `luajava.ids`,无赋值点),实际返回 nil —— **别用**。
-> ⚠️ `toast` / `alert` / `dialog` / `sleep` 这类简写**在本仓库没有任何注册证据**,不要写。
+**`dump(o) -> String`** —— 把任意值转成可读字符串,支持 table 递归、Java 对象 `tostring`。
+循环引用会折叠为路径字符串,不会无限递归。
+
+```lua
+print(dump({a = 1, b = {c = "x"}}))
+-- { ["a"] = 1; ["b"] = { ["c"] = "x" }; }
+```
+
+**`each(o) -> iterator`** —— 包 `java.lang.Iterable`,用于 `for`:
+
+```lua
+local list = activity.getResources().getStringArray(...)   -- 任何 Iterable
+for v in each(someJavaList) do print(v) end
+```
+
+**`enum(e) -> iterator`** —— 包 `java.util.Enumeration`(老 API 常见):
+
+```lua
+for v in enum(someEnumeration) do print(v) end
+```
+
+**`printstack() -> nil`** —— 打印当前调用栈(含各层 upvalue),排查"谁调了我"用。
+输出进 `luaforge.log`。
+
+```lua
+local function inner() printstack() end
+local function outer() inner() end
+outer()      -- 日志里能看到 inner -> outer -> main
+```
+
+**`compile(name) -> nil`** —— 把一个 dex/jar 加进当前页面的类加载器。
+项目里 `libs/*.dex|jar` 通常由 `LuaDexLoader` 自动加载,**手动调它的场景很少**。
+
+**`task(src, callback) -> LuaAsyncTask`** —— 子线程执行 `src`,`callback` 回到主线程。
+`src` 可以是**函数**,也可以是 **`.lua` 文件路径**(相对项目根)。
+
+```lua
+task(function()
+  -- 子线程:耗时活儿
+  local ok, body = pcall(function() return Http.get 之类 ... end)
+  return "结果"                      -- 返回值传给 callback
+end, function(result)
+  -- 主线程:更新 UI
+  title.setText(tostring(result))
+end)
+```
+
+> 注意 `callback` 是 `task` 的**最后一个实参**,由 `select("#", ...)` 取
+> (`import.lua:459`)。多传中间参数时它们会作为 `src` 的入参。
+
+**`thread(src, ...) -> LuaThread`** —— 立即在子线程启动,不等待结果。
+`src` 同样可以是函数或路径,`...` 作为它的入参。
+
+```lua
+local t = thread(function(a, b)
+  print("子线程收到", a, b)
+end, 1, 2)
+```
+
+**`timer(f, delay, period, ...) -> LuaTimer`** —— 定时器。`period == 0` 表示只跑一次;
+`delay` 是首次触发延迟(毫秒)。返回的 `LuaTimer` 可 `:stop()`。
+
+```lua
+-- 3 秒后触发一次
+local once = timer(function() print("3s 到了") end, 3000, 0)
+
+-- 每 1 秒触发,1 秒后开始
+local tick = timer(function()
+  print("tick")
+end, 1000, 1000)
+
+-- 停止
+tick.stop()
+```
+
+**`loadlayout(spec[, env])`** —— 布局表/`.aly` 路径 → View。`env` 是收集 `id` 的表,
+缺省为 `_G`(即 `id` 变全局变量)。详见 §1.5。
+
+**`loadbitmap(path) -> Bitmap`** —— 加载位图。规则(`loadbitmap.lua`):
+
+| 传入 | 行为 |
+|---|---|
+| `"images/icon"` | 补 `.png` 后按**项目相对路径**加载 |
+| `"images/icon.jpg"` | 已有扩展名,不补 |
+| `"https://..."` / `"http://..."` | 走网络加载 |
+| `"/sdcard/a.png"` | 绝对路径直接读 |
+
+> 扩展名判定正则是 `%.%a%a%a%a?$` —— 只认 **3~4 位字母**的扩展名。
+> `.jpeg`(4 位)没问题,但 `.webp` 后面的 `b` 也是字母所以算命中;
+> 而 `.9.png` 这类会把 `.png` 当扩展名处理。名字里带点但不以扩展名结尾时
+> (如 `"v1.2/icon"`)会被误判成"已有扩展名",这时请显式写全 `"v1.2/icon.png"`。
+
+**`loadmenu(menu, spec[, root[, n]])`** —— 把 Lua 表描述写进 `Menu` 对象。
+`n` 表示前 n 项 `SHOW_AS_ACTION_ALWAYS`。详见 `WidgetsCatalog.md` 的菜单配方。
+
+#### ⚠️ 不要用的名字
+
+| 名字 | 原因 |
+|---|---|
+| `getids()` | 死代码:读 `luajava.ids`,但全仓库无赋值点,实际返回 `nil` |
+| `toast(...)` / `alert(...)` / `dialog(...)` / `sleep(...)` | **本仓库没有任何注册证据**。弹窗用 `MaterialAlertDialogBuilder`,提示用 `Snackbar` 或 `activity.showToast(...)` |
 
 ### 1.7 Java 互操作
 
@@ -446,33 +569,51 @@ MaterialAlertDialogBuilder(activity)
 #### 两条必须说清的机制
 
 1. **链式调用为什么成立**:JNI 层规定"方法无返回值时返回调用者自身"
-   (`luajava.c:656-660` 注释 `/* if no ret, return self */`)。所以 `void` 方法
-   (如 `setTitle`)也能继续 `.` 下去。
+   (`luajava.c:833` 注释 `/* if no ret, return self */`,配合
+   `LuaJavaAPI` 里 `ret == null && returnType == Void.TYPE` 的判定)。
+   所以 `void` 方法(如 `setTitle`)也能继续 `.` 下去。
 2. **属性赋值会自动补 `set` 前缀**:`view.text = "x"` 走 `javaSetter` → `javaSetMethod`,
    内部把首字母大写成 `"set" + Name`。所以 `view.text = "x"` **等价于**
    `view.setText("x")`,不是"省略前缀"这么简单,而是有专门的 setter 解析路径。
    读属性同理走 `javaGetter`,自动尝试 `getXxx` / `isXxx`。
    若名字既非字段也无对应 setter,报 `xxx is not a field`。
 
-#### `luajava.override` 改写方法
+#### `luajava.override` 改写已有类的方法
 
-`luajava.override(SomeClass, { methodName = fn, ... })` 生成一个子类,**方法表里出现的
-方法才会被拦截**,其余走父类实现(`LuaJavaAPI.java:813-834`)。用于给现有控件加行为:
+签名是 **`luajava.override(SomeClass, { methodName = fn, ... })`**,返回的是
+**已经实例化好的对象**,不是 Class(`LuaJavaAPI.java:685-706`):
+
+```java
+Class<?> cls = new LuaEnhancer(clazz).create(filter);  // 生成子类
+int r = getObjInstance(L, cls);                        // 立刻实例化
+obj.setMethodInterceptor_Enhancer(...);                // 装拦截器
+L.pushJavaObject(obj);                                 // 压的是实例
+```
+
+由此有三条必须知道的行为:
+
+1. **方法表里有的方法才会被拦截**,其余走父类原实现(由 `MethodFilter` 决定);
+2. 因为是"立即实例化",**构造参数决定成败** —— `getObjInstance` 在无参调用时会先试
+   `new X()`,失败再试 `new X(Context)`;都失败时要靠 luajava 的构造器重载匹配,
+   所以只适合无参或 `(Context)` 可构造的类(如 `View`);
+3. Lua 侧写的方法签名要**与 Java 原方法一致**,不要想当然加 `self`
+   —— luajava 调 Lua 函数时按 Java 实参顺序传。
 
 ```lua
-local View = luajava.bindClass "android.view.View"
+local AppCompatTextView = luajava.bindClass "androidx.appcompat.widget.AppCompatTextView"
 
-local custom = luajava.override(View, {
-  onDraw = function(self, canvas)
-    -- self 是生成的子类实例
-    canvas.drawColor(0xFF101010)
+-- 返回的是实例,可直接当 View 用
+local tv = luajava.override(AppCompatTextView, {
+  setText = function(text)
+    print("setText 被调用: " .. tostring(text))
   end,
 })
 ```
 
-> 注意:生成的类**只能经无参构造或 `(Context)` 构造**实例化
-> (`getObjInstance` 的构造器匹配逻辑)。带复杂参数构造的控件不适合这条路。
-> 该函数在本仓库 `.lua` 里**无使用案例**,按需自测。
+> 该函数**在本仓库 `.lua` 里没有任何使用案例**(`loadlayout2.lua` 只做了
+> `local override = luajava.override` 的取值),上面的写法按源码推导,
+> 用前请先在小页面验证一次。自绘请优先用 `LuaDrawable`(见 `LuaDraw.md`),
+> 那条路有确定语义且更简单。
 
 ### 1.8 可运行的最小项目
 
@@ -535,12 +676,65 @@ Http.download("https://example.com/a.zip", "/sdcard/a.zip",
   function(code, path, headers) end)
 ```
 
-要点:
+#### 方法一览(`core/src/main/java/com/androlua/Http.java`)
 
-- 可用静态方法:`get` / `post` / `put` / `delete` / `download`。
-- **失败时只有两个参数** `(code, message)`,且 `code == -1`。
-- 全局默认头:`Http.setHeader(t)`、`Http.setCookie(s)`、`Http.setUserAgent(s)`、`Http.setReferer(s)`。
+| 方法 | 动词 | 说明 |
+|---|---|---|
+| `Http.get(url[, cookie[, charset]][, header], cb)` | GET | 多个重载,见下 |
+| `Http.post(url, data[, cookie][, charset][, header], cb)` | POST | `data` 可为 String 或表 |
+| `Http.post(url, data, file, cb)` | POST | 表单 + **文件上传**(multipart/form-data) |
+| `Http.put(url, data[, cookie][, charset][, header], cb)` | PUT | 与 post 同形 |
+| `Http.delete(url[, cookie][, charset][, header], cb)` | DELETE | — |
+| `Http.download(url, savePath, cb)` | GET | 落盘到 `savePath` |
+
+#### 回调签名
+
+| 场景 | 参数 |
+|---|---|
+| 成功 | `(code, content, cookie, headers)` |
+| **失败** | `(code, message)` —— 只有两个参数,且 `code == -1` |
+| `download` | `(code, path, headers)` |
+
+判断失败要看 `code == -1`,**不要**只看 `content` 是否为空:
+
+```lua
+Http.get("https://bad.example.com", function(code, content, cookie, headers)
+  if code == -1 then
+    print("请求失败: " .. tostring(content))   -- 此时 content 是错误信息
+    return
+  end
+  print(code, content)
+end)
+```
+
+#### 文件上传
+
+`post` 的 "data + file" 重载会组 `multipart/form-data`:
+
+```lua
+Http.post(
+  "https://api.example.com/upload",
+  { name = "avatar" },                      -- 普通表单字段
+  { file = "/sdcard/DCIM/a.jpg" },          -- 文件字段: 字段名 -> 本地路径
+  function(code, content, cookie, headers) end
+)
+```
+
+#### 全局默认头
+
+```lua
+Http.setUserAgent("LuaForge/1.0")
+Http.setCookie("session=abc")
+Http.setReferer("https://example.com")
+Http.setHeader({ ["X-Token"] = "xxx" })     -- HashMap<String,String>
+```
+
+这些都是**进程级静态状态**,设置后影响后续所有 `Http.*` 请求。
+
+#### 其它要点
+
 - 回调在 `onPostExecute`(**主线程**)触发,可直接更新 UI。
+- `Http` 是**类**不是实例:`Http.get(...)`,不要 `Http():get(...)`。
 - ⚠️ **不要写 `import "Http"`**:`import(package)` 不做前缀补全,短名会直接报
   `cannot find Http`;短名前缀解析只发生在 `_G` 的元表访问路径上。
 
@@ -563,15 +757,15 @@ Http.download("https://example.com/a.zip", "/sdcard/a.zip",
 | `luv` | libuv 事件循环 / 异步 IO | 见 luv 文档 |
 | `socket.core` | LuaSocket TCP/UDP;另有 `socket.serial` / `socket.unix` / `mime.core` | — |
 | `xml.core` / `xml` | LuaXML 解析 | — |
-| `zlib` | 压缩 | `deflate` / `inflate` / `crc32` / `adler32` / `version` |
-| `zip` | zip 归档读写 | `zip.open` + `archive:add/stat/open/get_name/...` |
-| `crypt` | 编解码/摘要 | `base64encode` / `base64decode` / `hexencode` / `hexdecode` / `sha1` / `hmac_sha1` / `hmac_hash` / `desencode` / `desdecode` / `dhexchange` / `dhsecret` / `hashkey` / `randomkey` |
+| `zlib` | 压缩 | `deflate(level)` / `inflate()` 返回流函数;`crc32` / `adler32` / `version` |
+| `zip` | zip 归档读写 | `zip.open` + `archive:add(name, type, src)` / `stat` / `open` / `get_name` |
+| `crypt` | 编解码/摘要(**摘要均返回二进制**) | `base64encode/decode`、`hexencode/decode`、`sha1`、`hmac_sha1`、`hmac_hash`、`desencode/decode`、`dhexchange`、`dhsecret`、`hashkey`、`randomkey` |
 | `base64` | Base64 | `encode` / `decode` |
 | `md5` | MD5 摘要 | `sum` / `exor` / `crypt` / `decrypt` |
 | `microaes` | AES 全模式 | 见 `micro_aes.h` |
-| `regex` | POSIX 正则 | `find` / `match` / `gmatch` / `gsub` / `split` / `count` / `comp` |
+| `regex` | POSIX 正则(**不是** Lua 的 `%` 模式语法) | `find` / `match` / `gmatch` / `gsub` / `split` / `count` / `comp` |
 | `rawio` | 原始文件读写 | `read` / `write` / `tsread` 及各别名 |
-| `time` | 计时 | `now` / `time` / `start` / `elapsed` / `countdown` / `isEnded` / `remaining` / `diff` |
+| `time` | 计时(毫秒) | `now` / `time` / `start` / `elapsed(start)` / `countdown(ms)` / `isEnded` / `remaining` / `diff` |
 | `unix` | POSIX 系统调用 | 另有 `unix.unsafe` 命名空间 |
 | `ffi` | LuaJIT 风格 ffi 子集 | 另导出 `cffi` |
 | `sensor` | 设备传感器 | — |
@@ -583,6 +777,247 @@ Http.download("https://example.com/a.zip", "/sdcard/a.zip",
 
 > ⚠️ `lsqlite3` 目录存在但**未接入顶层 `CMakeLists.txt`**,不随包构建 —— **别写 `require "lsqlite3"`**。
 > ⚠️ `socket` **没有** `luaopen_socket`,写 `require "socket"` 会失败,要用 `require "socket.core"`。
+
+#### 常用库的最小可运行示例
+
+**JSON(`cjson`)** —— 首选,比纯 Lua 快一个数量级:
+
+```lua
+local cjson = require "cjson"
+
+local text = cjson.encode({ name = "张三", tags = {"a", "b"}, n = 42 })
+print(text)                       -- {"name":"张三","tags":["a","b"],"n":42}
+
+local obj = cjson.decode(text)
+print(obj.name, obj.tags[2])      -- 张三  b
+```
+
+需要"数组 / 对象"的区分控制时用它的配置项:
+
+```lua
+cjson.encode_empty_table_as_object(false)   -- 空表编码成 [] 而不是 {}
+cjson.encode_number_precision(14)           -- 浮点精度
+cjson.encode_sparse_array(true)             -- 允许稀疏数组
+```
+
+**文件系统(`lfs`)**:
+
+```lua
+local lfs = require "lfs"
+
+-- 遍历目录(注意包含 "." 与 "..",与 shell 的 ls -a 一致)
+for name in lfs.dir(activity.getLuaDir()) do
+  if name ~= "." and name ~= ".." then print(name) end
+end
+
+-- 属性(不存在的路径返回 nil + 错误信息)
+local attr = lfs.attributes("/sdcard/a.txt")
+if attr then
+  print(attr.size, attr.modification, attr.mode)   -- 字节 / mtime / "file"|"directory"
+end
+
+lfs.mkdir("/sdcard/newdir")          -- 单层创建;失败返回 nil, 错误信息
+lfs.rmdir("/sdcard/newdir")          -- 只能删空目录
+lfs.touch("/sdcard/a.txt")           -- 只更新已存在文件的时间戳,不会创建文件
+lfs.touch("/sdcard/a.txt", 1700000000, 1700000000)   -- 指定 atime / mtime
+```
+
+**压缩(`zlib`)** —— 先用 `deflate(level)` 建流,再调它:
+
+```lua
+local zlib = require "zlib"
+
+local data = string.rep("hello ", 1000)
+
+-- deflate(level): level 取 0..9 或省略(=默认);返回一个"流函数"
+local d = zlib.deflate(9)
+-- 流函数(chunk[, flush]) 返回 4 个值:
+--   chunk, isFinal, totalIn, totalOut
+local packed, done = d(data, "finish")   -- flush: "none"|"sync"|"full"|"finish"
+print(#data, #packed, done)              -- 6000  几十  true
+
+local i = zlib.inflate()
+local unpacked, iDone = i(packed)
+print(unpacked == data, iDone)           -- true  true
+```
+
+> 大文件可以分块喂:`d(part1, "none")` → `d(part2, "none")` → `d("", "finish")`,
+> 每步把返回的第一段拼起来。`finish` 之后流会被自动关闭,再调用会报
+> `IllegalState: calling deflate function when stream was previously closed`。
+
+校验和 —— 与 `deflate` 一样是**先建流再喂数据**,返回 `(校验值, 累计长度)`:
+
+```lua
+local zlib = require "zlib"
+
+local crc = zlib.crc32()             -- 建流(初始值 0)
+local ok, len = crc("abc")           -- 返回两个值
+print(string.format("%08x", ok), len)   -- 352441c2  3
+
+-- 分块累计:多次调用会累加
+local c = zlib.crc32()
+c("ab"); local rest = c("c")
+print(string.format("%08x", rest))   -- 352441c2
+
+-- adler32 用法完全相同
+local a = zlib.adler32()
+print(a("abc"))                      -- 数值 + 长度
+
+-- version() 返回**多个数字**(主/次/修订),不是字符串
+local major, minor, patch = zlib.version()
+print(major, minor, patch)
+```
+
+**正则(`regex`)** —— POSIX 语法,与 Lua 的 `string.find` 模式**不同**(用 `%d`→`[0-9]`、`()` 分组):
+
+```lua
+local re = require "regex"
+
+-- find:返回 起点, 终点, 捕获组...(未命中返回 nil)
+print(re.find("hello world", "wor"))              -- 7  9
+print(re.find("abc123", "([a-z]+)([0-9]+)"))      -- 1  6  abc  123
+
+-- match:返回 捕获组...;无捕获组时返回整个匹配
+print(re.match("abc123", "([a-z]+)([0-9]+)"))     -- abc  123
+print(re.match("abc123", "[0-9]+"))               -- 123
+
+-- gsub:返回 替换后的字符串, 替换次数
+local out, n = re.gsub("a1b2", "[0-9]", "#")
+print(out, n)                                     -- a#b#  2
+
+-- gmatch:迭代器
+for m in re.gmatch("a1b2c3", "[0-9]") do print(m) end    -- 1 2 3
+
+-- split:返回**迭代器**,不是表;用 for 取
+for part in re.split("a,b,c", ",") do print(part) end    -- a b c
+
+-- 需要表就自己收集
+local parts = {}
+for p in re.split("a,b,c", ",") do parts[#parts + 1] = p end
+
+-- count:匹配次数
+print(re.count("a1b2", "[0-9]"))                  -- 2
+
+-- comp:预编译,避免重复编同一个模式
+local c = re.comp("([a-z]+)([0-9]+)")
+print(c:find("abc123"))        -- 1  6  abc  123(方法版,返回同 re.find)
+print(c:match("abc123"))       -- abc  123
+print(c:exec("abc123"))        -- 1  6  {["1"]="abc", ["2"]="123"}(命中)/ nil
+```
+
+方法版与函数版的区别(`algo.h:651-684`):
+
+| 方法 | 返回 |
+|---|---|
+| `c:find(s)` | 起点, 终点, 捕获组... |
+| `c:match(s)` | 捕获组...;无捕获组时是整个匹配 |
+| `c:exec(s)` | 起点, 终点, **捕获组表** —— 恰好三个值 |
+| `c:tfind(s)` | 起点, 终点, **子串表** |
+
+> **这是 POSIX 正则,不是 Lua 的 `%` 模式**:字符类写 `[0-9]`、`[a-z]`、`\d` 不可用;
+> 分组用 `()`;`*` `+` `?` `{n,m}` 语义与标准 ERE 一致。要 Lua 原生模式直接用
+> `string.find` / `string.gsub`,别混着写。
+
+**摘要(`crypt` / `md5` / `base64`)**:
+
+```lua
+local crypt = require "crypt"
+
+print(crypt.base64encode("hello"))             -- aGVsbG8=
+print(crypt.base64decode("aGVsbG8="))          -- hello
+print(crypt.hexencode(string.char(1, 2)))      -- 0102
+print(crypt.hexdecode("0102") == string.char(1, 2))   -- true
+print(#crypt.sha1("abc"))                       -- 20(二进制摘要长度)
+print(crypt.hexencode(crypt.sha1("abc")))       -- a9993e364706816aba3e25717850c26c9cd0d89d
+-- hmac 同理,也都返回二进制;第一个参数是 key
+print(crypt.hexencode(crypt.hmac_sha1("key", "msg")))
+print(crypt.hexencode(crypt.hmac_hash("key", "msg")))
+local b64 = require "base64"
+print(b64.encode("hello"), b64.decode("aGVsbG8="))    -- aGVsbG8=  hello
+```
+
+`md5` 模块只有 4 个函数,**没有 `sumhexa`**:
+
+| 函数 | 签名 | 返回 |
+|---|---|---|
+| `md5.sum(s)` | 任意二进制字符串 | **16 字节二进制摘要**(不是十六进制!) |
+| `md5.exor(s1, s2)` | 等长字符串 | 逐字节异或结果;长度不等直接报错 |
+| `md5.crypt(msg, key, seed)` | 三个参数 | 加密串(自带 seed 前缀) |
+| `md5.decrypt(cipher, key)` | 两个参数 | 还原明文;满足 `decrypt(crypt(m,k,s),k) == m` |
+
+要十六进制摘要,自己转:
+
+```lua
+local md5 = require "md5"
+local crypt = require "crypt"
+
+print(crypt.hexencode(md5.sum("abc")))     -- 900150983cd24fb0d6963f7d28e17f72
+```
+
+**`crypt` 的摘要函数(`sha1` / `hmac_sha1` / `hmac_hash`)与 `md5.sum` 全部返回二进制**,
+要十六进制字符串一律用 `crypt.hexencode` 包一层,别直接把返回值当校验串打印。
+
+**计时(`time`)**:
+
+所有时间戳单位都是**毫秒**。
+
+| 函数 | 签名 | 返回 |
+|---|---|---|
+| `time.now()` | — | 当前时间戳(毫秒) |
+| `time.time()` | — | 当前**秒**数(不是毫秒) |
+| `time.start()` | — | 起始时间戳(毫秒),就是 `now()` |
+| `time.elapsed(start)` | **必传 start** | 从 `start` 到现在的毫秒数 |
+| `time.diff(t1, t2)` | 两个时间戳 | `t1 - t2`(毫秒,可为负) |
+| `time.countdown(ms)` | 时长(毫秒) | 结束时间戳 |
+| `time.isEnded(endTs)` | 结束时间戳 | 布尔 |
+| `time.remaining(endTs)` | 结束时间戳 | 剩余毫秒,已结束为 0 |
+
+```lua
+local time = require "time"
+
+-- 方式一:手动取时间戳
+local t0 = time.now()
+-- ... 干活 ...
+print(time.diff(time.now(), t0))   -- 耗时(毫秒)
+
+-- 方式二:start / elapsed 配对(注意 elapsed 要传 start 的返回值)
+local start = time.start()
+-- ... 干活 ...
+print(time.elapsed(start))         -- 耗时(毫秒)
+
+-- 倒计时
+local endTs = time.countdown(3000)      -- 3 秒后结束
+print(time.isEnded(endTs))              -- false
+print(time.remaining(endTs))            -- 约 3000(递减)
+```
+
+**zip 归档** —— `add` 的第三个参数是**来源类型**,不是内容:
+
+```lua
+local zip = require "zip"
+
+-- 打开/创建:第二个参数可给 zip.CREATE 等标志;失败返回 (nil, 错误信息)
+local a = assert(zip.open("/sdcard/data.zip", zip.CREATE))
+
+-- add(名字, 类型, 来源...):类型只接受 "file" / "string" / "zip"
+a:add("readme.txt", "string", "hello")           -- 内联字符串
+a:add("photo.jpg", "file", "/sdcard/DCIM/a.jpg") -- 从磁盘文件
+print(a:get_num_files())
+a:close()
+
+-- 读回:open 的是"文件句柄",read 传 Lua 的读格式
+local r = assert(zip.open("/sdcard/data.zip"))
+local f = r:open("readme.txt")     -- 也可传序号(整数)
+print(f:read("a"))                 -- "a" = 读到结尾(Lua 5.3+ 写法)
+f:close()
+r:close()
+```
+
+其它可用的归档方法:`stat(name)`(取 `size`/`crc`/`mtime`)、`get_name(idx)`、
+`name_locate(name)`、`replace`、`rename`、`delete`、`add_dir`、`get_archive_comment`、
+`set_archive_comment`。
+
+> 读格式用 `"a"`(`*a` 是 5.1 旧写法,本运行时按 5.4 语义解析,建议统一写 `"a"`)。
 
 加载机制:全局 `package.cpath` 为 `nativeLibraryDir/lib?.so;libDir/lib?.so`,
 `require "xxx"` 命中 `libxxx.so` 后调 `luaopen_xxx`;子模块(`a.b`)走 `searcher_Croot`,

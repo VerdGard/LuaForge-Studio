@@ -174,8 +174,7 @@ end })
 ### 3.9 原生 View 互操作 —— 用上现有全部控件
 
 `AndroidView` 把**任意现有 Android 控件**塞进 Compose 树。这是"Compose 里用
-`BottomNavigationView` / `TabLayout` / `RecyclerView` / `ExoVideoView` / `MaterialTextField` /
-`WebView`"的入口。
+`BottomNavigationView` / `TabLayout` / `RecyclerView` / `MaterialTextField` / `WebView`"的入口。
 
 ```lua
 require "import"

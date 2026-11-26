@@ -63,38 +63,94 @@ local tm = timer(function() print("tick") end, 0, 1000)
 
 ## 三、Activity 常用方法(`activity.*`,来自 `LuaActivity.java`)
 
+### 3.1 页面跳转与取参数
+
 ```lua
--- 页面跳转
-activity.newActivity("other/main.lua")            -- 打开另一个 Lua 页面
-activity.newActivity("other/main.lua", {arg1})    -- 带参数
-activity.newActivity(1, "other/main.lua")         -- 带 requestCode(配合 onActivityResult)
+-- 打开另一个 Lua 页面(路径相对项目根)
+activity.newActivity("other/main.lua")
 
--- 结束/结果
+-- 带参数:第二个参数是 Object[] 风格的表
+activity.newActivity("other/main.lua", {"hello", 42})
+
+-- 带 requestCode(目标页调用 activity.result(...) 时回到 onResult)
+activity.newActivity(1, "other/main.lua", {"a"})
+
+-- 带转场动画资源 id
+activity.newActivity("other/main.lua", R.anim.slide_in, R.anim.slide_out)
+```
+
+新页面里取参数:
+
+```lua
+local a0 = activity.getArg(0)          -- 第 1 个参数(⚠️ 下标 0 起)
+local a1 = activity.getArg(1)          -- 第 2 个参数
+local q  = activity.getQuery("k")      -- 从 Intent data 的 Uri 查询串取
+```
+
+> ⚠️ `getArg` 的实现是 `if (arg == null || arg.length >= idx) return nil; return arg[idx]`。
+> **下标是 0 起**,而且那个边界判断写反了 —— 传入等于长度的下标会越界。
+> 安全写法:`for i = 0, #params - 1 do ... end`,不要靠它做边界检查。
+
+### 3.2 结束与结果
+
+```lua
+-- 关掉当前页
 activity.finish()
-activity.setResult(activity.RESULT_OK, intent)
 
--- 取参数(新页面里)
-local q = activity.getQuery("key")     -- URL/Intent 查询参数
-local a = activity.getArg(1)           -- newActivity 传入的第 1 个参数
+-- 回传结果给调用方(配合 newActivity 的 requestCode)
+activity.result({"data1", "data2"})
+```
 
--- 路径
-local dir  = activity.getLuaDir()      -- 项目目录
-local ext  = activity.getLuaExtDir()   -- 外部数据目录
-local path = activity.getLuaPath("a/b.lua")
+`activity.result(data)` 会把 `data` 作为 `Object[]` 放进 Intent 的 `DATA` extra,
+然后 `finish()`。调用方的 `onResult(name, ...)` 会收到(见 SKILL.md §1.4)。
 
--- 屏幕尺寸
-local w, h = activity.getWidth(), activity.getHeight()
+### 3.3 路径
 
--- 视图/资源
+```lua
+local dir  = activity.getLuaDir()             -- 项目目录
+local ext  = activity.getLuaExtDir()          -- 外部数据目录(LuaForge-Studio/)
+local path = activity.getLuaPath("a/b.lua")   -- 项目内相对 → 绝对
+local epath = activity.getLuaExtPath("x.txt") -- 外部目录内相对 → 绝对
+```
+
+### 3.4 屏幕 / 视图 / 资源
+
+```lua
+local w, h = activity.getWidth(), activity.getHeight()   -- 屏幕像素
 local root = activity.getDecorView()
 local res  = activity.getResources()
+local d    = res.getDisplayMetrics().density             -- dp → px 的倍数
+```
 
--- 共享数据(同进程跨页面)
-activity.setSharedData("key", "value")
-local v = activity.getSharedData("key")
-local v2 = activity.getSharedData("key", "默认值")   -- 带默认
+### 3.5 跨页面共享数据
 
--- 选项菜单(配合 onCreateOptionsMenu/onOptionsItemSelected)
+同一进程内所有 Lua 页面共享一份 `Map`:
+
+```lua
+activity.setSharedData("user", {name = "张三"})
+local u  = activity.getSharedData("user")
+local v  = activity.getSharedData("nope", "默认值")   -- 不存在时返回默认值
+```
+
+> 只在本进程内有效,**页面全部退出即丢**;要持久化请写文件或用 `SharedPreferences`。
+
+### 3.6 选项菜单
+
+```lua
+function onCreateOptionsMenu(menu)
+  menu.add(0, 1, 0, "设置")
+  return true
+end
+
+function onOptionsItemSelected(item)
+  if item.getItemId() == 1 then
+    -- ...
+    return true
+  end
+  return false
+end
+
+-- 需要主动拿菜单时可读(通常用不到)
 local menu = activity.getOptionsMenu()
 ```
 
@@ -102,7 +158,8 @@ local menu = activity.getOptionsMenu()
 
 ## 四、网络请求(优先 `Http`,`com.androlua.Http`)
 
-> 前提:`settings.json` 的 `user_permission` 含 `INTERNET`。代理设置见 `devdoc/NETWORK.md`。
+> 前提:`settings.json` 的 `user_permission` 含 `INTERNET`(漏了则回调 `code == -1`)。
+> 更多细节(含自动申请权限)见 `devdoc/NETWORK.md`。
 
 ```lua
 require "import"
@@ -182,19 +239,47 @@ insertItem(adapter, 0, newItem)     -- 自带动画,无需 notify
 require "import"
 import "android.widget.ListView"
 
--- LuaAdapter(context, 数据表, item 布局表/文件)
-local itemLayout = {
-  LinearLayoutCompat, orientation="vertical",
-  layout_width="fill", layout_height="wrap", padding="12dp",
-  { MaterialTextView, id="name", textSize="16sp" },
+-- 每条数据是一个表,键名对应 item 布局里的 id
+local data = {
+  { name = "第一项", desc = "说明" },
+  { name = "第二项", desc = "说明" },
 }
+
+local itemLayout = {
+  LinearLayoutCompat, orientation = "vertical",
+  layout_width = "fill", layout_height = "wrap", padding = "12dp",
+  { MaterialTextView, id = "name", textSize = "16sp" },
+  { MaterialTextView, id = "desc", textSize = "12sp" },
+}
+
 local adapter = LuaAdapter(activity, data, itemLayout)
 list.setAdapter(adapter)
+```
 
--- 多类型
-local multi = LuaMultiAdapter(activity, data, { [0]=itemLayout1, [1]=itemLayout2 })
--- 数组适配器(简单文本)
-local arr = LuaArrayAdapter(activity, R.layout.simple_list_item_1, { "A", "B", "C" })
+改动数据用它的方法(都会自动 `notifyDataSetChanged`):
+
+| 方法 | 说明 |
+|---|---|
+| `adapter.insert(pos, item)` | 在 `pos`(**0 起算**)插入一条 |
+| `adapter.remove(pos)` | 删除 `pos` 处(0 起算) |
+| `adapter.addAll(items)` | 批量追加 |
+| `adapter.clear()` | 清空 |
+| `adapter.setNotifyOnChange(false)` | 批量改动前关掉通知,改完再 `notifyDataSetChanged()` |
+
+```lua
+adapter.insert(0, { name = "新的第一项", desc = "" })
+adapter.remove(2)
+adapter.clear()
+```
+
+其它适配器:
+
+```lua
+-- 多类型(按 position 或数据类型分不同 item 布局)
+local multi = LuaMultiAdapter(activity, data, { [0] = itemLayout1, [1] = itemLayout2 })
+
+-- 简单文本列表
+local arr = LuaArrayAdapter(activity, android.R.layout.simple_list_item_1, { "A", "B", "C" })
 list.setAdapter(arr)
 ```
 
@@ -228,21 +313,61 @@ Snackbar.make(activity.getDecorView(), "已保存", Snackbar.LENGTH_SHORT).show(
 
 ## 八、服务 / 广播 / 线程
 
-```lua
--- 启动/绑定 Lua 服务(同项目 service/main.lua)
-activity.startService("service/main.lua")
-activity.bindService(ServiceConnection{ ... }, 0)
-activity.stopService()
+### 8.1 Lua 服务
 
--- 广播接收
+```lua
+-- 启动同项目的 service/main.lua(会自动作为 Service 运行)
+activity.startService("service/main.lua")
+
+-- 带参数启动
+activity.startService("service/main.lua", {"arg1"})
+
+-- 停止
+activity.stopService()
+```
+
+服务的生命周期回调写在服务自己的 Lua 文件里(`LuaService` 按名调用这几个全局函数,
+`LuaService.java:281-340`):
+
+| 回调 | 参数 |
+|---|---|
+| `onCreate()` | — |
+| `onStartCommand(intent, flags, startId)` | 三个 |
+| `onStart(arg)` | `startService(path, arg)` 传进来的表 |
+| `onDestroy()` | — |
+| `onReceive(context, intent)` | 广播 |
+| `onError(title, msg)` | 出错 |
+
+### 8.2 广播
+
+三种登记方式(`LuaActivity.java:647-660`):
+
+```lua
 require "import"
 import "android.content.IntentFilter"
-local filter = IntentFilter("android.intent.action.BATTERY_CHANGED")
-activity.registerReceiver(IntentFilter("com.example.EVENT"))
--- 收到后在全局 onReceive(context, intent) 处理
 
--- 子线程 / 异步任务 / 定时器(见第二节 task/thread/timer)
+-- 方式一(最常用):只给 filter,收到后走全局 onReceive
+activity.registerReceiver(IntentFilter("android.intent.action.BATTERY_CHANGED"))
+
+function onReceive(context, intent)
+  print("收到广播: " .. intent.getAction())
+end
+
+-- 方式二:传一个 OnReceiveListener(用「接口类{方法表}」语法生成代理)
+local ltr = LuaBroadcastReceiver.OnReceiveListener {
+  onReceive = function(context, intent)
+    print("局部处理: " .. intent.getAction())
+  end,
+}
+activity.registerReceiver(ltr, IntentFilter("com.example.EVENT"))
 ```
+
+> 方式一每次注册会**先注销上一个**(`if (mReceiver != null) unregisterReceiver(...)`),
+> 所以同时监听多个 action 请写进同一个 `IntentFilter`。
+
+### 8.3 子线程 / 异步任务 / 定时器
+
+见本文第二节的 `task` / `thread` / `timer`。
 
 ---
 
@@ -260,25 +385,41 @@ web.loadData("<h1>Hi</h1>", "text/html", "utf-8")
 
 ## 十、文件 / 压缩 / 摘要(要原生工具,别纯 Lua 重写)
 
+这些是**随运行时的原生库**,直接 `require`,不需要配 `global_utils`:
+
 ```lua
--- 需在 settings.json 的 global_utils 里? 不用 —— 这些是随运行时的原生库,直接 require:
-local lfs = require "lfs"            -- 目录遍历/属性
-for f in lfs.dir(activity.getLuaDir()) do print(f) end
-print(lfs.attributes("main.lua").size)
+local lfs = require "lfs"            -- 目录遍历 / 属性 / 增删
+for name in lfs.dir(activity.getLuaDir()) do print(name) end
+local attr = lfs.attributes(activity.getLuaPath("main.lua"))
+if attr then print(attr.size, attr.modification, attr.mode) end
 
-local zlib = require "zlib"          -- 压缩
-local crypt = require "crypt"        -- base64/hex/sha1/hmac
-local md5 = require "md5"
-local json = require "cjson"         -- 或 require "yyjson"
+local cjson = require "cjson"        -- JSON(首选)
+local text = cjson.encode({a = 1})
+local obj  = cjson.decode(text)
 
--- LuaUtil 里的现成方法(通过 luajava 调)
-import "com.androlua.LuaUtil"
-LuaUtil.copyDir("a", "b")
-LuaUtil.unZip("/path/a.zip")
-LuaUtil.getFileMD5("/path/file")
+local crypt = require "crypt"        -- base64 / hex / sha1 / hmac
+print(crypt.base64encode("hi"))
+print(crypt.hexencode(crypt.sha1("abc")))    -- ⚠️ sha1 返回二进制,必须 hexencode
 ```
 
-> 完整原生库清单与"别写 lsqlite3"等注意点见 SKILL.md §1.10。
+`LuaUtil` 的现成方法(静态,经 luajava 直接调):
+
+```lua
+import "com.androlua.LuaUtil"
+
+LuaUtil.copyFile("/sdcard/a", "/sdcard/b")   -- 无返回值(内部异常被吞)
+LuaUtil.copyDir("/sdcard/d1", "/sdcard/d2")  -- 返回 boolean
+LuaUtil.rmDir(File("/sdcard/d2"))            -- 参数是 File 对象
+LuaUtil.unZip("/sdcard/a.zip")               -- 解到同名目录
+LuaUtil.zip("/sdcard/d1")                    -- 压缩成 d1.zip
+LuaUtil.getFileMD5("/sdcard/a")              -- 十六进制字符串
+LuaUtil.getFileSha1("/sdcard/a")
+LuaUtil.getMD5("字符串")
+LuaUtil.readAsset(activity, "x.txt")         -- byte[]
+```
+
+> 完整原生库清单、每个库的可用函数与"别写 `require "lsqlite3"`"等注意点见
+> **SKILL.md §1.10**;`lfs` / `zlib` / `zip` / `regex` / `time` 的最小示例也在那里。
 
 ---
 

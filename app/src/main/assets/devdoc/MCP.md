@@ -1,19 +1,19 @@
-# MCP 服务(LuaForge-Studio 1.6.7)
+# MCP 服务(LuaForge-Studio 1.7.0)
 
 把编辑器的能力(读写代码、调试运行、构建 APK、界面检查)通过 [Model Context Protocol](https://modelcontextprotocol.io) 暴露给外部 AI 客户端。
 
 ## 1. 启用
 
-设置 → **MCP 服务** → 打开“启用 MCP 服务”。
+侧边栏 **MCP** 页 → 打开「启用 MCP 服务」。该页不可折叠,内容直接展开。
 
 | 项 | 说明 |
 | --- | --- |
 | 监听端口 | 1024–65535,默认 `9123`;修改后服务自动重启 |
 | 需要访问令牌 | 开启后请求须携带 `Authorization: Bearer <令牌>`;开启时若令牌为空会自动生成 |
 
-启用后设置页会显示全部可用地址,每个地址各占一行、等宽字体展示,行尾按钮可**一键复制**。
+启用后会显示全部可用地址,每个地址各占一行、等宽字体展示,行尾按钮可**一键复制**。
 
-地址清单**回环地址 `http://127.0.0.1:<端口>` 永远排第一**,其后是局域网地址。设置页给每条地址加了
+地址清单**回环地址 `http://127.0.0.1:<端口>` 永远排第一**,其后是局域网地址。该页给每条地址加了
 **「本机」/「局域网」**标签:前者给**同一台设备**上的 MCP 客户端用(不依赖 Wi-Fi 是否有 IP,
 最可靠),后者给同一网络下的其他设备用 —— 拿局域网地址去配本机客户端是最常见的连不上的原因。
 
@@ -70,6 +70,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 | `write_file` | 写入文本文件(自动创建父目录),并刷新编辑器中已打开的同名标签。`mode=overwrite`(默认)整体覆盖 / `replaceLines` 按 `startLine`/`endLine` 闭区间替换 / `append` 追加;`expectedMd5`、`expectedLines` 做写入前完整性校验,不符则拒绝写入 | `path` **必填**、`content` **必填**、`mode`、`startLine`、`endLine`、`expectedMd5`、`expectedLines` |
 | `create_file` | 新建文件,已存在时默认不覆盖 | `path` **必填**、`content`、`overwrite` |
 | `delete_file` | 删除文件或**空**目录,并关闭对应编辑器标签 | `path` **必填** |
+| `copy_file` | 复制文件/目录**到当前项目内**(支持跨项目取源);`target` 缺省取源文件名 | `source` **必填**、`fromProject`、`target`、`overwrite`、`recursive`(默认 true) |
 | `rename_file` | 重命名/移动文件或目录,并同步编辑器标签 | `from` **必填**、`to` **必填**、`overwrite` |
 | `make_directory` | 递归创建目录 | `path` **必填** |
 | `file_info` | 文件/目录信息(大小、修改时间、行数、MD5) | `path` **必填** |
@@ -135,9 +136,10 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 运行实例表按**对象身份**登记,因此两个项目各自跑 `main.lua`(`pageName` 同为 `main`)可以同时存在;
 `page` 参数命中同名页面时取**最近启动**的那个,需要精确指定请改用 `path`。
 
-编辑器里「构建项目」会先弹出构建类型选择对话框(跟随项目设置 / Debug 版 / Release 版,详见 [README](../README.md) 的 1.6.4 条目)。
-`build_apk` 走的是 `BuildType.PROJECT_DEFAULT`,即加密打包且调试模式沿用项目设置;
-需要指定构建类型时请在编辑器界面构建。
+编辑器里「构建项目」会先弹出构建对话框,可选择**构建类型**(跟随项目设置 / Debug 版 /
+Release 版)与**打包方式**(普通加密 / 封装进 dex / 封装进 so)。
+`build_apk` 走的是 `BuildType.PROJECT_DEFAULT` + 默认打包方式,即加密打包且调试模式沿用项目设置;
+需要指定构建类型或打包方式时请在编辑器界面构建。
 
 ### 运行时界面检查
 

@@ -3,7 +3,6 @@ package com.luaforge.studio.build.maven
 import android.content.Context
 import com.luaforge.studio.utils.LogCatcher
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull

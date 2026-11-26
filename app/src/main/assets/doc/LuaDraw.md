@@ -132,11 +132,13 @@ d.invalidateSelf()
 | 菜单图标 | `menuItem.setIcon(d)` | 图标尺寸由菜单决定 |
 | 布局属性 | `background = <Drawable 实例>` | `loadlayout` 的 `background` 支持直接传对象 |
 
-`setImageDrawable` 场景要手动给边界,否则宽高为 0(画不出来):
+`setImageDrawable` 场景要**手动**给边界 —— 这个位置没有 View 帮忙算尺寸,
+不设的话 `bounds` 宽高为 0,什么也画不出来:
 
 ```lua
 local d = LuaDrawable(function(canvas, paint, self)
-  local b = self.getBounds()          -- 只有设过 bounds 才有值
+  -- 作为 background/foreground 时,View 会按自身尺寸自动设好 bounds
+  local b = self.getBounds()
   canvas.drawRect(b, paint)
 end)
 d.setBounds(0, 0, 200, 200)
@@ -611,30 +613,34 @@ local function makeLineView(data)
   return view
 end
 
+-- 布局参数:MATCH_PARENT / WRAP_CONTENT 是常量,直接引用类上的静态字段
+local LP = LinearLayoutCompat.LayoutParams
+local MATCH, WRAP = -1, -2          -- 与 LP.MATCH_PARENT / LP.WRAP_CONTENT 等值
+
 local root = LinearLayoutCompat(activity)
-root.setOrientation(LinearLayoutCompat.VERTICAL)
+root.setOrientation(1)              -- 1 = VERTICAL(也可用 LinearLayoutCompat.VERTICAL)
 root.setPadding(40, 60, 40, 40)
 root.setBackgroundColor(0xFFFDFBFF)
 
 local title = TextView(activity)
 title.setText("LuaDraw 演示")
-title.setTextSize(22)
+title.setTextSize(22)               -- 单位 sp
 title.setTextColor(0xFF1D1B20)
 root.addView(title)
 
+-- 自绘区:圆环
 local ring = makeRingView()
-root.addView(ring, LinearLayoutCompat.LayoutParams(
-  LinearLayoutCompat.LayoutParams.MATCH_PARENT, 360))
+root.addView(ring, LP(MATCH, 360))
 
+-- 自绘区:折线
 local line = makeLineView({ 12, 30, 22, 48, 40, 61, 55 })
-root.addView(line, LinearLayoutCompat.LayoutParams(
-  LinearLayoutCompat.LayoutParams.MATCH_PARENT, 400))
+root.addView(line, LP(MATCH, 400))
 
--- 用现成 GradientDrawable 做静态背景,不必每帧重绘
+-- 静态卡片的背景用现成 GradientDrawable,不必每帧重绘
 local cardBg = GradientDrawable()
 cardBg.setShape(GradientDrawable.RECTANGLE)
 cardBg.setColor(0xFFF3EDF7)
-cardBg.setCornerRadius(28)
+cardBg.setCornerRadius(28)          -- 单位 px;要 dp 请乘 displayMetrics.density
 
 local tip = TextView(activity)
 tip.setText("静态背景用 GradientDrawable,动态内容用 LuaDrawable")
@@ -642,11 +648,14 @@ tip.setTextSize(14)
 tip.setTextColor(0xFF49454F)
 tip.setPadding(28, 28, 28, 28)
 tip.setBackground(cardBg)
-root.addView(tip, LinearLayoutCompat.LayoutParams(
-  LinearLayoutCompat.LayoutParams.MATCH_PARENT, LinearLayoutCompat.LayoutParams.WRAP_CONTENT))
+root.addView(tip, LP(MATCH, WRAP))
 
 activity.setContentView(root)
 ```
+
+> 上面刻意用 `LP(MATCH, 360)` 这类**显式构造**而不是链式 `setXxx().setYyy()`:
+> luajava 允许对 `void` 方法继续 `.` 下去,但读代码时容易误以为它返回了新对象。
+> 显式分句在排查"到底哪句没生效"时更省事。
 
 验证方式(MCP):
 
@@ -669,7 +678,7 @@ get_runtime_errors                   # 绘制抛错会以 onDraw 落进日志
 | 绘制性能 | Lua 回调每帧执行,**不要在里面做文件 IO、网络、分配大量对象**;昂贵对象用 1.2 的"返回函数"写法缓存 |
 | 线程 | `draw()` 在主线程;Lua 侧不能在里面 `sleep` 或阻塞等待 |
 | `drawBitmapMesh` / `drawPosText` / `drawVertices` | 这三个在 `canvas.c` 里有完整实现,但**仓库内无任何使用案例**,且 `drawPosText` 在 API 29+ 已被系统标记 deprecated,按"未实测"对待 |
-| `LuaDrawable` 已废弃? | 否。`loadmenu.lua` 里绑定了类但未使用;`LuaDrawable` 本身是完整实现 |
+| `LuaDrawable` 在仓库里的实际用法 | `core/src/main/resources/lua/loadmenu.lua:9` 只做了 `luajava.bindClass` 取值,**没有任何调用**;项目代码里用它需要你自己绑定类(见本文示例) |
 | 与 Compose 混用 | Compose 侧没有对应的 Canvas 封装;要自绘请用 `AndroidView` 包一个自定义 View,或直接在 `loadlayout` 的 View 上用 `LuaDrawable` |
 
 ---

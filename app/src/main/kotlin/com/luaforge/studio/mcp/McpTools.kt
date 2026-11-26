@@ -4201,13 +4201,14 @@ object McpTools {
     private val CORE_DEV_DOCS = listOf(
         "SKILL.md" to "首要入口:控件复用铁律、Lua 运行时、MCP 工具清单与端到端流程",
         "MCP.md" to "MCP 协议细节与全部工具的参数参考",
-        "NETWORK.md" to "网络请求限制与防火墙拦截规则(踩坑高发区)"
+        "NETWORK.md" to "网络权限与自动申请、两条 Lua 网络通道(Http / Https)"
     )
 
     /** 控件/运行时参考文档(与 assets/doc 保持一致)。 */
     private val REF_DEV_DOCS = listOf(
         "WidgetsCatalog.md" to "全部内置控件索引(先在这里找现成控件)",
         "Compose.md" to "在 Lua 里写 Compose:compose/state/remember 与组件属性速查",
+        "LuaDraw.md" to "Lua 自定义绘制:LuaDrawable 回调语义 + canvas 原生模块逐函数参考与示例",
         "RuntimeAPI.md" to "全局对象与内置工具类(避免手写已有能力)",
         "MaterialTextField.md" to "输入框控件",
         "BitmapUtil.md" to "位图工具",
