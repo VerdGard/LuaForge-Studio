@@ -2,7 +2,6 @@ package com.luaforge.studio.build.maven
 
 import android.content.Context
 import com.luaforge.studio.utils.LogCatcher
-import com.luaforge.studio.utils.NetworkProxy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -32,36 +31,18 @@ class MavenDownloader(private val context: Context) {
     /**
      * 依赖下载用的 OkHttp 客户端。
      *
-     * 不能简单地 `by lazy`:代理配置(设置 → 安全与日志)可能在应用运行期间被修改,
-     * 而 OkHttp 的 proxy 在建 client 时就固定了。这里按 [NetworkProxy.revision]
-     * 判断是否需要重建,未变更时复用同一个实例以保持连接池。
+     * 单一实例、进程内复用连接池。构建参数固定,因此只需 lazy 一次的语义;
+     * 这里保留显式 getter 只是为了在同步块里给出清晰的构造点。
      */
-    @Volatile
-    private var cachedClient: OkHttpClient? = null
-
-    @Volatile
-    private var cachedProxyRevision: Int = -1
-
-    private val okHttpClient: OkHttpClient
-        get() {
-            val revision = NetworkProxy.revision
-            cachedClient?.let { if (cachedProxyRevision == revision) return it }
-            synchronized(this) {
-                cachedClient?.let { if (cachedProxyRevision == revision) return it }
-                val builder = OkHttpClient.Builder()
-                    .connectTimeout(8, TimeUnit.SECONDS)
-                    .readTimeout(10, TimeUnit.SECONDS)
-                    .writeTimeout(10, TimeUnit.SECONDS)
-                    .callTimeout(15, TimeUnit.SECONDS)
-                    .retryOnConnectionFailure(false)
-                    // 用 ProxySelector:Maven 仓库常被单独加进直连/走代理名单
-                    .proxySelector(NetworkProxy.selector())
-                val created = builder.build()
-                cachedClient = created
-                cachedProxyRevision = revision
-                return created
-            }
-        }
+    private val okHttpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .writeTimeout(10, TimeUnit.SECONDS)
+            .callTimeout(15, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(false)
+            .build()
+    }
 
     interface DownloadCallback {
         fun onProgress(currentFile: String, currentIndex: Int, totalFiles: Int)

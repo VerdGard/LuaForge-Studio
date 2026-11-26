@@ -73,8 +73,8 @@ import com.luaforge.studio.utils.NonBlockingToastState
  * ## 内容
  *
  * 与原先挤在「设置 → MCP 服务」里的那张卡片完全等价(同一批
- * `SettingsCardGroup` / `SettingsListItem` 组件),只是不再需要折叠开关 ——
- * 独立成页后直接展开。
+ * `SettingsCardGroup` / `SettingsListItem` 组件)。卡片传 `collapsible = false`:
+ * 独立成页后内容本身就是全部信息,折叠控件只会多一次点击与一个假箭头。
  */
 @Composable
 fun McpScreen(
@@ -135,8 +135,7 @@ fun McpScreen(
                 SettingsCardGroup(
                     title = stringResource(R.string.settings_mcp_service),
                     icon = Icons.Filled.Hub,
-                    initiallyExpanded = true,
-                    onExpandedChange = { }
+                    collapsible = false
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),

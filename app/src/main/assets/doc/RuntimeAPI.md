@@ -102,7 +102,7 @@ local menu = activity.getOptionsMenu()
 
 ## 四、网络请求(优先 `Http`,`com.androlua.Http`)
 
-> 前提:`settings.json` 的 `user_permission` 含 `INTERNET`。开发期会被 IDE 网络拦截,打包后不拦截。
+> 前提:`settings.json` 的 `user_permission` 含 `INTERNET`。代理设置见 `devdoc/NETWORK.md`。
 
 ```lua
 require "import"
@@ -282,16 +282,56 @@ LuaUtil.getFileMD5("/path/file")
 
 ---
 
-## 十一、日志与调试
+## 十一、自绘(LuaDrawable)
+
+需要"随数据变化"的自定义图形(图表、进度环、签名板)时:
 
 ```lua
-print("会落 luaforge.log,并被调试浮窗接管")   -- 运行时唯一推荐输出方式
--- MCP: get_logs / get_runtime_errors / debugger_outputs 读取
+local LuaDrawable = luajava.bindClass "com.androlua.LuaDrawable"
+local Paint = luajava.bindClass "android.graphics.Paint"
+
+view.setBackground(LuaDrawable(function(canvas, paint, self)
+  local b = self.getBounds()          -- 永远以 bounds 为准
+  paint.setAntiAlias(true)
+  paint.setColor(0xFF6750A4)
+  canvas.drawCircle(b.centerX(), b.centerY(), math.min(b.width(), b.height()) / 2, paint)
+end))
+
+-- 数据变了要让 View 重绘
+view.invalidate()
 ```
+
+**静态**圆角/纯色背景别用它,用 `GradientDrawable` 就行:
+
+```lua
+local GradientDrawable = luajava.bindClass "android.graphics.drawable.GradientDrawable"
+local bg = GradientDrawable()
+bg.setShape(GradientDrawable.RECTANGLE)
+bg.setColor(0xFFF3EDF7)
+bg.setCornerRadius(24)
+card.setBackground(bg)
+```
+
+完整参考(含 `require "canvas"` 原生模块的逐函数说明、参数类型陷阱、5 个完整示例)见
+**`app/src/main/assets/doc/LuaDraw.md`**。
 
 ---
 
-## 十二、易错点回顾
+## 十二、日志与调试
+
+```lua
+print("会落 luaforge.log,并被调试浮窗接管")   -- 运行时唯一推荐输出方式
+-- MCP: get_logs / get_runtime_errors / get_editor_logs / debugger_outputs 读取
+```
+
+日志位置:`/storage/emulated/0/LuaForge-Studio/luaforge.log`
+(外部不可写时回退 `filesDir/logs/luaforge.log`)。
+
+崩溃会另存到 `/storage/emulated/0/LuaForge-Studio/crash/`(设置页「崩溃记录」可查看/删除)。
+
+---
+
+## 十三、易错点回顾
 
 1. 不 `require "import"` 就没有 `import`/`loadlayout`,连 `LinearLayoutCompat` 都解析不到。
 2. 界面用 `loadlayout`,列表用适配器;导航控件(底部栏/抽屉)加菜单用 `.Menu.add(...)`。

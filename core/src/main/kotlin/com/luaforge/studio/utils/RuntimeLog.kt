@@ -136,44 +136,11 @@ object RuntimeLog {
         val line = synchronized(timeLock) {
             "[${timeFormat.format(Date(now))}] [$level] [$tag] $message\n"
         }
-        mirrorToBuffer(level, tag, message, now)
         try {
             handler.post { appendLine(line) }
         } catch (_: Throwable) {
             // HandlerThread 初始化失败等极端场景:退化为同步写,保证不丢日志
             appendLine(line)
-        }
-    }
-
-    /**
-     * 旁路写入 IDE 侧的结构化日志缓冲(`LogBuffer`)。
-     *
-     * core 不能反向依赖 app 模块(会形成循环),因此这里用反射调用
-     * `com.luaforge.studio.utils.LogBuffer.add(...)` —— 只在 IDE 宿主里存在,
-     * 打包进用户 APK 后找不到该类,静默跳过即可(用户 APK 不需要日志页)。
-     *
-     * 反射方法只查一次并缓存;失败后不再重试,避免每行日志都付出一次
-     * ClassNotFound 的代价。
-     */
-    private fun mirrorToBuffer(level: String, tag: String, message: String, timestamp: Long) {
-        try {
-            val bridge = bufferBridge ?: return
-            bridge.invoke(null, level, tag, message, timestamp)
-        } catch (_: Throwable) {
-            // 缓冲只是一层便利,任何失败都不能影响落盘
-        }
-    }
-
-    /** `LogBuffer.add(level: String, tag, message, timestamp)` 的反射句柄。 */
-    private val bufferBridge: java.lang.reflect.Method? by lazy {
-        try {
-            val clazz = Class.forName("com.luaforge.studio.utils.LogBuffer")
-            clazz.getMethod(
-                "addFromRuntime",
-                String::class.java, String::class.java, String::class.java, Long::class.javaPrimitiveType
-            )
-        } catch (_: Throwable) {
-            null
         }
     }
 

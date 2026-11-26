@@ -392,6 +392,12 @@ object ProjectUtil {
                 jsonMap["global_utils"] = emptyList<String>()
             }
 
+            // 自动申请权限:模板里的 settings.json 还没有这个键,补一个默认 false,
+            // 让用户直接打开文件就能看到开关存在,不必先跑一遍「项目属性」保存。
+            if (!jsonMap.containsKey("auto_request_permissions")) {
+                jsonMap["auto_request_permissions"] = false
+            }
+
             // 写回文件 - 使用格式化输出（缩进4个空格）
             val updatedJson = JSONObject(jsonMap).toString(4)
             settingsFile.writeText(updatedJson)
@@ -448,6 +454,9 @@ object ProjectUtil {
                 "READ_EXTERNAL_STORAGE",
                 "INTERNET"
             ),
+            // 自动申请权限:默认关闭。运行时的 LuaActivity 启动时读它,
+            // 为 true 才向用户申请 user_permission 里尚未授予的运行时权限。
+            "auto_request_permissions" to false,
             "implementation" to emptyList<String>(),
             "global_utils" to globalUtils  // 使用传入的globalUtils
         )

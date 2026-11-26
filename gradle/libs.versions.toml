@@ -72,8 +72,6 @@ okhttp = "5.3.2"
 # KToast
 ktoast = "1.0.4"
 
-# 视频播放(Media3 / ExoPlayer)
-
 # Editor module versions
 androidx-annotation = "1.9.1"
 junit = "4.13.2"
@@ -168,11 +166,6 @@ okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 
 # KToast
 ktoast = { module = "io.github.tarifchakder.ktoast:ktoast", version.ref = "ktoast" }
-
-# Video Playback (Media3 / ExoPlayer)
-# 自适应流/协议扩展:HLS(m3u8)、DASH(mpd)、SmoothStreaming(ism)、RTSP、RTMP。
-# 这些模块由 DefaultMediaSourceFactory / DefaultDataSource 通过反射发现,
-# 只加依赖即可生效,但 release 混淆必须配 keep 规则(见 proguard-rules.pro)。
 
 # Editor module dependencies (for :editor module)
 androidx-annotation = { module = "androidx.annotation:annotation", version.ref = "androidx-annotation" }

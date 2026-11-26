@@ -55,7 +55,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 { "headers": { "Authorization": "Bearer <你的令牌>" } }
 ```
 
-## 4. 工具清单(58 个)
+## 4. 工具清单(59 个)
 
 参数均为可选,除非标 **必填**。带 `array` 的参数可传 JSON 数组,也可传换行/逗号分隔的字符串。
 
@@ -150,7 +150,7 @@ curl -X POST http://127.0.0.1:9123/ -H 'Content-Type: application/json' \
 | `get_runtime_errors` | 读取日志中的运行时错误 | `lines`(默认 50) |
 | `clear_logs` | 清空 `luaforge.log` | — |
 | `get_logs` | 读取应用日志末尾内容(磁盘文本) | `lines`(默认 200) |
-| `get_editor_logs` | 读取**编辑器结构化日志**(与侧边栏「日志」页同源):级别 / tag / 正文 / 异常栈,可按级别与关键字过滤 | `level`、`tag`、`query`、`limit`(默认 200) |
+| `get_editor_logs` | 把 `luaforge.log` 解析成**结构化条目**:级别 / tag / 正文 / 异常栈,可按级别阈值、tag 与关键字过滤 | `level`(VERBOSE/DEBUG/INFO/WARN/ERROR)、`tag`、`query`、`limit`(默认 200) |
 | `list_build_logs` | 列出每次构建的**独立过程日志**(按秒命名,最新在前) | `limit`(默认 20) |
 | `read_build_log` | 读取一次构建的完整过程日志:**逐步耗时 + 失败处堆栈**;不传 `path` 读最近一次 | `path`、`maxChars`(默认 200000) |
 
@@ -167,12 +167,13 @@ read_build_log              # 失败后立刻读最近一次,直接看到卡在�
 
 `get_editor_logs` 与 `get_logs` 的区别:
 
-- `get_logs` 读 `luaforge.log` 的**原始文本尾部**,调用方需自行切分与匹配级别;
-- `get_editor_logs` 读内存里的**结构化条目**,级别是枚举而非字符串,
-  可按 `>= level` 精确过滤(不会把正文里提到 ERROR 的 INFO 行误判为错误)。
+- `get_logs` 读 `luaforge.log` 的**原始文本尾部**,原样返回,调用方自行切分;
+- `get_editor_logs` 把同一个文件解析成**结构化条目**,级别是枚举而非字符串,
+  可按 `>= level` 精确过滤(不会把正文里提到 ERROR 的 INFO 行误判为错误),
+  异常栈也已从续行归并到对应条目上。
 
-两者的数据都涵盖**本进程的全部日志**:IDE 埋点(`LogCatcher`)、core 运行时
-(`RuntimeLog`),以及经 logcat 采集到的三方库/框架输出。
+两者读的是**同一个文件** `luaforge.log`,因此内容永远一致;进程重启后历史也还在。
+写入方有两个:IDE 埋点(`LogCatcher`)与 core 运行时(`RuntimeLog`)。
 
 ### 调试浮窗(debugger.lua)
 

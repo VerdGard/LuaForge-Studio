@@ -95,7 +95,8 @@
     <string name="cd_more_options">更多操作</string>
 
     <!-- 关于页面 -->
-    <string name="tech_stack_title">Tech Stack</string>
+    <string name="developers_title">开发者</string>
+    <string name="developer_avatar_desc">%1$s 的头像</string>
     <string name="licenses_title">Licenses</string>
     <string name="no_license_info">暂无协议信息</string>
     <string name="loading_doc">加载文档中…</string>
@@ -109,20 +110,6 @@
     <string name="copy">复制</string>
     <string name="visit_website">访问网站</string>
     <string name="license_label">许可证</string>
-
-    <!-- 开发人员信息 -->
-    <string name="dev_w_name">W.</string>
-    <string name="dev_w_role">Developer</string>
-    <string name="dev_kotlin_name">Kotlin</string>
-    <string name="dev_kotlin_role">Language</string>
-    <string name="dev_lua_name">Lua 5.5</string>
-    <string name="dev_lua_role">Core Engine</string>
-    <string name="dev_android_name">Android</string>
-    <string name="dev_android_role">Platform</string>
-    <string name="dev_compose_name">Jetpack Compose</string>
-    <string name="dev_compose_role">UI Framework</string>
-    <string name="dev_zt_name">恣桐</string>
-    <string name="dev_zt_role">Developer</string>
 
     <!-- 版权和版本 -->
     <string name="copyright">© %s LuaForge Studio</string>
@@ -470,6 +457,9 @@
     <string name="attribute_target_sdk">目标 SDK</string>
     <string name="attribute_debug_enable">启用调试模式</string>
     <string name="attribute_permission_title">权限</string>
+    <string name="attribute_permission_auto_request">自动申请权限</string>
+    <string name="attribute_permission_auto_request_desc">开启后应用启动时自动申请上面已选的权限;默认关闭</string>
+    <string name="attribute_permission_auto_request_empty">尚未选择任何权限,开启此开关不会产生申请</string>
     <string name="attribute_permission_count">已选择 %d 个权限</string>
     <string name="attribute_permission_manage">管理权限</string>
     <string name="attribute_permission_select_title">选择权限</string>
@@ -668,66 +658,12 @@
     <string name="settings_mcp_notification_permission_denied">未授予,常驻通知不会显示;点按前往开启</string>
     <string name="settings_mcp_notification_permission_toast">请允许通知权限,否则常驻通知无法显示</string>
 
-    <string name="settings_network">网络请求拦截</string>
-    <string name="settings_security">安全、网络与日志</string>
-    <string name="settings_network_enable">拦截网络请求</string>
-    <string name="settings_network_enable_desc">请求发出前弹出确认框,用户允许后才放行</string>
-    <string name="settings_network_allowed">已允许的主机</string>
-    <string name="settings_network_allowed_desc">这些主机的请求不再询问,直接放行</string>
-    <string name="settings_network_blocked">已拒绝的主机</string>
-    <string name="settings_network_blocked_desc">这些主机的请求不再询问,直接拒绝</string>
-    <string name="settings_network_hint">拦截范围包含编辑器自身的网络请求,以及用户项目通过 http、okhttp 发起的请求。图片加载与 WebView 请求不拦截。项目打包成 APK 后不包含拦截逻辑,因此打包后不会被拦截。</string>
-    <string name="settings_network_dialog_title">网络请求确认</string>
-    <string name="settings_network_dialog_allow">允许</string>
-    <string name="settings_network_dialog_deny">拒绝</string>
-    <string name="settings_network_remember">记住该主机的选择</string>
-    <string name="settings_network_url">地址</string>
-    <string name="settings_network_headers">请求头</string>
-    <string name="settings_network_body">请求体</string>
-    <string name="settings_network_source">来源</string>
     <string name="settings_mcp_endpoints">访问地址</string>
     <string name="settings_mcp_copy_address">复制地址</string>
     <string name="settings_mcp_endpoint_local">本机</string>
     <string name="settings_mcp_endpoint_lan">局域网</string>
     <string name="settings_mcp_address_copied">地址已复制</string>
-    <string name="settings_network_allowed_empty">暂无允许记录</string>
-    <string name="settings_network_blocked_empty">暂无拒绝记录</string>
-    <string name="settings_network_clear_all">清空所有记录</string>
-    <string name="settings_network_cleared_allowed">已清空允许记录</string>
-    <string name="settings_network_cleared_blocked">已清空拒绝记录</string>
-    <string name="settings_network_delete_record">删除该记录</string>
-    <string name="settings_network_record_deleted">已删除记录:%1$s</string>
-    <string name="settings_network_show_all">展开全部(%1$d)</string>
-    <string name="settings_network_show_less">收起</string>
 
-    <!-- 防火墙 -->
-    <string name="settings_proxy">网络代理</string>
-    <string name="settings_proxy_label">代理地址</string>
-    <string name="settings_proxy_placeholder">留空为直连,例如 192.168.10.245:7890</string>
-    <string name="settings_proxy_status_direct">当前为直连,不经过任何代理</string>
-    <string name="settings_proxy_status_active">已启用 %1$s 代理:%2$s</string>
-    <string name="settings_proxy_status_invalid">格式无法识别,需为 主机:端口,例如 192.168.10.245:7890</string>
-    <string name="settings_proxy_clear">清空代理</string>
-    <string name="settings_proxy_switch">启用代理</string>
-    <string name="settings_proxy_switch_desc">关闭时即使填了地址也直接连接</string>
-    <string name="settings_proxy_direct_title">不走代理的网站</string>
-    <string name="settings_proxy_direct_desc">每行一个,命中即直连。支持 example.com(含子域)、*.example.com(仅子域)。本机回环地址始终直连</string>
-    <string name="settings_proxy_only_title">只对这些网站走代理</string>
-    <string name="settings_proxy_only_desc">每行一个,留空表示除上面直连名单外全部走代理;填写后仅名单内走代理</string>
-    <string name="settings_proxy_rules_applied">已应用 %1$d 条直连规则、%2$d 条走代理规则</string>
-    <string name="settings_proxy_hint">通过进程级 ProxySelector 生效,覆盖编辑器内所有走 JVM 网络栈的请求(Maven 下载、OkHttp、HttpURLConnection 及第三方库自建的客户端)。支持 host:port、http://host:port、socks5://host:port。127.0.0.1 等回环地址始终直连;WebView 与 Lua socket 使用原生网络栈,不受此设置影响;打包后的 APK 始终直连。</string>
-    <string name="settings_firewall">防火墙</string>
-    <string name="settings_firewall_cross_write">越级写入拦截</string>
-    <string name="settings_firewall_cross_write_desc">阻止项目写入/删除/修改其它项目目录,读取不受影响</string>
-    <string name="settings_firewall_self_guard">自我守护</string>
-    <string name="settings_firewall_self_guard_desc">拦截项目删除或移动 LuaForge-Studio 工作目录的行为</string>
-    <string name="settings_firewall_guarded">已守护 %1$d 次</string>
-    <string name="settings_firewall_hint">仅在编辑器中运行项目时生效(需项目设置内开启调试模式)。项目打包成 APK 后不包含防火墙逻辑。</string>
-    <string name="firewall_block_cross_title">越级写入拦截</string>
-    <string name="firewall_block_self_title">自我守护拦截</string>
-    <string name="firewall_block_msg_project">项目「%1$s」正在写入:</string>
-    <string name="firewall_block_msg_cross">已拦截对其它项目目录的写入/删除/修改操作。</string>
-    <string name="firewall_block_msg_self">已拦截对 %1$s 工作目录的操作。</string>
     <string name="code_editor_build_dialog_title">构建项目</string>
     <string name="code_editor_build_type">构建类型</string>
     <string name="code_editor_build_type_debug">Debug 版</string>
@@ -751,6 +687,22 @@
     <string name="settings_abi_arm32">armeabi-v7a</string>
     <string name="settings_abi_arm32_desc">仅 32 位,适配老旧 32 位设备</string>
     <string name="code_editor_build_start">开始构建</string>
+
+    <!-- 崩溃记录 -->
+    <string name="settings_crash_title">崩溃记录</string>
+    <string name="settings_crash_desc">记录每次未捕获异常,点开可看到完整堆栈;日志保存在 LuaForge-Studio/crash/ 下,可随时删除</string>
+    <string name="settings_crash_count">共 %1$d 条</string>
+    <string name="settings_crash_loading">正在读取…</string>
+    <string name="settings_crash_empty">暂无崩溃记录</string>
+    <string name="settings_crash_clear_all">清空全部</string>
+    <string name="settings_crash_clear_confirm">确定删除全部 %1$d 条崩溃记录?此操作不可撤销。</string>
+    <string name="settings_crash_cleared">已删除 %1$d 条崩溃记录</string>
+    <string name="settings_crash_deleted">已删除该条崩溃记录</string>
+    <string name="settings_crash_delete_one">删除该条记录</string>
+    <string name="settings_crash_detail_title">崩溃详情</string>
+    <string name="settings_crash_detail_unreadable">(记录内容为空或不可读)</string>
+    <string name="settings_crash_copy">复制全文</string>
+    <string name="settings_crash_copied">崩溃详情已复制</string>
 
     <string name="settings_build_signing">构建与签名</string>
     <string name="settings_build_signing_desc">打包架构与 APK 签名配置</string>

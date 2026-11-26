@@ -22,33 +22,21 @@ object OkHttpUtil {
         val headers: Map<String, List<String>>
     )
 
-    @Volatile
-    private var client: OkHttpClient? = null
-
-    /** 构建 [client] 时 [NetworkProxy] 的版本号,用于判断代理变更后是否需要重建。 */
-    @Volatile
-    private var clientProxyRevision: Int = -1
-
-    // 初始化OkHttpClient(双重检查锁,避免并发下重复创建)
-    private fun getClient(): OkHttpClient {
-        // 代理配置变更后必须重建:OkHttp 的 proxy 是建 client 时固定的,不是逐请求读取
-        val revision = NetworkProxy.revision
-        client?.let { if (clientProxyRevision == revision) return it }
-        synchronized(this) {
-            client?.let { if (clientProxyRevision == revision) return it }
-            val builder = OkHttpClient.Builder()
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(30, TimeUnit.SECONDS)
-                .writeTimeout(30, TimeUnit.SECONDS)
-                // 用 ProxySelector 而不是固定 Proxy:"哪些站走代理"的分流规则
-                // 才能在同一 client 内逐请求生效
-                .proxySelector(NetworkProxy.selector())
-            val created = builder.build()
-            client = created
-            clientProxyRevision = revision
-            return created
-        }
+    /**
+     * 共享的 OkHttp 客户端。
+     *
+     * lazy 的语义正合适:构造参数固定,整个进程复用一份连接池即可。
+     * 早期版本按"代理版本号"重建 client,代理功能移除后这层判断没有意义。
+     */
+    private val client: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build()
     }
+
+    private fun getClient(): OkHttpClient = client
 
     // ========== GET请求 ==========
 

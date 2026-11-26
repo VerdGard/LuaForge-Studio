@@ -34,6 +34,7 @@ import androidx.lifecycle.lifecycleScope
 import com.androlua.LuaApplication
 import com.androlua.LuaUtil
 import com.luaforge.studio.ui.crash.CrashManager
+import com.luaforge.studio.ui.crash.CrashRecorder
 import com.luaforge.studio.ui.editor.persistence.EditorStateUtil
 import com.luaforge.studio.mcp.ActivityTracker
 import com.luaforge.studio.mcp.McpManager
@@ -42,9 +43,7 @@ import com.luaforge.studio.ui.editor.viewmodel.CompletionDataManager
 import com.luaforge.studio.ui.settings.SettingsManager
 import com.luaforge.studio.ui.theme.AppThemeWithObserver
 import com.luaforge.studio.utils.IconManager
-import com.luaforge.studio.utils.LogBuffer
 import com.luaforge.studio.utils.LogCatcher
-import com.luaforge.studio.utils.NetworkProxy
 import com.luajava.LuaFunction
 import com.luajava.LuaStateFactory
 import kotlinx.coroutines.CoroutineScope
@@ -78,6 +77,10 @@ class SplashWelcome : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         CrashManager.install(this)
+        // 崩溃记录:包在 CrashManager 之外一层 —— 先落盘完整现场,再交给
+        // CrashManager 显示崩溃页。必须在 CrashManager.install 之后安装,
+        // 否则会被它内部的 setDefaultUncaughtExceptionHandler 覆盖掉。
+        CrashRecorder.install(this)
         // PackageManager Binder 调用较慢，避免阻塞主线程启动
         Thread {
             try {
@@ -87,9 +90,6 @@ class SplashWelcome : ComponentActivity() {
             }
         }.start()
         LogCatcher.init(this)
-        // 日志页的结构化缓冲:回填一次磁盘历史,让启动即能看到上次会话。
-        // 必须在 LogCatcher.init 之后 —— init 会清空日志文件,先回填会把历史丢掉。
-        LogBuffer.install(this)
         // 追踪前台 Activity,供 MCP 运行时界面检查(dump_screen / check_screen)使用
         ActivityTracker.install(application)
 
@@ -120,20 +120,7 @@ class SplashWelcome : ComponentActivity() {
             LogCatcher.e("SplashWelcome", "启动 MCP 服务失败", e)
         }
 
-        // 网络代理:按已保存设置初始化(默认开关关闭 + 留空 = 直连,不产生任何代理行为)
-        try {
-            val st = SettingsManager.currentSettings
-            NetworkProxy.apply(
-                st.networkProxy,
-                st.networkProxyEnabled,
-                st.networkProxyDirect,
-                st.networkProxyOnly
-            )
-        } catch (e: Exception) {
-            LogCatcher.e("SplashWelcome", "初始化网络代理失败", e)
-        }
-
-        // IDE 会话钩子(防火墙 + 调试浮窗):幂等安装,其它入口也会各自 ensure 一次
+        // IDE 会话钩子(调试浮窗):幂等安装,其它入口也会各自 ensure 一次
         SessionHooks.ensure(this@SplashWelcome)
 
         // 语言处理：仅在已持久化用户设置语言时应用；不匹配时不阻塞启动流程

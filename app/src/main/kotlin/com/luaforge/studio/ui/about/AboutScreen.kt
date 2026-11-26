@@ -25,8 +25,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerSize
@@ -37,6 +35,7 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -60,6 +59,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -74,6 +74,8 @@ import androidx.core.content.edit
 import androidx.core.net.toUri
 import com.luaforge.studio.BuildConfig
 import com.luaforge.studio.R
+import coil.compose.SubcomposeAsyncImage
+import coil.request.ImageRequest
 import com.luaforge.studio.utils.ClipboardUtil
 import com.luaforge.studio.utils.AppInfoUtil
 import com.luaforge.studio.utils.JsonUtil
@@ -84,13 +86,23 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * 一位开发者(「关于」页独立卡片里的每一行)。
+ *
+ * 字段刻意只保留列表要展示的三件事,且都是**外显的**:
+ *
+ * @param name      GitHub 用户名(第一行)
+ * @param repoUrl   项目地址(第二行,点击用浏览器打开)
+ * @param avatarUrl 头像地址。GitHub 头像约定 `https://github.com/<user>.png`,
+ *                  加 `?size=` 直接取指定边长的方形图,省一次重定向。
+ *                  用远程 URL 而不是打包 PNG:换头像不必改代码重发版。
+ */
 data class Developer(
-    val nameResId: Int,
-    val roleResId: Int,
-    val description: String,
-    val color: Color,
-    val iconResId: Int,
-    val url: String = ""
+    val name: String,
+    val repoUrl: String,
+    val avatarUrl: String,
+    /** 角色说明(仅用于无障碍描述,界面上不占行)。 */
+    val role: String = ""
 )
 
 data class LibraryLicense(
@@ -193,57 +205,21 @@ fun AboutScreen(onBack: () -> Unit) {
         }
     }
 
-    val teamMembers = remember {
+    // 开发者:GitHub 用户名、项目地址、头像全部取自 GitHub 本身。
+    // 顺序固定(先 wisyh 后 VerdGard),不随语言/主题变化。
+    val developers = remember {
         listOf(
-            // 先技术栈,后两位作者。两个 Developer 相邻排列,
-            // 避免原来"作者散在首尾"的排法让人以为他们是不同角色。
             Developer(
-                nameResId = R.string.dev_kotlin_name,
-                roleResId = R.string.dev_kotlin_role,
-                description = "",
-                color = Color(0xFF7F52FF),
-                iconResId = R.drawable.ic_kotlin,
-                url = "https://kotlinlang.org"
+                name = "wisyh",
+                repoUrl = "https://github.com/wisyh/LuaForge-Studio",
+                avatarUrl = "https://github.com/wisyh.png?size=160",
+                role = "LuaForge-Studio"
             ),
             Developer(
-                nameResId = R.string.dev_lua_name,
-                roleResId = R.string.dev_lua_role,
-                description = "",
-                color = Color(0xFF36618E),
-                iconResId = R.drawable.ic_lua,
-                url = "https://www.lua.org"
-            ),
-            Developer(
-                nameResId = R.string.dev_android_name,
-                roleResId = R.string.dev_android_role,
-                description = "",
-                color = Color(0xFF2E6A44),
-                iconResId = R.drawable.ic_android,
-                url = "https://developer.android.com"
-            ),
-            Developer(
-                nameResId = R.string.dev_compose_name,
-                roleResId = R.string.dev_compose_role,
-                description = "",
-                color = Color(0xFFD97757),
-                iconResId = R.drawable.ic_compose,
-                url = "https://developer.android.com/jetpack/compose"
-            ),
-            Developer(
-                nameResId = R.string.dev_zt_name,
-                roleResId = R.string.dev_zt_role,
-                description = "",
-                color = Color(0xFF3A7D8C),
-                iconResId = 0,
-                url = "https://github.com/VerdGard/LuaForge-Studio"
-            ),
-            Developer(
-                nameResId = R.string.dev_w_name,
-                roleResId = R.string.dev_w_role,
-                description = "",
-                color = Color(0xFF8D4A5A),
-                iconResId = R.drawable.ic_w,
-                url = "https://github.com/VerdGard/LuaForge-Studio"
+                name = "VerdGard",
+                repoUrl = "https://github.com/VerdGard/LuaForge-Studio",
+                avatarUrl = "https://github.com/VerdGard.png?size=160",
+                role = "LuaForge-Studio"
             )
         )
     }
@@ -262,14 +238,45 @@ fun AboutScreen(onBack: () -> Unit) {
         }
 
         item {
-            SectionTitle(stringResource(R.string.tech_stack_title))
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 24.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth()
+            SectionTitle(stringResource(R.string.developers_title))
+
+            // 每行一位开发者:圆形头像 + 两列单行文字(名字 / 项目地址)。
+            // 与下面的 Licenses 列表同一套「分组 Surface + 分隔线 + 圆角首尾」结构,
+            // 视觉上属于同一族,而不是悬浮在页首的一排技术栈标签。
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
             ) {
-                items(teamMembers) { dev ->
-                    DeveloperChip(dev)
+                developers.forEachIndexed { index, dev ->
+                    val shape = when {
+                        developers.size == 1 -> MaterialTheme.shapes.large
+                        index == 0 -> MaterialTheme.shapes.large.copy(
+                            bottomEnd = CornerSize(0.dp),
+                            bottomStart = CornerSize(0.dp)
+                        )
+                        index == developers.lastIndex -> MaterialTheme.shapes.large.copy(
+                            topStart = CornerSize(0.dp),
+                            topEnd = CornerSize(0.dp)
+                        )
+                        else -> RectangleShape
+                    }
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        shape = shape
+                    ) {
+                        Column {
+                            DeveloperRow(developer = dev)
+                            if (index < developers.lastIndex) {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(start = 76.dp, end = 20.dp),
+                                    thickness = 0.5.dp,
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -760,88 +767,101 @@ fun SectionTitle(text: String) {
 }
 
 @Composable
-fun DeveloperChip(
-    dev: Developer,
-    iconResId: Int? = null
-) {
+fun DeveloperRow(developer: Developer) {
     val context = LocalContext.current
-    val actualIconResId = iconResId ?: dev.iconResId
 
-    Card(
-        onClick = {
-            if (dev.url.isNotEmpty()) {
-                try {
-                    LogCatcher.i("AboutScreen", "打开开发者链接: ${context.getString(dev.nameResId)} - ${dev.url}")
-                    val intent = Intent(Intent.ACTION_VIEW, dev.url.toUri())
-                    context.startActivity(intent)
-                } catch (e: Exception) {
-                    LogCatcher.e("AboutScreen", "打开链接失败", e)
-                }
-            }
-        },
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { openUrl(context, developer.repoUrl) }
+            .padding(vertical = 12.dp, horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
+        // 圆形头像:coil 从 GitHub 直接取,失败时退回首字母圆形底。
+        SubcomposeAsyncImage(
+            model = ImageRequest.Builder(context)
+                .data(developer.avatarUrl)
+                .crossfade(true)
+                .build(),
+            contentDescription = stringResource(R.string.developer_avatar_desc, developer.name),
+            contentScale = ContentScale.Crop,
             modifier = Modifier
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(24.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center
-            ) {
-                if (actualIconResId != 0) {
+                .size(44.dp)
+                .clip(CircleShape),
+            loading = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
                     Icon(
-                        painter = painterResource(id = actualIconResId),
-                        contentDescription = "${context.getString(dev.nameResId)}",
-                        modifier = Modifier.size(16.dp),
-                        tint = Color.Unspecified
+                        Icons.Default.Person,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp)
                     )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(12.dp)
-                            .clip(CircleShape)
-                            .background(dev.color)
+                }
+            },
+            error = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = developer.name.take(1).uppercase(),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 }
             }
+        )
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Text(
-                    text = stringResource(dev.nameResId),
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+        Spacer(modifier = Modifier.width(12.dp))
 
-                Text(
-                    text = "•",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.6f)
-                )
-
-                Text(
-                    text = stringResource(dev.roleResId),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+        // 两列文字都强制单行:开发者名与地址都可能很长,换行会把这一行撑高,
+        // 与下面 Licenses 的行高参差。
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = developer.name,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = developer.repoUrl,
+                fontSize = 10.sp,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f),
+            modifier = Modifier.size(16.dp)
+        )
+    }
+}
+
+/** 用系统浏览器打开链接;失败只记日志,不打断界面。 */
+private fun openUrl(context: Context, url: String) {
+    if (url.isBlank()) return
+    try {
+        LogCatcher.i("AboutScreen", "打开链接: $url")
+        context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
+    } catch (e: Exception) {
+        LogCatcher.e("AboutScreen", "打开链接失败: $url", e)
     }
 }

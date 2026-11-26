@@ -63,7 +63,6 @@ import androidx.lifecycle.lifecycleScope
 import coil.compose.SubcomposeAsyncImage
 import com.luaforge.studio.ui.editor.persistence.EditorStateUtil
 import com.luaforge.studio.ui.about.AboutScreen
-import com.luaforge.studio.ui.logs.LogsScreen
 import com.luaforge.studio.ui.mcp.McpScreen
 import com.luaforge.studio.mcp.McpManager
 import com.luaforge.studio.session.SessionHooks
@@ -118,8 +117,6 @@ enum class MainContentType {
     SETTINGS,
     /** MCP 服务管理(原「设置 → MCP 服务」,移到侧边栏独立成页)。 */
     MCP,
-    /** 编辑器自身日志查看(仿 LogFox 的分级/过滤/搜索)。 */
-    LOGS,
     ABOUT
 }
 
@@ -151,22 +148,6 @@ fun MainApp() {
         settings.mcpForegroundKeepAlive, settings.mcpPersistentNotification
     ) {
         McpManager.applySettings(settings)
-    }
-
-    // 网络代理随设置同步:开关关闭或地址留空即直连。代理置入 NetworkProxy 后,
-    // 各 OkHttp 客户端会在下次取用时按 revision 自动重建(见 OkHttpUtil / MavenDownloader)。
-    LaunchedEffect(
-        settings.networkProxy,
-        settings.networkProxyEnabled,
-        settings.networkProxyDirect,
-        settings.networkProxyOnly
-    ) {
-        NetworkProxy.apply(
-            settings.networkProxy,
-            settings.networkProxyEnabled,
-            settings.networkProxyDirect,
-            settings.networkProxyOnly
-        )
     }
 
     val toastTransitionSpec: AnimatedContentTransitionScope<ToastData?>.() -> ContentTransform = {
@@ -428,7 +409,6 @@ fun MainScreen(
             MainContentType.PROJECTS,
             MainContentType.SETTINGS,
             MainContentType.MCP,
-            MainContentType.LOGS,
             MainContentType.ABOUT
         )
 
@@ -739,17 +719,6 @@ fun MainScreen(
                         }
                     )
 
-                    DrawerNavItem(
-                        type = MainContentType.LOGS,
-                        label = stringResource(R.string.logs_title),
-                        icon = Icons.Filled.Article,
-                        current = currentContentType,
-                        onSelect = {
-                            currentContentType = it
-                            scope.launch { drawerState.close() }
-                        }
-                    )
-
                     NavigationDrawerItem(
                         label = {
                             Text(stringResource(R.string.about), fontWeight = FontWeight.Medium)
@@ -863,7 +832,6 @@ fun MainScreen(
                                     MainContentType.PROJECTS -> stringResource(R.string.app_name)
                                     MainContentType.SETTINGS -> stringResource(R.string.settings)
                                     MainContentType.MCP -> stringResource(R.string.settings_mcp)
-                                    MainContentType.LOGS -> stringResource(R.string.logs_title)
                                     MainContentType.ABOUT -> stringResource(R.string.about)
                                 },
                                 maxLines = 1,
@@ -958,7 +926,7 @@ fun MainScreen(
                             }
 
                             MainContentType.SETTINGS, MainContentType.MCP,
-                            MainContentType.LOGS, MainContentType.ABOUT -> {
+                            MainContentType.ABOUT -> {
                             }
                         }
                     },
@@ -992,7 +960,7 @@ fun MainScreen(
                     }
 
                     MainContentType.SETTINGS, MainContentType.MCP,
-                    MainContentType.LOGS, MainContentType.ABOUT -> {
+                    MainContentType.ABOUT -> {
                     }
                 }
             },
@@ -1102,10 +1070,6 @@ fun MainScreen(
                                 },
                                 toast = toast
                             )
-                        }
-
-                        MainContentType.LOGS -> {
-                            LogsScreen(onBack = { shouldReturnToProjects = true })
                         }
 
                         MainContentType.ABOUT -> {

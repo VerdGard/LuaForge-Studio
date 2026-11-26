@@ -102,23 +102,6 @@ private object PreferencesKeys {
     val MCP_PERSISTENT_NOTIFICATION = booleanPreferencesKey("mcp_persistent_notification")
     val MCP_BATTERY_EXEMPT = booleanPreferencesKey("mcp_battery_exempt")
 
-    // 【新增】网络请求拦截设置
-
-    // 【新增】网络代理(默认留空 = 直连)
-    val NETWORK_PROXY = stringPreferencesKey("network_proxy")
-    /** 代理总开关:关闭时即使填了地址也直连 */
-    val NETWORK_PROXY_ENABLED = booleanPreferencesKey("network_proxy_enabled")
-    /** 强制直连的主机规则(JSON 数组) */
-    val NETWORK_PROXY_DIRECT = stringPreferencesKey("network_proxy_direct")
-    /** 只对这些主机走代理(JSON 数组;空 = 其余全走代理) */
-    val NETWORK_PROXY_ONLY = stringPreferencesKey("network_proxy_only")
-
-    // 【新增】防火墙（越级写入 + 自我守护）
-    val CROSS_PROJECT_WRITE_GUARD = booleanPreferencesKey("cross_project_write_guard")
-    val SELF_GUARD = booleanPreferencesKey("self_guard")
-    val CROSS_WRITE_COUNTS = stringPreferencesKey("cross_write_counts")
-    val SELF_GUARD_COUNTS = stringPreferencesKey("self_guard_counts")
-
     // 【新增】符号自动补全开关:底部符号栏点击左括号/引号时自动补全配对并居中光标
     val SYMBOL_AUTO_PAIR = booleanPreferencesKey("symbol_auto_pair")
 
@@ -145,9 +128,6 @@ private object PreferencesKeys {
     val SIGN_KEY_ALIAS = stringPreferencesKey("sign_key_alias")
     val SIGN_KEY_PASSWORD = stringPreferencesKey("sign_key_password")
 }
-
-/** 防火墙拦截类型（分计）。 */
-enum class FirewallKind { CROSS_WRITE, SELF_GUARD }
 
 // 排序方式枚举
 enum class SortOrder {
@@ -337,43 +317,6 @@ object SettingsManager {
         val mcpForegroundKeepAlive = preferences[PreferencesKeys.MCP_FOREGROUND_KEEPALIVE] ?: false
         val mcpPersistentNotification = preferences[PreferencesKeys.MCP_PERSISTENT_NOTIFICATION] ?: false
 
-        // 网络代理:默认空串 + 开关关闭 = 直连,不做任何代理
-        val networkProxy = preferences[PreferencesKeys.NETWORK_PROXY] ?: ""
-        val networkProxyEnabled = preferences[PreferencesKeys.NETWORK_PROXY_ENABLED] ?: false
-        val networkProxyDirect: List<String> = try {
-            val type = object : TypeToken<List<String>>() {}.type
-            Gson().fromJson<List<String>>(
-                preferences[PreferencesKeys.NETWORK_PROXY_DIRECT] ?: "[]",
-                type
-            ) ?: emptyList()
-        } catch (e: Exception) {
-            emptyList()
-        }
-        val networkProxyOnly: List<String> = try {
-            val type = object : TypeToken<List<String>>() {}.type
-            Gson().fromJson<List<String>>(
-                preferences[PreferencesKeys.NETWORK_PROXY_ONLY] ?: "[]",
-                type
-            ) ?: emptyList()
-        } catch (e: Exception) {
-            emptyList()
-        }
-        // 【新增】加载防火墙设置
-        val crossProjectWriteGuard = preferences[PreferencesKeys.CROSS_PROJECT_WRITE_GUARD] ?: true
-        val selfGuard = preferences[PreferencesKeys.SELF_GUARD] ?: true
-        val crossWriteCounts: Map<String, Int> = try {
-            val type = object : TypeToken<Map<String, Int>>() {}.type
-            Gson().fromJson(preferences[PreferencesKeys.CROSS_WRITE_COUNTS] ?: "{}", type) ?: emptyMap()
-        } catch (e: Exception) {
-            emptyMap()
-        }
-        val selfGuardCounts: Map<String, Int> = try {
-            val type = object : TypeToken<Map<String, Int>>() {}.type
-            Gson().fromJson(preferences[PreferencesKeys.SELF_GUARD_COUNTS] ?: "{}", type) ?: emptyMap()
-        } catch (e: Exception) {
-            emptyMap()
-        }
-
         // 【新增】符号自动补全(默认开启)
         val symbolAutoPair = preferences[PreferencesKeys.SYMBOL_AUTO_PAIR] ?: true
 
@@ -444,14 +387,6 @@ object SettingsManager {
                 mcpToken = mcpToken,                      // 【新增】
                 mcpForegroundKeepAlive = mcpForegroundKeepAlive,      // 【新增】
                 mcpPersistentNotification = mcpPersistentNotification, // 【新增】
-                networkProxy = networkProxy,                        // 【新增】网络代理
-                networkProxyEnabled = networkProxyEnabled,          // 【新增】代理开关
-                networkProxyDirect = networkProxyDirect,            // 【新增】强制直连规则
-                networkProxyOnly = networkProxyOnly,                // 【新增】只走代理规则
-                crossProjectWriteGuard = crossProjectWriteGuard,    // 【新增】
-                selfGuard = selfGuard,                              // 【新增】
-                crossWriteCounts = crossWriteCounts,                // 【新增】
-                selfGuardCounts = selfGuardCounts,                  // 【新增】
                 symbolAutoPair = symbolAutoPair,                    // 【新增】
                 abiTarget = abiTarget,                             // 【新增】
                 buildSlimEnabled = buildSlimEnabled,               // 【新增】
@@ -536,20 +471,6 @@ object SettingsManager {
             preferences[PreferencesKeys.MCP_PERSISTENT_NOTIFICATION] = currentSettings.mcpPersistentNotification
             preferences[PreferencesKeys.MCP_BATTERY_EXEMPT] = currentSettings.mcpBatteryExempt
 
-            // 【新增】保存网络请求拦截设置
-            preferences[PreferencesKeys.NETWORK_PROXY] = currentSettings.networkProxy
-            preferences[PreferencesKeys.NETWORK_PROXY_ENABLED] = currentSettings.networkProxyEnabled
-            preferences[PreferencesKeys.NETWORK_PROXY_DIRECT] =
-                Gson().toJson(currentSettings.networkProxyDirect)
-            preferences[PreferencesKeys.NETWORK_PROXY_ONLY] =
-                Gson().toJson(currentSettings.networkProxyOnly)
-
-            // 【新增】保存防火墙设置
-            preferences[PreferencesKeys.CROSS_PROJECT_WRITE_GUARD] = currentSettings.crossProjectWriteGuard
-            preferences[PreferencesKeys.SELF_GUARD] = currentSettings.selfGuard
-            preferences[PreferencesKeys.CROSS_WRITE_COUNTS] = Gson().toJson(currentSettings.crossWriteCounts)
-            preferences[PreferencesKeys.SELF_GUARD_COUNTS] = Gson().toJson(currentSettings.selfGuardCounts)
-
             // 【新增】保存符号自动补全与打包目标架构
             preferences[PreferencesKeys.SYMBOL_AUTO_PAIR] = currentSettings.symbolAutoPair
             preferences[PreferencesKeys.ABI_TARGET] = currentSettings.abiTarget.name
@@ -579,28 +500,6 @@ object SettingsManager {
     fun saveSettings(context: Context) {
         saveScope.launch { saveSettingsAsync(context) }
     }
-
-    /** 记录一次防火墙拦截（按项目名分计），立即更新内存态并异步持久化。 */
-    fun recordFirewallGuard(kind: FirewallKind, projectName: String, context: Context) {
-        currentSettings = when (kind) {
-            FirewallKind.CROSS_WRITE -> {
-                val m = currentSettings.crossWriteCounts.toMutableMap()
-                m[projectName] = (m[projectName] ?: 0) + 1
-                currentSettings.copy(crossWriteCounts = m)
-            }
-            FirewallKind.SELF_GUARD -> {
-                val m = currentSettings.selfGuardCounts.toMutableMap()
-                m[projectName] = (m[projectName] ?: 0) + 1
-                currentSettings.copy(selfGuardCounts = m)
-            }
-        }
-        notifyListeners()
-        saveSettings(context)
-    }
-
-    /** 防火墙拦截全局累计（两开关合计）。 */
-    fun firewallGuardTotal(): Int =
-        currentSettings.crossWriteCounts.values.sum() + currentSettings.selfGuardCounts.values.sum()
 
     /** 每项目换行状态的规范化键(去掉结尾分隔符,避免同一路径出现两种写法)。 */
     private fun normalizeProjectPath(projectPath: String): String =
@@ -747,27 +646,6 @@ data class SettingsData(
     val mcpPort: Int = 9123,                         // 【新增】MCP 服务端口
     val mcpRequireToken: Boolean = false,            // 【新增】MCP 是否要求令牌
     val mcpToken: String = "",                       // 【新增】MCP 访问令牌
-    /**
-     * 网络代理地址(设置 → 安全、网络与日志)。
-     *
-     * 默认空串 = 直连。支持 `host:port`、`http://host:port`、`socks5://host:port`,
-     * 解析与生效逻辑见 [com.luaforge.studio.utils.NetworkProxy]。
-     */
-    val networkProxy: String = "",
-    /** 代理总开关;关闭时即使 [networkProxy] 有值也一律直连 */
-    val networkProxyEnabled: Boolean = false,
-    /** 强制直连的主机规则(如 `example.com` / `*.example.com` / `*`) */
-    val networkProxyDirect: List<String> = emptyList(),
-    /** 只对这些主机走代理;空表示"除直连规则外全部走代理" */
-    val networkProxyOnly: List<String> = emptyList(),
-    /** 防火墙：越级写入拦截（默认开启） */
-    val crossProjectWriteGuard: Boolean = true,
-    /** 防火墙：自我守护（默认开启） */
-    val selfGuard: Boolean = true,
-    /** 项目名 → 越级写入拦截次数 */
-    val crossWriteCounts: Map<String, Int> = emptyMap(),
-    /** 项目名 → 自我守护拦截次数 */
-    val selfGuardCounts: Map<String, Int> = emptyMap(),
     /** 符号自动补全:底部符号栏点击左括号或引号时自动补全配对并居中光标 */
     val symbolAutoPair: Boolean = true,
     /** 打包目标架构(默认通用版) */

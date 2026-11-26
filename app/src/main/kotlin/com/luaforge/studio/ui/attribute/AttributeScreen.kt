@@ -199,6 +199,11 @@ fun AttributeScreen(
     var showPermissionSheet by remember { mutableStateOf(false) }
     var permissionSearchQuery by remember { mutableStateOf("") }
 
+    // 自动申请权限:写进 settings.json 的顶层字段,默认关闭。
+    // 运行时由 LuaActivity 在 onCreate 里读取并一次性 requestPermissions,
+    // 因此这里是「随项目走」的配置,而不是 IDE 本机的偏好。
+    var autoRequestPermissions by remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             val settingsFile = File(projectPath, "settings.json")
@@ -216,6 +221,8 @@ fun AttributeScreen(
                     debugMode =
                         ((jsonMap["application"] as? Map<*, *>)?.get("debugmode") as? Boolean)
                             ?: false
+                    autoRequestPermissions =
+                        (jsonMap["auto_request_permissions"] as? Boolean) ?: false
                     encryptEnabled =
                         ((jsonMap["application"] as? Map<*, *>)?.get("encrypt") as? Boolean)
                             ?: true
@@ -303,6 +310,11 @@ fun AttributeScreen(
                     val checkedPermissions =
                         allPermissions.filter { it.isChecked }.map { it.shortName }
                     jsonMap["user_permission"] = checkedPermissions
+
+                    // 自动申请开关与权限列表同级(顶层),运行时 LuaActivity 直接读这个键。
+                    // 关闭时显式写 false 而不是删键:让用户在 settings.json 里能一眼看到
+                    // 该功能存在且当前关闭,不必去翻文档才知道有这个开关。
+                    jsonMap["auto_request_permissions"] = autoRequestPermissions
 
                     val checkedUtils = selectedGlobalUtils.filterValues { it }.keys.toList()
                     jsonMap["global_utils"] = checkedUtils
@@ -686,6 +698,47 @@ fun AttributeScreen(
                                 )
                             }
                         }
+                    }
+
+                    // 自动申请权限:默认关闭。开启后打包出的 APK 在页面启动时会
+                    // 一次性向用户申请上面已选的权限;关闭时完全由 Lua 脚本自己决定时机。
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 4.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                autoRequestPermissions = !autoRequestPermissions
+                            }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.attribute_permission_auto_request),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = stringResource(R.string.attribute_permission_auto_request_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = autoRequestPermissions,
+                            onCheckedChange = { autoRequestPermissions = it }
+                        )
+                    }
+                    if (autoRequestPermissions && !allPermissions.any { it.isChecked }) {
+                        Text(
+                            text = stringResource(R.string.attribute_permission_auto_request_empty),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
                     }
                 }
 

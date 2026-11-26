@@ -22,48 +22,63 @@
   - 主密钥在 native 内二次派生并清零临时块,Java 侧全程接触不到密钥
 - **构建精简重构:支持真正裁剪 dex**
   - 新增 `rewriteDexKeeping`:用 R8 重写 `libs/*.dex`,剔除与模板重复的**局部**类
-    (旧实现遇到局部重复只打警告,dex 实际一点没裁)
   - R8 产出多个 dex 时保守放弃重写 —— 拆开后 `LuaDexLoader` 只会加载其中一个
   - 载荷类加入 keep 白名单,避免精简把 dex 载荷裁空
-- **废除内置播放器及其控件**:移除 `ExoVideoView` / `SimpleVideoView` /
-  `MusicPlayerBar` / `ExoAudioPlayer`、`MediaFormats`,连同 Media3 依赖、
-  `BuiltinWidgets` 注册、布局助手条目、混淆 keep 规则与文档
-- **废除协同开发**:移除 `CollabClient` / `CollabManager` / `CollabRepo` /
-  `CollabServer` / `GitStore` 与协同页,以及 MCP 里的协同变更登记钩子
-- **废除设置中的「安全网络」与「日志」**
-  - 安全网络(网络请求拦截):移除 `NetworkApprovalManager`、core 的
-    `NetworkGate` / `NetworkInterceptor` 及其在 `Http` / `OkHttpUtil` /
-    `MavenDownloader` 的注入点
-  - 日志卡片与错误日志对话框移除,职责交给侧边栏「日志」页
-- **MCP 移入侧边栏,并新增「日志」页**
-  - 侧边栏顺序:项目 / 设置 / **MCP** / **日志** / 关于;MCP 条目名为「MCP」
-  - MCP 页与日志页**不带自己的 Scaffold/TopAppBar**,标题栏由主界面统一提供,
-    与设置、关于同一套外壳(早期版本会叠出两条标题栏)
-  - 日志页仿 [LogFox](https://github.com/F0x1d/LogFox):级别过滤(`>=` 语义)、
-    关键字与 tag 双路过滤、跟随最新 / 上滑自动暂停、暂停冻结视图、
-    展开异常栈、复制 / 分享 / 清空
-- **日志改为记录本程序的全部日志**(关键修复)
-  - 新增 `LogcatCollector`:以 `logcat --pid` 抓取**本进程全部** logcat 输出,
-    覆盖未埋点的代码路径(AndroidX、三方库、框架回调、`System.out`、未捕获异常)
-  - 三级降级:流式 logcat → `-d` 轮询 → 仅埋点,降级原因写入日志本身
-  - 修复日志**不刷新**:监听器统一在主线程回调并做去抖(Compose 状态只能在主线程改)
-  - 修复日志**启动即被清空**:改为追加 + 尾部截断,崩溃现场不再丢失
-  - 修复日志**写不进去**:外部路径不可写时自动回退到 `files/logs/`,
-    读取方在两条路径间取有内容的那个
-  - 同一条日志经埋点与 logcat 双路到达时按 1.5s 窗口去重,不会显示两遍
-  - 新增 MCP 工具 `get_editor_logs`(与日志页同源的结构化条目)
-- **移除全局工具 `UiUtil` / `ThemeUtil`**
-- **修复全局工具文档对话框的主题适配**
-  - 新增 `html/css/doc-theme.css` 主题层;预览页里硬编码的浅色全部改为 CSS 变量
-  - `MarkdownView` 按 `MaterialTheme.colorScheme` 注入配色并切换深色 hlsl token,
-    动态取色也能跟随;修掉 `loadFromAssets` 的 fd 泄漏与手工转义导致的文档空白
-- **新增全局工具 `FastIOUtil`**(C 语言实现的极速文件读写)
-  - 原生 `libfastio.so`:大文件 `mmap` + 一次 `memcpy` 读、`sendfile` 拷贝、
-    1 MiB 缓冲全量写(循环处理短写,不会静默截断)
-  - 提供 `readBytes` / `readText` / `readChunk` / `writeBytes` / `writeText` /
-    `writeBytesAtomic` / `copyFile` / `truncate` / `mkdirs` / `delete` 等
-  - 原生库不可用时自动退化为 Java 实现,接口与返回值不变
-
+- **日志收敛为单一来源:`luaforge.log`**
+  - 移除侧边栏「日志」页,以及为它服务的内存缓冲(`LogBuffer`)与 logcat 采集器
+    (`LogcatCollector`);日志不再有两份真值
+  - MCP 的 `get_editor_logs` 改为**直接解析 `luaforge.log`**:按
+    `[时间] [级别] [tag] 正文` 还原级别/tag/异常栈,支持级别阈值、tag 与关键字过滤
+  - 好处:进程重启后历史仍在、外部脚本与 MCP 看到的内容完全一致、不会因缓冲
+    容量上限丢掉早期现场
+- **新增「设置 → 崩溃记录」**
+  - 未捕获异常连同**完整堆栈**落盘到 `/storage/emulated/0/LuaForge-Studio/crash/`
+    (外部不可写时回退 `filesDir/crash/`),文件名精确到秒并带毫秒尾数,
+    同一秒连续崩溃不会互相覆盖
+  - 列表每行一条崩溃、时间精确到秒;点击用 MD3 对话框展示完整内容
+    (异常类型、线程、设备与应用版本、cause 链、完整堆栈、诊断)
+  - 支持单条删除、清空全部、一键复制全文
+  - 记录器包在 `CrashManager` 之外一层:**先落盘完整现场,再交给崩溃页展示** ——
+    CrashManager 最终会杀进程,顺序反了现场就丢了
+- **废除网络代理与文件防火墙**
+  - 移除 `NetworkProxy`(进程级 `ProxySelector` 与分站分流规则)及其全部
+    `SettingsData` 字段、DataStore 键与设置页残留状态;`OkHttpUtil` 与
+    `MavenDownloader` 改为单一 lazy 客户端,不再按"代理版本号"重建
+  - 移除 `FirewallGate` / `FirewallHost` / `assets/firewall.lua` 与
+    `LuaJavaAPI` 里的 Java 侧写入判定钩子、`SessionHooks` 的防火墙安装、
+    `FirewallKind` 与拦截计数
+  - 编辑器不再对网络请求与文件写入做任何中间干预
+- **MCP 页不再折叠**
+  - `SettingsCardGroup` 新增 `collapsible`;MCP 页传 `false` —— 标题行不再可点、
+    不再画展开箭头,内容常驻展开(此前那个点了没反应的假箭头已去掉)
+  - 设置页的其它分组保持原样,仍可折叠
+- **关于页重构**
+  - 开发者独立成卡片,与下方 Licenses 同一套「圆角首尾 + 分隔线」结构
+  - 每行:圆形头像(GitHub 头像)+ 两列单行文字(第一行开发者名、第二行项目地址),
+    点击用系统浏览器打开对应仓库
+  - 开发者:`wisyh`、`VerdGard`,各指向其 `LuaForge-Studio` 仓库
+- **关于页 Licenses 内容更新**
+  - 补全随包内置的原生库与运行时组件:LuaJava、LuaSocket、lua-cjson、zlib、
+    LuaFileSystem、libuv/luv、yyjson、µAES、LuaXML、TinyCC、R8
+  - 版本号与 `gradle/libs.versions.toml`、`app/build.gradle.kts`、
+    `app/src/main/jni/*` 对齐;`Lua` 条目按实际代码基线改为 5.4 系列
+  - 条目顺序按「自身来源 → 语言与运行时 → UI 框架 → 其它三方库」固定,
+    不再每次改动都整体抖动
+- **项目属性新增「自动申请权限」开关**
+  - 位于「权限」卡片内,**默认关闭**;开启后应用启动时一次性申请已选权限
+  - 落盘为 `settings.json` 顶层字段 `auto_request_permissions`(布尔);
+    新建项目即写入 `false`,老项目缺该键时行为不变
+  - 运行时由 `LuaActivity.onCreate` 读取:只申请**仍未授予**的**运行时**权限
+    (按 `protectionLevel == dangerous` 判定,不硬编码名单),已全授予时不做空调用
+  - 申请结果仍走既有的 `onRequestPermissionsResult` 回调,脚本可自行接管
+- **文档重写**
+  - `SKILL.md` 与开发文档按"每个 Lua 函数怎么用"的粒度重写,补充参数、
+    返回值、易错点与可运行示例
+  - 新增 `doc/LuaDraw.md`:`LuaDrawable` 的 `draw(canvas, paint, self)` 回调语义
+    (首次三参 / 返回函数后一参)、原生 `canvas` 模块(`require "canvas"`)逐函数
+    参考与参数类型陷阱、`Paint`/`Path`/`RectF` 配方,以及 5 个完整示例
+  - `NETWORK.md` 重写为"网络权限 + 两条 Lua 网络通道",删去已移除的代理与拦截章节
+  - 移除文档中关于已删除功能(日志页、协同、播放器控件、网络拦截、代理、防火墙)的描述
 
 ## 1.6.9
 

@@ -153,10 +153,6 @@ public class LuaApplication extends Application implements LuaContext {
         CrashHandler.getInstance().init(getApplicationContext());
         mSharedPreferences = getSharedPreferences(this);
 
-        // 日志采集尽早启动:Application.onCreate 之前的日志(包括 core 自身
-        // 与三方库的初始化打印)也要能进日志页。IDE 侧由 LogBuffer 提供实现,
-        // 打包进用户 APK 时该类不存在,反射失败静默跳过。
-        installLogBridge(this);
         //初始化AndroLua工作目录
         if (Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED)) {
             String sdDir = Environment.getExternalStorageDirectory().getAbsolutePath();
@@ -352,21 +348,4 @@ public class LuaApplication extends Application implements LuaContext {
 
 
 
-    /**
-     * 通过反射安装 IDE 侧的日志缓冲/采集器。
-     *
-     * core 模块不能反向依赖 app(会形成循环依赖),而日志采集的实现在 app。
-     * 用反射调用是可接受的:只在 IDE 宿主里存在,用户 APK 里
-     * `Class.forName` 失败即返回,零副作用。
-     */
-    private static void installLogBridge(android.content.Context context) {
-        try {
-            Class<?> clazz = Class.forName("com.luaforge.studio.utils.LogBuffer");
-            java.lang.reflect.Method install =
-                    clazz.getMethod("install", android.content.Context.class);
-            install.invoke(null, context);
-        } catch (Throwable ignored) {
-            // 用户 APK 中没有该实现,属于正常情况
-        }
-    }
 }

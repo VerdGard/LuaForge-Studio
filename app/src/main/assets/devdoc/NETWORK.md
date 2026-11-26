@@ -1,165 +1,136 @@
-# 网络请求拦截(LuaForge-Studio 1.6.7)
+# 网络与权限
 
-把所有网络请求在**真正发出之前**拦下来,弹出 MD3 对话框展示详情,用户允许后才放行。默认关闭。
+本文说清两件容易踩坑的事:
 
-## 1. 开关位置
+1. **网络权限**怎么声明,漏了会怎么失败,以及 1.7.0 新增的自动申请开关;
+2. **两条 Lua 网络通道**(`Http` / `Https`)的用法与回调约定。
 
-设置 → **网络请求拦截** → 打开“拦截网络请求”。
+> 历史说明:1.7.0 移除了「网络请求拦截」(逐请求弹框确认)与「网络代理」
+> (进程级 `ProxySelector`),以及「文件防火墙」。编辑器不再对用户的网络或
+> 文件写入做任何中间干预。下面只描述当前实际存在的行为。
 
-| 项 | 说明 |
-| --- | --- |
-| 拦截网络请求 | 总开关,默认关闭。关闭时请求直接放行,零打扰 |
-| 已允许的主机 | 选过“记住”的主机,之后的请求直接放行,不再询问 |
-| 已拒绝的主机 | 选过“记住”的主机,之后的请求直接拒绝,不再询问 |
-| 单条删除 | 每条主机记录右侧的删除按钮,单独移除该条(恢复为“继续询问”) |
-| 清空所有记录 | 每组名单标题右侧的按钮,一次清空该组全部记录 |
+---
 
-两份名单都以卡片形式逐条展示(主机名等宽字体),条数超过 **5** 条时自动折叠,
-展开后可逐条清理或整组清空。
+## 1. 网络权限
 
-## 2. 对话框内容
+`settings.json` 的 `user_permission` 必须含 `INTERNET`(Default 模板已含)。
 
-每次请求会展示:
+漏配时请求在网络层直接失败,`Http.*` 回调里表现为 `code == -1`。
 
-- **方法徽标**(GET / POST ...)与**主机名**
-- **完整地址**(可选中复制)
-- **请求头**(逐行列出)
-- **请求体**(文本类请求体,超过 4000 字符截断)
-- **来源**:`http` / `okhttp` 等,便于判断由谁发起
-- **“记住该主机的选择”** 复选框
-
-按钮:允许 / 拒绝。点击对话框外部或返回键 = 拒绝。
-
-> 等待确认最长 120 秒,超时按拒绝处理,避免请求线程被永久挂起。
-
-## 3. 覆盖范围
-
-拦截点在 `core` 模块,因此**编辑器自身**与**用户项目**的请求都会被拦:
-
-| 通道 | 位置 | 说明 |
-| --- | --- | --- |
-| `http.*` | `core/.../Http.java` | `HttpURLConnection`,Lua 的 `http.*` 走这里 |
-| `okhttp.*` | `core/.../OkHttpUtil.kt` | OkHttp 拦截器,统一处理所有 okhttp 调用 |
-| 依赖下载 | `app/.../MavenDownloader.kt` | IDE 拉取 Maven 依赖同样需要确认 |
-
-只拦截 `http://` 与 `https://`;`file://`、`content://`、`asset://` 等本地协议直接放行。
-
-## 4. 打包后的行为
-
-**用户项目打包成 APK 后不拦截,也不需要任何配置。**
-
-原因:拦截闸门 `NetworkGate` 在 `:core` 模块,但**决策器** `NetworkApprovalManager` 只在 `:app`(IDE)模块。
-用户 APK 由 `:core-apk` 打包,它只依赖 `:core`,不含 `:app` 代码:
-
-```
-:app (IDE) ──依赖──> :core (闸门 + 各通道钩子)
-:core-apk (用户 APK) ──依赖──> :core          ← 没有决策器
+```json
+{
+  "user_permission": ["INTERNET", "ACCESS_NETWORK_STATE"]
+}
 ```
 
-`NetworkGate` 只有“开关打开 **且** 已安装决策器”时才生效(`isActive`),两者默认都不满足,
-所以用户 APK 中所有 `allow()` 调用都在第一行直接返回 `true`。
+`ACCESS_NETWORK_STATE` 只在你需要判断网络可用性时用;普通请求不需要。
+两者都是 **install-time 权限**,不会弹任何系统对话框。
 
-## 5. 线程模型
+### 1.1 自动申请权限(1.7.0 新增)
 
-决策回调运行在**发起请求的那个线程**上:
+项目属性页「权限」卡片里有 **自动申请权限** 开关,**默认关闭**(`settings.json`
+顶层布尔字段 `auto_request_permissions`)。
 
-| 发起方 | 线程 | 结果 |
-| --- | --- | --- |
-| `okhttp.*` | 独立后台线程 | 阻塞等待对话框 |
-| `http.*` | `AsyncTaskX.doInBackground` | 阻塞等待对话框 |
-| Lua 顶层脚本 | **主线程** | **直接放行**并记日志 |
+开启后,`LuaActivity.onCreate` 会在页面脚本执行之前:
 
-主线程不能阻塞等待对话框(会 ANR/死锁),这类请求会被记录到 `luaforge.log` 后放行。
-对话框本身用 `CountDownLatch` 串行化,同一时刻只弹一个。
+1. 只在 `SDK_INT >= 23` 时动作;
+2. 遍历 `user_permission`,短名补 `android.permission.` 前缀;
+3. **只挑运行时权限** —— 判定方式是查系统 `protectionLevel == dangerous`,
+   不是硬编码名单(新系统加权限不用改代码);
+4. 跳过已授予的;**全部已授予时不做空调用**(空数组调用在部分 ROM 上无回调);
+5. 一次性 `requestPermissions(..., REQUEST_CODE_AUTO_PERMISSIONS = 0x4C46)`;
+6. 结果进全局 `onRequestPermissionsResult(requestCode, permissions, grantResults)`;
+7. 任何异常都吞掉 —— 申请失败不能让页面起不来。
 
-## 6. 失败与超时
+要点:
 
-所有决策路径都是**失败关闭**(fail-closed),即“不确定时拒绝”:
+- `INTERNET` / `ACCESS_NETWORK_STATE` 是 install-time 权限,**不会被这一步申请**;
+- 关闭时(默认)申请时机完全由脚本决定;
+- 老项目 `settings.json` 里没有这个键 → 行为与 1.7.0 之前完全一致。
 
-| 情况 | 行为 |
-| --- | --- |
-| 没有前台 Activity | 拒绝,并记日志 |
-| 弹出对话框抛异常 | 拒绝 |
-| 等待用户确认超时(120s) | 拒绝 |
-| 决策环节自身异常 | 记日志后**放行**(避免把应用卡死) |
+在 Lua 里自己接管结果:
 
-## 7. 日志
+```lua
+function onRequestPermissionsResult(requestCode, permissions, grantResults)
+  if requestCode ~= 0x4C46 then return false end
+  for i, p in ipairs(permissions) do
+    print("权限 " .. p .. " 结果: " .. tostring(grantResults[i]))
+  end
+  return true      -- 返回 true 表示已处理
+end
+```
 
-拦截决策会写入 `/storage/emulated/0/LuaForge-Studio/luaforge.log`,包含被拒请求与被放行的主线程请求,
-便于事后排查“为什么某个请求没发出去”。
+---
 
-## 8. 网络代理
+## 2. 两条 Lua 网络通道
 
-设置 → **安全、网络与日志** → **网络代理**。
+### 2.1 首选 `Http`(`com.androlua.Http`)
 
-### 8.1 三层配置
+基于 `HttpURLConnection`。`require "import"` 之后可直接写 `Http.get(...)`
+(`_G` 元表会依次尝试 `''` / `java.lang.` / `java.util.` / `com.androlua.` 前缀)。
 
-| 配置项 | 作用 |
-| --- | --- |
-| **启用代理**开关 | 总开关。关闭时即使填了地址也一律直连(便于临时切换而不丢配置) |
-| **代理地址** | 代理服务器,留空 = 未配置 |
-| **不走代理的网站** | 每行一条,命中即直连(优先级最高) |
-| **只对这些网站走代理** | 每行一条;留空表示"除直连名单外全部走代理",填写后**仅**名单内走代理 |
+```lua
+-- GET:回调 (code, content, cookie, headers)
+Http.get("https://api.example.com/data", function(code, content, cookie, headers)
+  if code == 200 then print(content) end
+end)
 
-代理地址接受的写法:
+-- 带自定义头:顺序是 url, cookie, charset, header, callback
+Http.get("https://api.example.com/user", nil, "UTF-8",
+  {["Authorization"] = "Bearer t"},
+  function(code, content, cookie, headers) end)
 
-| 输入 | 结果 |
-| --- | --- |
-| 留空 | 未配置(默认) |
-| `192.168.10.245:7890` | HTTP 代理 |
-| `http://host:port` / `https://host:port` | HTTP 代理 |
-| `socks://host:port` / `socks5://host:port` / `socks4://host:port` | SOCKS 代理 |
-| 其他写法 | 判为非法,输入框标红;**不改变当前生效值** |
+-- POST:第二参可为字符串或表单字段表
+Http.post("https://api.example.com/login", {user = "a", pass = "b"},
+  function(code, content, cookie, headers) end)
 
-- 端口必须落在 `1..65535`,主机名只允许字母/数字/`.`/`-`/`_`(IPv6 用方括号写法)。
-- 支持 `user:pass@host:port`,但**不保存凭据**(OkHttp 需要额外的 `Authenticator`),凭据段会被跳过。
-- 输入未写完(例如只敲了 `192.168.`)时会判为非法并保持原代理不变,不会把在用的代理清掉。
+-- 下载:回调是 (code, path, headers)
+Http.download("https://example.com/a.zip", "/sdcard/a.zip",
+  function(code, path, headers) end)
+```
 
-主机规则写法(`NetworkProxy.matches`):
+- 静态方法:`get` / `post` / `put` / `delete` / `download`
+- **失败时只有两个参数** `(code, message)`,且 `code == -1`
+- 全局默认头:`Http.setHeader(t)` / `setCookie(s)` / `setUserAgent(s)` / `setReferer(s)`
+- 回调在 `onPostExecute`(**主线程**)触发,可直接更新 UI
+- ⚠️ **不要写 `import "Http"`**:`import(package)` 不做前缀补全,短名会报
+  `cannot find Http`;短名解析只发生在 `_G` 的元表访问路径上
 
-| 规则 | 匹配 |
-| --- | --- |
-| `example.com` | `example.com` 自身**与所有子域** |
-| `*.example.com` | **仅子域**,不含 `example.com` 本身 |
-| `*` | 全部 |
-| `.example.com` | 同 `example.com`(点前缀被忽略) |
+### 2.2 次选 `Https.*`(OkHttp)
 
-### 8.2 生效范围:进程级 ProxySelector
+仅当 `settings.json` 的 `global_utils` 含 `OkHttpUtil` 时才存在,提供
+`Https.get` / `Https.post` / `Https.upload` / `Https.download`。
+详见 `doc/OkHttpUtil.md`。
 
-不是逐个客户端设 `proxy(...)`,而是安装**进程级** `ProxySelector.setDefault(...)`:
+> 旧写法裸名 `get(...)` / `post(...)` 只是兼容别名,且**仅在该全局名未被占用时**才注册。
+> 新代码一律写 `Https.*`。
 
-- OkHttp 未显式设置 `proxy(...)` 时,默认使用 `ProxySelector.getDefault()`
-- `HttpURLConnection` 同样走它
-- 于是所有走 JVM 网络栈的请求(含 Glide / Coil 等**第三方库自建**的 client)受同一套规则约束
-- `OkHttpUtil` 与 `MavenDownloader` 仍显式传 `NetworkProxy.selector()`,保证即使别处改写过 JVM 默认选择器,本项目规则依然生效
+### 2.3 原生 socket
 
-配置变更后按 `NetworkProxy.revision` 自动重建 client,无需重启。
+```lua
+local socket = require "socket.core"    -- ⚠️ 没有 luaopen_socket,require "socket" 会失败
+```
 
-### 8.3 判定顺序
+基于原生 `libsocket.so`,与 Java 层无关。
 
-`NetworkProxy.proxyForHost(host)` 依次判断,命中即返回:
+---
 
-1. 未启用 / 未配置 → 直连
-2. **回环地址(`localhost` / `127.*` / `::1`)→ 永远直连**
-3. 命中「不走代理的网站」→ 直连
-4. 「只对这些网站走代理」非空且未命中 → 直连
-5. 其余 → 走代理
+## 3. 已知限制
 
-第 2 条是硬规则,无法用名单覆盖:否则 MCP、协同这类**本机互连**会绕一圈自己的
-代理,表现为连不上或超时。
+- `Http` 的回调在**主线程**,里面做重活会卡 UI;耗时处理请转 `task(...)`。
+- 下载大文件时 `Http.download` 不报告进度;需要进度用 `Https.download` 或原生 `socket`。
+- `INTERNET` 权限缺失时**所有**网络请求都静默失败(`code == -1`),不会有异常;
+  排查时先 `get_project_info` 看 `user_permission` 里有没有 `INTERNET`。
+- WebView 与 `socket` 不受 JVM 侧任何配置影响(本来也没有配置了)。
 
-### 8.4 不走代理
+---
 
-- **用户项目打包出的 APK**:`:core-apk` 不含设置界面,从不调用 `NetworkProxy.apply`,永远直连
-- **WebView**(页面与子资源)与 **Lua `socket` 模块**:各自使用原生网络栈,不经过 JVM 的
-  `ProxySelector`,本配置对它们无效
-- **回环地址**:见上,永远直连
+## 4. 事实来源
 
-## 9. 已知限制
-
-- WebView 的页面与子资源请求**不拦截**(含网页触发的 `DownloadManager` 下载),由 WebView 自身完成网络 IO
-- 图片加载**不拦截**:`LuaBitmap` / `LuaBitmapDrawable`(用户项目)与 Glide(编辑器界面)均直接放行
-- 裸 TCP(`LuaClient` / `LuaServer`)不经过拦截;这两个类当前未暴露给 Lua
-- 系统 `DownloadManager` 的实际下载由系统进程执行,本应用只能控制**是否入队**
-- 主线程发起的请求无法拦截(见第 5 节)
-- 拦截依赖应用进程存活;进程结束后不再拦截
+- `Http`:`core/src/main/java/com/androlua/Http.java`
+- `OkHttpUtil`:`core/src/main/kotlin/com/luaforge/studio/utils/OkHttpUtil.kt`
+- 权限自动申请:`core/src/main/java/com/androlua/LuaActivity.java`
+  (`REQUEST_CODE_AUTO_PERMISSIONS`、`requestDeclaredPermissions`、`isRuntimePermission`)、
+  `app/src/main/kotlin/com/luaforge/studio/ui/attribute/AttributeScreen.kt`、
+  `app/src/main/kotlin/com/luaforge/studio/utils/ProjectUtil.kt`(模板默认值)
+- 内置原生库清单:`app/src/main/jni/CMakeLists.txt`

@@ -917,6 +917,71 @@ public class LuaActivity extends AppCompatActivity
     runFunc("onRequestPermissionsResult", requestCode, permissions, grantResults);
   }
 
+  /** 自动申请权限的 requestCode。与 Lua 侧自定义的取不同值,避免结果回调混淆。 */
+  public static final int REQUEST_CODE_AUTO_PERMISSIONS = 0x4C46;
+
+  /**
+   * 一次性申请 settings.json 里声明、且当前**尚未授予**的运行时权限。
+   *
+   * <p>三条克制的设计:
+   *
+   * <ul>
+   *   <li><b>只申请未授予的</b>。已授予的再申请会被系统直接回调 granted,但会闪一次
+   *       无意义的面板;更重要的是"列表全已授予"时不该调 {@code requestPermissions}——
+   *       空数组调用在部分 ROM 上无回调,页面的 onRequestPermissionsResult 就永远不来。
+   *   <li><b>只申请运行时权限</b>。{@code INTERNET} 这类 install-time 权限申请不会有面板,
+   *       混进来只会干扰判断。
+   *   <li><b>任何一步失败都吞掉</b>。权限申请是增强能力,申请不到也要让页面照常跑起来,
+   *       脚本自己还有 {@code onRequestPermissionsResult} 可以兜底。
+   * </ul>
+   *
+   * @param declared settings.json 的 {@code user_permission},短名(如
+   *     {@code READ_EXTERNAL_STORAGE})或全名都可以
+   */
+  private void requestDeclaredPermissions(List<?> declared) {
+    if (declared == null || declared.isEmpty()) return;
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+
+    try {
+      List<String> pending = new ArrayList<>();
+      for (Object raw : declared) {
+        if (!(raw instanceof String)) continue;
+        String name = ((String) raw).trim();
+        if (name.isEmpty()) continue;
+        // 短名补全成 android.permission.xxx;已经是全名的保持原样
+        String full = name.indexOf('.') >= 0 ? name : "android.permission." + name;
+        if (!isRuntimePermission(full)) continue;
+        if (checkSelfPermission(full) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+          continue;
+        }
+        if (!pending.contains(full)) pending.add(full);
+      }
+      if (pending.isEmpty()) return;
+      requestPermissions(pending.toArray(new String[0]), REQUEST_CODE_AUTO_PERMISSIONS);
+    } catch (Throwable t) {
+      // 权限申请失败不能阻断页面启动
+      Log.w("LuaActivity", "自动申请权限失败: " + t.getMessage());
+    }
+  }
+
+  /**
+   * 判断权限是否需要运行时申请。
+   *
+   * <p>判别方式是问系统:"这条权限是否声明了 protectionLevel=dangerous"。比硬编码
+   * 一张名单可靠 —— 新版本 Android 增加/调整危险权限时不需要改代码。
+   */
+  private boolean isRuntimePermission(String permission) {
+    try {
+      android.content.pm.PermissionInfo info =
+          getPackageManager().getPermissionInfo(permission, 0);
+      return (info.protectionLevel & android.content.pm.PermissionInfo.PROTECTION_MASK_BASE)
+          == android.content.pm.PermissionInfo.PROTECTION_DANGEROUS;
+    } catch (Throwable t) {
+      // 系统不认识的权限(拼错、或厂商私有)一律跳过
+      return false;
+    }
+  }
+
   @Override
   public boolean onKeyDown(int keyCode, KeyEvent event) {
     if (mOnKeyDown != null) {
@@ -1527,6 +1592,21 @@ public class LuaActivity extends AppCompatActivity
       if (globalUtils != null && !globalUtils.isEmpty()) {
         LuaFunctionRegistrar registrar = new LuaFunctionRegistrar(L, this, luaDir);
         registrar.registerSelectedFunctions(globalUtils);
+      }
+
+      // 自动申请权限(项目属性里的开关,默认关闭)。
+      // 只有显式写 true 才动作 —— settings.json 里没有这个键的老项目行为完全不变。
+      //
+      // 延后到消息队列:initENV 在 onCreate 中途执行,此刻 content view 还没设好。
+      // 直接 requestPermissions 会让系统对话框压在尚未建完的界面上,随后的
+      // setContentView 又把背景换掉,观感上像"弹窗闪了一下就没了"。
+      Object autoRequest = jsonMap.get("auto_request_permissions");
+      if (Boolean.TRUE.equals(autoRequest)) {
+        Object rawPermissions = jsonMap.get("user_permission");
+        if (rawPermissions instanceof List) {
+          final List<?> declared = (List<?>) rawPermissions;
+          getWindow().getDecorView().post(() -> requestDeclaredPermissions(declared));
+        }
       }
 
     } catch (Exception e) {

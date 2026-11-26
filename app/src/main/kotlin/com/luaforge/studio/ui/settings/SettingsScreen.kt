@@ -105,7 +105,6 @@ import com.luaforge.studio.ui.components.tvFocusHighlight
 import com.luaforge.studio.ui.theme.ThemeType
 import com.luaforge.studio.utils.IconManager
 import com.luaforge.studio.utils.NonBlockingToastState
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -218,15 +217,6 @@ fun SettingsScreen(
     var editorConfigExpanded by remember { mutableStateOf(false) }
     var buildSignExpanded by remember { mutableStateOf(false) }
     var showSignPicker by remember { mutableStateOf(false) }
-    // 网络代理输入框:默认空白 = 直连
-    var proxyText by remember { mutableStateOf(currentSettingsState.networkProxy) }
-    // 分站规则:界面用「每行一条」的文本,落盘时转成 List<String>
-    var proxyDirectText by remember {
-        mutableStateOf(currentSettingsState.networkProxyDirect.joinToString("\n"))
-    }
-    var proxyOnlyText by remember {
-        mutableStateOf(currentSettingsState.networkProxyOnly.joinToString("\n"))
-    }
 
     var fontMenuExpanded by remember { mutableStateOf(false) }
     var editorFontMenuExpanded by remember { mutableStateOf(false) }
@@ -261,34 +251,6 @@ fun SettingsScreen(
         settingsManager.updateSettings(newSettings)
         settingsManager.saveSettings(context)
         onSettingsChanged(newSettings)
-    }
-
-    // 代理地址防抖持久化:停止输入 500ms 后才写一次 DataStore
-    LaunchedEffect(proxyText) {
-        if (proxyText == currentSettingsState.networkProxy) return@LaunchedEffect
-        delay(500)
-        updateSettingsWithSave(
-            SettingsManager.currentSettings.copy(networkProxy = proxyText)
-        )
-    }
-
-    // 分站规则同样防抖落盘,并把空行过滤掉(空行规则无意义,留着只会干扰匹配)
-    LaunchedEffect(proxyDirectText) {
-        val rules = proxyDirectText.lines().map { it.trim() }.filter { it.isNotEmpty() }
-        if (rules == currentSettingsState.networkProxyDirect) return@LaunchedEffect
-        delay(500)
-        updateSettingsWithSave(
-            SettingsManager.currentSettings.copy(networkProxyDirect = rules)
-        )
-    }
-
-    LaunchedEffect(proxyOnlyText) {
-        val rules = proxyOnlyText.lines().map { it.trim() }.filter { it.isNotEmpty() }
-        if (rules == currentSettingsState.networkProxyOnly) return@LaunchedEffect
-        delay(500)
-        updateSettingsWithSave(
-            SettingsManager.currentSettings.copy(networkProxyOnly = rules)
-        )
     }
 
     fun isValidFontFile(path: String): Boolean {
@@ -1652,8 +1614,9 @@ Column(
                 }
             }
 
-
-
+            item {
+                CrashLogCard(toast = toast)
+            }
         }
     }
 
@@ -1938,15 +1901,27 @@ fun FontSizeSelector(
     }
 }
 
+/**
+ * 设置页的分组卡片。
+ *
+ * @param collapsible 是否可折叠。
+ *   MCP 页与「崩溃记录」这类**内容即全部信息**的区域传 `false`:标题行不再可点、
+ *   不再画展开箭头,内容常驻展开。原先 MCP 页为了"展开"还传了一个空的
+ *   `onExpandedChange`,箭头仍在、点了没反应的假控件正是要清掉的东西。
+ */
 @Composable
 fun SettingsCardGroup(
     title: String,
     icon: ImageVector,
     initiallyExpanded: Boolean = false,
-    onExpandedChange: (Boolean) -> Unit,
+    onExpandedChange: (Boolean) -> Unit = {},
+    collapsible: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    var expanded by remember { mutableStateOf(initiallyExpanded) }
+    // 不可折叠时恒为展开:初值直接取 true,后续也不会被切换
+    var expanded by remember(collapsible) {
+        mutableStateOf(if (collapsible) initiallyExpanded else true)
+    }
 
     Card(
         modifier = Modifier
@@ -1967,10 +1942,16 @@ fun SettingsCardGroup(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(
-                        onClick = {
-                            expanded = !expanded
-                            onExpandedChange(expanded)
+                    .then(
+                        if (collapsible) {
+                            Modifier.clickable(
+                                onClick = {
+                                    expanded = !expanded
+                                    onExpandedChange(expanded)
+                                }
+                            )
+                        } else {
+                            Modifier
                         }
                     )
                     .padding(horizontal = 20.dp, vertical = 18.dp),
@@ -1995,12 +1976,15 @@ fun SettingsCardGroup(
                     )
                 }
 
-                Icon(
-                    imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                    contentDescription = if (expanded) stringResource(R.string.close) else stringResource(R.string.open_drawer),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(24.dp)
-                )
+                if (collapsible) {
+                    Icon(
+                        imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                        contentDescription = if (expanded) stringResource(R.string.close)
+                        else stringResource(R.string.open_drawer),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
 
             AnimatedVisibility(

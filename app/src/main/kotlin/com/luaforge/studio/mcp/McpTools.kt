@@ -23,7 +23,6 @@ import com.luaforge.studio.utils.ConsoleUtil
 import com.luaforge.studio.utils.JsonUtil
 import com.luaforge.studio.utils.LuaParserUtil
 import com.luaforge.studio.utils.FileUtil
-import com.luaforge.studio.utils.LogBuffer
 import com.luaforge.studio.utils.LogCatcher
 import com.luaforge.studio.utils.LogFileAccess
 import com.luaforge.studio.utils.ProjectFileIO
@@ -66,6 +65,17 @@ object McpTools {
     /** 等待编辑器控件就绪的重试次数与间隔(open_file / goto_line 共用)。 */
     private const val CURSOR_MOVE_ATTEMPTS = 10
     private const val CURSOR_MOVE_INTERVAL_MS = 50L
+
+    /**
+     * `luaforge.log` 的时间头格式。
+     *
+     * `SimpleDateFormat` 非线程安全,而 [parseLogLines] 在 IO 线程池上可能并发调用,
+     * 用 ThreadLocal 各持一份。
+     */
+    private val LOG_TIME_FORMAT = object : ThreadLocal<java.text.SimpleDateFormat>() {
+        override fun initialValue() =
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
+    }
 
     /** call_global_util 的分隔字符串实参类型推断。 */
     private val INTEGER_ARG = Regex("^[+-]?\\d+$")
@@ -361,8 +371,8 @@ object McpTools {
         tools.put(
             tool(
                 "get_editor_logs",
-                "读取编辑器自身日志的结构化条目(与侧边栏「日志」页同源):" +
-                    "可按级别/标签/关键字过滤,返回级别、tag、正文与异常栈",
+                "读取 luaforge.log 并按级别/tag/关键字过滤,返回时间、级别、tag、正文与异常栈。" +
+                    "与 get_logs 的区别:get_logs 给原始文本尾部,这里给**结构化条目**(可精确按级别过滤)",
                 obj(
                     "level" to strProp("最低级别 VERBOSE/DEBUG/INFO/WARN/ERROR,默认 VERBOSE"),
                     "tag" to strProp("标签子串过滤"),
@@ -788,7 +798,7 @@ object McpTools {
                 "list_widgets" -> listWidgets()
                 "list_project_libraries" -> listProjectLibraries(context, args)
                 "get_logs" -> getLogs(context, args)
-                "get_editor_logs" -> getEditorLogs(args)
+                "get_editor_logs" -> getEditorLogs(context, args)
                 "list_build_logs" -> listBuildLogs(context, args)
                 "read_build_log" -> readBuildLog(context, args)
                 "get_settings" -> getSettings()
@@ -2097,13 +2107,6 @@ object McpTools {
         )
     }
 
-    /**
-     * 读取编辑器自身日志的结构化条目。
-     *
-     * 与 `get_logs`(读 `luaforge.log` 原始文本)互补:这里读的是侧边栏
-     * 「日志」页同源的 [LogBuffer],已经是结构化字段,调用方不必再做行切分
-     * 与 `[ERROR]` 子串匹配 —— 后者会把正文里提到 ERROR 的 INFO 行也判成错误。
-     */
     /** 构建日志目录(与 ApkBuilder 写入口同一处解析)。 */
     private fun buildLogDir(context: Context): File =
         com.luaforge.studio.build.BuildLogger.logDir(context)
@@ -2187,46 +2190,137 @@ object McpTools {
             )
         }
 
-    private suspend fun getEditorLogs(args: JSONObject): JSONObject {
+    /**
+     * 读取编辑器日志并按结构化字段过滤。
+     *
+     * **数据源是磁盘日志 `luaforge.log` 本身**,不再依赖任何内存缓冲 ——
+     * 侧边栏「日志」页已移除,日志的唯一权威来源就是落盘文件。
+     * 好处是:进程重启后历史仍在、外部脚本看到的与 MCP 看到的完全一致、
+     * 也不会因为缓冲容量上限丢掉早期现场。
+     *
+     * 行格式(由 `LogCatcher` / `RuntimeLog` 统一写入):
+     * `[yyyy-MM-dd HH:mm:ss.SSS] [LEVEL] [tag] 正文`,
+     * 异常栈作为后续不带时间头的行并入上一条。
+     *
+     * @param level 最低级别(排序 VERBOSE < DEBUG < INFO < WARN < ERROR)
+     * @param tag   tag 子串(忽略大小写)
+     * @param query 正文或 tag 的关键字子串(忽略大小写)
+     * @param limit 最多返回条数,从最新往回取
+     */
+    private suspend fun getEditorLogs(context: Context, args: JSONObject): JSONObject {
         val levelText = args.optString("level", "VERBOSE").uppercase(Locale.ROOT)
-        val minLevel = runCatching { LogBuffer.Level.valueOf(levelText) }
-            .getOrDefault(LogBuffer.Level.VERBOSE)
-        val tag = args.optString("tag", "")
-        val query = args.optString("query", "")
+        val minLevel = runCatching { LogBufferLevel.valueOf(levelText) }.getOrDefault(LogBufferLevel.VERBOSE)
+        val tagNeedle = args.optString("tag", "").trim()
+        val textNeedle = args.optString("query", "").trim()
         val limit = args.optInt("limit", 200).coerceIn(1, 5000)
 
-        val matched = LogBuffer.query(
-            minLevel = minLevel,
-            tagFilter = tag,
-            query = query,
-            limit = limit
-        )
+        return withContext(Dispatchers.IO) {
+            val file = LogFileAccess.existingLogFile(context)
+                ?: return@withContext errorResult(
+                    "日志文件不存在(已检查 ${LogFileAccess.LEGACY_LOG_FILE_PATH} 与私有目录)"
+                )
+            val content = readTailText(file, 512 * 1024)
+            val parsed = parseLogLines(content)
 
-        val items = JSONArray()
-        matched.forEach { e ->
-            items.put(
+            val matched = parsed.asSequence()
+                .filter { it.level.ordinal >= minLevel.ordinal }
+                .filter { tagNeedle.isEmpty() || it.tag.contains(tagNeedle, ignoreCase = true) }
+                .filter {
+                    textNeedle.isEmpty() ||
+                        it.message.contains(textNeedle, ignoreCase = true) ||
+                        it.tag.contains(textNeedle, ignoreCase = true)
+                }
+                .toList()
+                .let { if (it.size > limit) it.subList(it.size - limit, it.size) else it }
+
+            val items = JSONArray()
+            matched.forEach { e ->
+                items.put(
+                    JSONObject()
+                        .put("time", e.timeText)
+                        .put("timestamp", e.timestamp)
+                        .put("level", e.level.name)
+                        .put("tag", e.tag)
+                        .put("message", e.message)
+                        .apply {
+                            if (!e.stack.isNullOrBlank()) put("stack", e.stack)
+                        }
+                )
+            }
+
+            textResult(
                 JSONObject()
-                    .put("id", e.id)
-                    .put("time", e.timeText)
-                    .put("timestamp", e.timestamp)
-                    .put("level", e.level.name)
-                    .put("tag", e.tag)
-                    .put("message", e.message)
-                    .put("source", e.source)
-                    .apply {
-                        if (!e.throwable.isNullOrBlank()) put("stack", e.throwable)
-                    }
+                    .put("path", file.absolutePath)
+                    .put("total", parsed.size)
+                    .put("matched", matched.size)
+                    .put("minLevel", minLevel.name)
+                    .put("entries", items)
+                    .toString()
             )
         }
+    }
 
-        return textResult(
-            JSONObject()
-                .put("total", LogBuffer.size())
-                .put("matched", matched.size)
-                .put("minLevel", minLevel.name)
-                .put("entries", items)
-                .toString()
-        )
+    /** 日志级别(与 [LogCatcher] 落盘的级别文本对应)。 */
+    private enum class LogBufferLevel { VERBOSE, DEBUG, INFO, WARN, ERROR }
+
+    /** 解析后的一行日志。 */
+    private class ParsedLogLine(
+        val timestamp: Long,
+        val timeText: String,
+        val level: LogBufferLevel,
+        val tag: String,
+        val message: String,
+        val stack: String?
+    )
+
+    /**
+     * 把 `luaforge.log` 文本解析成结构化条目。
+     *
+     * 认不出格式的行(异常栈续行、截断提示)并入上一条的 `stack`;
+     * 出现在任何时间头之前的行直接丢弃 —— 那是文件被尾部截断后残缺的首条。
+     */
+    private fun parseLogLines(text: String): List<ParsedLogLine> {
+        val head = Regex("^\\[(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3})] \\[(\\w+)] \\[([^]]*)] ?(.*)$")
+        val out = ArrayList<ParsedLogLine>(256)
+        var lastIndex = -1
+        for (line in text.lineSequence()) {
+            if (line.isBlank()) continue
+            val m = head.find(line)
+            if (m != null) {
+                val ts = runCatching {
+                    LOG_TIME_FORMAT.get()!!.parse(m.groupValues[1])?.time
+                }.getOrNull() ?: System.currentTimeMillis()
+                val level = when (m.groupValues[2].uppercase(Locale.ROOT)) {
+                    "V", "VERBOSE" -> LogBufferLevel.VERBOSE
+                    "D", "DEBUG" -> LogBufferLevel.DEBUG
+                    "W", "WARN" -> LogBufferLevel.WARN
+                    "E", "ERROR", "FATAL" -> LogBufferLevel.ERROR
+                    else -> LogBufferLevel.INFO
+                }
+                out.add(
+                    ParsedLogLine(
+                        timestamp = ts,
+                        timeText = m.groupValues[1],
+                        level = level,
+                        tag = m.groupValues[3],
+                        message = m.groupValues[4],
+                        stack = null
+                    )
+                )
+                lastIndex = out.size - 1
+            } else if (lastIndex >= 0) {
+                val prev = out[lastIndex]
+                out[lastIndex] = ParsedLogLine(
+                    timestamp = prev.timestamp,
+                    timeText = prev.timeText,
+                    level = prev.level,
+                    tag = prev.tag,
+                    message = prev.message,
+                    stack = (prev.stack?.plus("\n") ?: "") + line
+                )
+            }
+        }
+        return out
     }
 
     // ------------------------------------------------------------------
